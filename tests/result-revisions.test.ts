@@ -1,10 +1,18 @@
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
 import { MAX_RESULT_STROKES, requestSchema, revisionProposalSchema, generatedSchema, type Feature, type RuleGroup, type RevisionProposal } from "../app/lib/schema";
 import { clarificationSchema } from "../app/lib/schema";
 import { revisionChanges, revisionSnapshot, revisionCodeGroups, revisionCodeFeatures, validateRevisionProposal } from "../app/lib/result-revisions";
 import { runAI } from "../app/server/ai.server";
 import { parameterKey } from "../app/lib/live-parameters";
+
+const logDirectory = mkdtempSync(path.join(tmpdir(), "rulegen-revision-tests-"));
+const previousLogDirectory = process.env.RULEGEN_AI_LOG_DIR;
+process.env.RULEGEN_AI_LOG_DIR = logDirectory;
+after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
 
 const features: Feature[] = [{ id: "curve", label: "Curve", description: "곡선", region: { x: .1, y: .2, w: .5, h: .5 } }];
 const groups: RuleGroup[] = [{ featureId: "curve", title: "Curve", subfeatures: [{ id: "shape", label: "Shape", selectedImplementation: "sine", implementations: [{ id: "sine", label: "Sine", description: "Amplitude controls curve height", parameters: [{ id: "amplitude", label: "Amplitude", type: "number", value: 30, min: 0, max: 200, step: 1, unit: "px" }] }] }] }];

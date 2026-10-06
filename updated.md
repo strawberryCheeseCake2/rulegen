@@ -144,6 +144,27 @@ hand drawn sketch를 creative coding을 translate할 때 exploration하면서 �
 - Widget 조절, 코드 수정, Run again과 결과 annotation·Erase·Undo/Redo는 연결된 스케치의 결과에만 적용한다.
 - 결과 프레임을 각각 이동할 수 있으며, 생성 코드와 프레임 위치는 프로젝트 저장·내보내기·불러오기 후에도 유지한다.
 
+## 14. 알고리즘 의미를 담은 freeform 펜과 prompt composition
+
+- Rule의 **Make pen**을 누르면 선택한 알고리즘의 의미와 현재 파라미터를 복사해 색이 다른 일반 연필 펜을 툴바에 바로 추가한다. 이 단계는 AI 생성 없이 동작한다.
+- 펜은 자유로운 선을 그리며, 그릴 때 power 함수나 procedural stamp를 캔버스에 실행하지 않는다. 각 획에 원래 feature·rule·선택한 알고리즘·파라미터·사용자가 편집한 semantic을 저장한다.
+- 여러 알고리즘 펜 자국과 일반 Pencil 자국으로 모양·배치·관계를 대략 스케치한다. 펜의 색은 어떤 알고리즘 의미를 담았는지 구분하는 표시다.
+- **Compose prompt**에서 자국들을 어떻게 조합할지 설명한 뒤 **Compose sketch**를 누른다. AI가 전체 스케치 이미지, 순서가 있는 펜·연필·지우개 자국, 획마다 보관한 semantic과 prompt를 함께 해석해 해당 스케치의 generated result를 만든다.
+- Compose prompt가 비어 있을 때 **Compose sketch**를 누르면 AI가 먼저 스케치 이미지와 각 획의 알고리즘 의미를 인식해 prompt 초안을 자동으로 채운다. 사용자는 설명을 확인·수정하고 다시 Compose sketch를 눌러 결과를 생성한다.
+- **AI prompt 만들기 / AI prompt 다시 만들기**로 설명만 생성하거나 갱신할 수 있다. 기존 설명의 의도도 AI에 전달하며, 요청 중 사용자가 수정한 prompt는 덮어쓰지 않는다. prompt는 스케치별로 저장하고 자동 작성 요청도 AI 생성 로그에 기록한다.
+- 예: 크기가 작아지는 패턴의 power 알고리즘을 펜에 담고, 그 펜으로 점점 커지는 모양을 자유롭게 그린다. Pencil로 배치를 잡거나 다른 알고리즘 펜으로 관계를 추가하고, prompt로 "같은 power 함수의 exponent를 사용해 커지는 패턴을 연필 경로에 배치"하도록 요청한다.
+- 펜 semantic과 색은 툴바 설정에서 수정할 수 있다. 이미 그린 획은 그릴 때의 semantic을 유지하며, 펜을 툴바에서 제거해도 기존 자국의 의미는 Compose에 전달한다.
+- Erase·Undo·Redo를 지원하고, 펜 목록과 획의 semantic은 프로젝트 저장·내보내기·불러오기에 포함한다. Compose prompt와 결과는 스케치별로 따로 보관한다.
+- 이전 procedural 알고리즘 펜 형식의 프로젝트도 원래 알고리즘 정보를 보관한 freeform 펜으로 복원한다.
+
+## 15. 모든 AI 생성 로그 저장
+
+- 모든 AI 생성 요청을 서버의 `ai-generations` 폴더에 날짜·생성 종류·고유 ID별로 저장한다. 분석, rule·subfeature, clarification, suggestion, 코드·브러시, Compose와 AI 재생성·수정을 포함한다.
+- 입력 이미지와 사용자 입력, AI에 보낸 prompt, 원본 응답, 최종 검증 결과를 함께 보관한다. 생성 코드는 별도 `generated.js` 파일로도 저장한다.
+- 모델, 생성 시간, 상태, 소요 시간과 제공된 token 사용량을 기록한다. 실패·취소도 기록하고, 서버가 중단된 요청은 시작 상태로 남는다.
+- API 키와 인증 헤더는 저장하지 않으며 로그 폴더는 Git에서 제외한다. `RULEGEN_AI_LOG_DIR`로 저장 위치를 변경할 수 있다.
+- Make pen, widget 조절처럼 AI를 호출하지 않는 로컬 편집은 AI 생성 로그에 포함하지 않는다.
+
 ## 주요 사용 흐름
 
 1. 무한 캔버스에서 스케치 프레임을 선택해 그림을 그리거나 사진을 업로드·붙여넣기 한다. 툴바에서 새 스케치 프레임을 추가할 수 있다.
@@ -152,5 +173,6 @@ hand drawn sketch를 creative coding을 translate할 때 exploration하면서 �
 4. 해당 feature의 Rules에서 subfeature, 구현 방식, 파라미터를 조절한다. 필요한 카드만 재생성하거나 불필요한 카드·위젯을 삭제한다.
 5. 코드를 생성해 해당 스케치의 별도 결과 프레임에서 p5.js 결과를 확인한다. 여러 스케치의 결과를 동시에 볼 수 있으며, 연결된 위젯을 조절하면 해당 코드와 결과가 함께 바뀐다.
 6. Feature를 procedural brush로도 생성할 수 있다. 설명을 추가해 원하는 브러시를 만들고 스케치에 사용한다.
+   또는 Rule의 Make pen으로 semantic을 담은 색 연필을 추가해 다른 펜·Pencil과 자유롭게 스케치하고, Compose prompt로 자국들을 해석해 결과를 생성한다.
 7. 생성 결과 위에 자유롭게 annotation 스케치를 하고, AI가 자동으로 작성한 Text clarification을 확인하거나 수정한다.
 8. 그 설명을 바탕으로 기존 rule·visual feature 변경 또는 새 항목 추가 제안을 검토하고, Confirm으로 실제 규칙·코드·결과에 적용한다.

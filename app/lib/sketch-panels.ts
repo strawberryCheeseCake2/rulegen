@@ -9,6 +9,7 @@ export const sketchPanelSchema = z.object({
   features: z.array(featureSchema).max(8).default([]), groups: z.array(savedGroupSchema).max(8).default([]),
   analysisRevision: z.number().default(-1), generated: generatedSchema.nullable().default(null),
   codeDraft: z.string().max(26000).optional(), selected: z.string().max(80).nullable().default(null),
+  composePrompt: z.string().max(2000).default(""), generationMode: z.enum(["rules", "compose"]).default("rules"),
   instruction: z.string().max(2000).default(""), brush: brushSchema.nullable().default(null),
   brushDescription: z.string().max(2000).default(""), blend: z.array(z.string().max(80)).max(8).default([]),
 }).transform(panel => ({ ...panel, codeDraft: panel.codeDraft ?? (panel.generated ? syncParameters(panel.generated.code, panel.groups, panel.generated.bindings) : ""), selected: panel.features.some(f => f.id === panel.selected) ? panel.selected : null }));

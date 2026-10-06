@@ -6,3 +6,6 @@
 # React Router
 /.react-router/
 /build/
+
+# Local AI inputs, images and generated outputs
+/ai-generations/

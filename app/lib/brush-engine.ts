@@ -1,11 +1,11 @@
 import type P5 from "p5";
 import type { BrushRecipe, Point } from "./schema";
 type Painter = P5 | P5.Graphics;
-export function stamp(p: Painter, brush: BrushRecipe, x: number, y: number, angle: number, seed: number, opacity = 1) {
+export function stamp(p: Painter, brush: BrushRecipe, x: number, y: number, angle: number, seed: number, opacity = 1, scale = 1) {
   const s = brush.settings;
   const jitter = Math.sin(seed * 12.9898) * s.variation / 100;
   const ink = p.color(s.color); ink.setAlpha(opacity * 255);
-  p.push(); p.translate(x, y); p.rotate(angle + jitter * .7); p.scale(s.size * (1 + jitter * .35));
+  p.push(); p.translate(x, y); p.rotate(angle + jitter * .7); p.scale(s.size * scale * (1 + jitter * .35));
   p.stroke(ink); p.noFill();
   const spread = s.spread * Math.PI / 180;
   function branch(x: number, y: number, len: number, angle: number, depth: number, weight: number) {
@@ -30,9 +30,9 @@ export function stamp(p: Painter, brush: BrushRecipe, x: number, y: number, angl
   }
   p.pop();
 }
-export function drawBrushPath(p: Painter, brush: BrushRecipe, points: Point[], opacity = 1) {
+export function drawBrushPath(p: Painter, brush: BrushRecipe, points: Point[], opacity = 1, engine = { stamp }) {
   if (!points.length) return;
-  if (points.length === 1) { stamp(p, brush, points[0].x, points[0].y, 0, 0, opacity); return; }
+  if (points.length === 1) { engine.stamp(p, brush, points[0].x, points[0].y, 0, 0, opacity); return; }
   let accumulated = 0, nextStamp = 0, seed = 0;
   for (let i = 1; i < points.length; i++) {
     const a = points[i - 1], b = points[i], distance = Math.hypot(b.x - a.x, b.y - a.y);
@@ -40,7 +40,7 @@ export function drawBrushPath(p: Painter, brush: BrushRecipe, points: Point[], o
     if (distance === 0) continue;
     while (nextStamp <= accumulated + distance) {
       const t = (nextStamp - accumulated) / distance;
-      stamp(p, brush, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, angle, seed++, opacity);
+      engine.stamp(p, brush, a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, angle, seed++, opacity);
       nextStamp += brush.settings.spacing;
       if (seed > 5000) return;
     }
@@ -48,5 +48,5 @@ export function drawBrushPath(p: Painter, brush: BrushRecipe, points: Point[], o
   }
 }
 export function brushCode(brush: BrushRecipe) {
-  return `// ${brush.name} — p5.js instance mode\n// Drag to draw; the recipe and every parameter are editable.\nconst brush = ${JSON.stringify(brush, null, 2)};\n${stamp.toString()}\nlet last = null;\np.setup = () => { p.createCanvas(900,600); p.background('#fffefa'); };\np.draw = () => {\n  if (!p.mouseIsPressed) { last = null; return; }\n  if (!last) last = {x:p.mouseX, y:p.mouseY};\n  const d = p.dist(last.x,last.y,p.mouseX,p.mouseY);\n  if (d >= brush.settings.spacing) {\n    stamp(p,brush,p.mouseX,p.mouseY,Math.atan2(p.mouseY-last.y,p.mouseX-last.x),p.frameCount);\n    last = {x:p.mouseX,y:p.mouseY};\n  }\n};`;
+  return `// ${brush.name} — p5.js instance mode\n// Drag to draw. Each completed stroke keeps its own path.\nconst brush = ${JSON.stringify(brush, null, 2)};\nconst __name = (fn) => fn;\nconst stamp = ${stamp.toString()};\nconst drawBrushPath = ${drawBrushPath.toString()};\nconst strokes = []; let path = null;\np.setup = () => { p.createCanvas(900,600); };\np.draw = () => {\n  p.background('#fffefa');\n  if (p.mouseIsPressed && p.mouseX >= 0 && p.mouseX <= 900 && p.mouseY >= 0 && p.mouseY <= 600) {\n    if (!path && strokes.length < 500) { path = []; strokes.push(path); }\n    if (path && path.length < 6000) path.push({x:p.mouseX,y:p.mouseY});\n  } else path = null;\n  for (const points of strokes) drawBrushPath(p,brush,points,1,{stamp});\n};`;
 }

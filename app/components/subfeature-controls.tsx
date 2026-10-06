@@ -1,13 +1,13 @@
 import { useState } from "react";
 import type { RuleGroup, Parameter } from "../lib/schema";
 import { Icon } from "./icons";
-type Props = { group: RuleGroup; name: string; busy: boolean; onMethod: (subId: string, methodId: string) => void; onParameter: (subId: string, methodId: string, parameterId: string, value: Parameter["value"]) => void; onAlternative: () => void; onRegenerate: (subId: string) => void; onRemove: (subId: string, methodId?: string, parameterId?: string) => void };
-function NumberWidget({ parameter: p, label, onChange }: { parameter: Extract<Parameter, { type: "number" }>; label: string; onChange: (value: number) => void }) {
+type Props = { group: RuleGroup; name: string; busy: boolean; onMethod: (subId: string, methodId: string) => void; onParameter: (subId: string, methodId: string, parameterId: string, value: Parameter["value"]) => void; onAlternative: () => void; onRegenerate: (subId: string) => void; onMakePen: (subId: string) => void; onRemove: (subId: string, methodId?: string, parameterId?: string) => void };
+export function NumberWidget({ parameter: p, label, onChange }: { parameter: Extract<Parameter, { type: "number" }>; label: string; onChange: (value: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   const commit = () => { if (draft !== null && draft.trim() !== "" && Number.isFinite(Number(draft))) onChange(Number(draft)); setDraft(null); };
   return <div className="number-widget"><input type="range" aria-label={label} min={p.min} max={p.max} step={p.step} value={p.value} onChange={e => { setDraft(null); onChange(e.currentTarget.valueAsNumber); }} /><div><input type="number" aria-label={`${label} value`} min={p.min} max={p.max} step={p.step} value={draft ?? p.value} onFocus={() => setDraft(String(p.value))} onChange={e => { const value = e.target.value; setDraft(value); const number = Number(value); if (value.trim() && Number.isFinite(number) && number >= p.min && number <= p.max) onChange(number); }} onBlur={commit} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setDraft(null); e.preventDefault(); } }} /><span>{p.unit}</span></div></div>;
 }
-export function SubfeatureControls({ group, name, busy, onMethod, onParameter, onAlternative, onRegenerate, onRemove }: Props) {
+export function SubfeatureControls({ group, name, busy, onMethod, onParameter, onAlternative, onRegenerate, onMakePen, onRemove }: Props) {
   const legacy = group.subfeatures.every(s => s.implementations.every(m => m.id === "saved-recipe"));
   return <section className="feature-rule-group subfeature-group" aria-label={`Subfeatures for ${name}`}>
     <div className="feature-rule-group-heading"><Icon name="spark" size={18} /><div><strong>{name}</strong><span>{group.subfeatures.length} SUBFEATURES</span></div></div>
@@ -27,6 +27,7 @@ export function SubfeatureControls({ group, name, busy, onMethod, onParameter, o
           </div>;
         })}</div>
         <details className="implementation-details"><summary>How it works</summary><p>{method.description}</p></details>
+        <button type="button" className="make-algorithm-pen" aria-label={`Make pen from ${name} · ${sub.label} · ${method.label}`} onClick={() => onMakePen(sub.id)}><Icon name="pen" size={15} /><span>Make pen<small>{method.label} → semantic pencil</small></span><Icon name="plus" size={14} /></button>
       </article>;
     })}</fieldset>
     {!legacy && <button className="alternative-button" disabled={busy} onClick={onAlternative}><Icon name="spark" size={14} />Explore other implementations</button>}

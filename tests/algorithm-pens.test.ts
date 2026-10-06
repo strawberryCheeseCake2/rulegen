@@ -1,0 +1,110 @@
+import test, { after } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import assert from "node:assert/strict";
+import { compositionPromptSchema, requestSchema, subfeatureSchema, type Artwork } from "../app/lib/schema";
+import { makeSemanticPen, compositionContext } from "../app/lib/algorithm-pens";
+import { projectSchema } from "../app/lib/project";
+import { createSketchPanel, savedSketchPanels } from "../app/lib/sketch-panels";
+
+const logDirectory = mkdtempSync(path.join(tmpdir(), "rulegen-semantic-tests-"));
+const previousLogDirectory = process.env.RULEGEN_AI_LOG_DIR;
+process.env.RULEGEN_AI_LOG_DIR = logDirectory;
+after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
+
+const sub = subfeatureSchema.parse({ id: "size", label: "Size progression", selectedImplementation: "power", implementations: [{ id: "power", label: "Power", description: "Size decays by pow(1-t, exponent)", parameters: [{ id: "exponent", label: "Exponent", type: "number", value: 2, min: .5, max: 5, step: .1, unit: "" }] }, { id: "linear", label: "Linear", description: "Linear decay", parameters: [] }] });
+const feature = { id: "pattern", label: "Pattern", description: "Shrinking sizes", region: { x: 0, y: 0, w: 1, h: 1 } };
+const groups = [{ featureId: feature.id, title: "Pattern", subfeatures: [sub] }];
+const pen = makeSemanticPen(groups, feature, "size", "source", "power-pen", "#3b73c4");
+const art: Artwork = { name: "Sketch", photo: null, revision: 1, strokes: [{ tool: "pen", color: pen.color, width: 3, opacity: .8, points: [{ x: 100, y: 150 }, { x: 700, y: 300 }], semanticPen: structuredClone(pen) }, { tool: "pen", color: "#75664e", width: 3, opacity: .8, points: [{ x: 80, y: 80 }, { x: 600, y: 500 }] }] };
+const rawProject = { version: 1, name: "Semantic study", artwork: art, features: [feature], groups, analysisRevision: 0, generated: null, brush: null, savedBrushes: [], semanticPens: [pen], activeSemanticPenId: pen.id };
+
+test("Make pen copies the chosen algorithm locally without producing drawing geometry", () => {
+  assert.equal(pen.implementation.id, "power"); assert.equal(pen.implementation.parameters[0].value, 2); assert.equal(pen.meaning, sub.implementations[0].description);
+  assert.equal(pen.sourceSketchId, "source"); assert.equal("primitives" in pen, false); assert.equal("dynamics" in pen, false); assert.equal("settings" in pen, false);
+  pen.implementation.parameters[0].value = 3; assert.equal(sub.implementations[0].parameters[0].value, 2); pen.implementation.parameters[0].value = 2;
+  assert.throws(() => makeSemanticPen(groups, feature, "missing", "source", "x", "#3b73c4"));
+});
+
+test("composition includes semantic snapshots and pencil marks with spatial and eraser order", () => {
+  const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], points: [{ x: 200, y: 100 }, { x: 250, y: 300 }] }, { ...art.strokes[0], tool: "eraser", semanticPen: undefined }] });
+  assert.equal(context.compositionPens.length, 1); assert.equal(context.compositionStrokes.length, 4);
+  assert.deepEqual(context.compositionStrokes.map(s => s.tool), ["semantic", "pencil", "semantic", "eraser"]);
+  assert.equal(context.compositionStrokes[0].semanticPenId, context.compositionStrokes[2].semanticPenId);
+  assert.equal(context.compositionStrokes[1].semanticPenId, null); assert.equal(context.compositionStrokes[3].semanticPenId, null);
+  assert.equal(context.compositionStrokes[0].points[0].x, 100 / 900); assert.equal(context.compositionStrokes[0].points[0].y, .25);
+  assert.equal(requestSchema.safeParse({ intent: "compose", ...context }).success, true);
+  assert.equal(requestSchema.safeParse({ intent: "compose", ...context, compositionPens: [] }).success, false);
+});
+
+test("edited and removed pens keep the semantics of existing strokes, with bounded point context", () => {
+  const changed = { ...structuredClone(pen), meaning: "Grow using the same exponent", implementation: { ...pen.implementation, parameters: pen.implementation.parameters.map(p => p.type === "number" ? { ...p, value: 4 } : p) } };
+  const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], semanticPen: changed, points: Array.from({ length: 6000 }, (_, i) => ({ x: i / 5999 * 900, y: 400 })) }] });
+  assert.equal(context.compositionPens.length, 2); assert.equal(context.compositionPens[0].implementation.parameters[0].value, 2); assert.equal(context.compositionPens[1].implementation.parameters[0].value, 4);
+  assert.notEqual(context.compositionStrokes[0].semanticPenId, context.compositionStrokes[2].semanticPenId);
+  assert.equal(context.compositionStrokes[2].points.length, 128); assert.equal(context.compositionStrokes[2].points.at(-1)?.x, 1);
+  const restored = projectSchema.parse({ ...rawProject, semanticPens: [] }); assert.equal(compositionContext(restored.artwork).compositionPens[0].implementation.id, "power");
+});
+
+test("semantic pens, normal strokes and per-sketch compose prompts survive project export", () => {
+  const source = createSketchPanel(); source.composePrompt = "Power 펜은 점점 커지게, 연필 선을 따라 배치"; source.generationMode = "compose";
+  const second = createSketchPanel(); second.composePrompt = "다른 스케치의 방향";
+  const restored = projectSchema.parse(JSON.parse(JSON.stringify({ ...rawProject, sketchFrames: [{ id: "sketch-a", artwork: { ...art, name: "Other" } }], sketchPanels: savedSketchPanels({ source, "sketch-a": second }) })));
+  assert.equal(restored.semanticPens[0].color, pen.color); assert.equal(restored.activeSemanticPenId, pen.id);
+  assert.equal(restored.artwork.strokes[0].tool, "pen"); assert.equal(restored.artwork.strokes[0].semanticPen!.implementation.parameters[0].value, 2); assert.equal(restored.artwork.strokes[0].brush, undefined);
+  assert.equal(restored.sketchPanels.source.composePrompt, source.composePrompt); assert.equal(restored.sketchPanels["sketch-a"].composePrompt, second.composePrompt); assert.equal(restored.sketchPanels.source.generationMode, "compose");
+});
+
+test("older procedural algorithm pens migrate to freeform semantic pencils and retain their rule", () => {
+  const legacy = { name: "Power pen", description: "Old", settings: { color: pen.color, spacing: 20, size: 30, spread: 0, variation: 0, taper: 0 }, primitives: [{ kind: "ellipse", coords: [0, 0, 1, 1], weight: .02, filled: true, depth: 0 }], algorithm: { featureId: feature.id, subfeatureId: sub.id, implementationId: "power", label: "Power", description: sub.implementations[0].description, parameters: sub.implementations[0].parameters, dynamics: { scale: "pow(1-t,p0)" }, reverse: false } };
+  const migrated = projectSchema.parse({ ...rawProject, semanticPens: [], activeSemanticPenId: null, brush: legacy, drawingBrush: legacy, savedBrushes: [legacy], artwork: { ...art, strokes: [{ ...art.strokes[0], tool: "brush", brush: legacy, semanticPen: undefined }] } });
+  assert.equal(migrated.semanticPens.length, 1); assert.equal(migrated.savedBrushes.length, 0); assert.equal(migrated.drawingBrush, null); assert.equal(migrated.brush, null);
+  assert.equal(migrated.artwork.strokes[0].tool, "pen"); assert.equal(migrated.artwork.strokes[0].brush, undefined); assert.equal(migrated.artwork.strokes[0].semanticPen!.implementation.id, "power"); assert.equal(migrated.activeSemanticPenId, migrated.semanticPens[0].id);
+});
+
+test("Compose sends freeform geometry, algorithm meanings and the prompt to AI without requiring feature analysis", async () => {
+  const { runAI } = await import("../app/server/ai.server");
+  const previousFetch = globalThis.fetch, previousKey = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "test-placeholder";
+  let payload: any;
+  const code = { title: "Growing power pattern", explanation: "Power semantics composed with pencil layout", code: "p.setup=()=>{p.createCanvas(900,600);p.background('#fffefa');for(let i=0;i<8;i++)p.circle(100+i*80,300,5+Math.pow(i/7,2)*50);p.noLoop();}" };
+  globalThis.fetch = async (_url, options) => { payload = JSON.parse(String(options?.body)); return Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify(code) }] }] }); };
+  try {
+    const context = compositionContext(art), image = "data:image/png;base64,YQ==";
+    const result = await runAI(requestSchema.parse({ intent: "compose", image, ...context, instruction: "Power를 증가 패턴으로 만들고 연필 경로와 조합" }), new AbortController().signal);
+    const sent = JSON.parse(payload.input[0].content[0].text); assert.equal(sent.instruction, "Power를 증가 패턴으로 만들고 연필 경로와 조합"); assert.equal(sent.compositionPens[0].implementation.parameters[0].value, 2); assert.equal(sent.compositionStrokes[1].tool, "pencil"); assert.equal(payload.input[0].content[1].image_url, image);
+    assert.match(payload.instructions, /ordinary pencil line/); assert.match(payload.instructions, /jointly describe/); assert.equal((result as any).code, code.code); assert.deepEqual((result as any).bindings, []);
+    assert.equal(payload.text.format.name, "rulegen_compose"); assert.deepEqual(payload.text.format.schema.required.sort(), Object.keys(payload.text.format.schema.properties).sort());
+    await assert.rejects(runAI(requestSchema.parse({ intent: "compose", ...context, instruction: "Compose" }), new AbortController().signal), /스케치/);
+    globalThis.fetch = async () => Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ ...code, code: "p.setup=()=>{p.createCanvas(900,600);fetch('x')}" }) }] }] });
+    await assert.rejects(runAI(requestSchema.parse({ intent: "compose", image, ...context, instruction: "Compose" }), new AbortController().signal));
+  } finally { globalThis.fetch = previousFetch; if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey; }
+});
+
+test("AI drafts an editable Compose prompt from the image and stored stroke semantics without user text or feature analysis", async () => {
+  const { runAI } = await import("../app/server/ai.server");
+  const previousFetch = globalThis.fetch, previousKey = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "test-placeholder";
+  let payload: any;
+  const prompt = "Power 펜의 exponent 2로 점점 커지는 패턴을 만들고, 연필로 그린 곡선을 따라 배치해줘.";
+  globalThis.fetch = async (_url, options) => { payload = JSON.parse(String(options?.body)); return Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ prompt }) }] }] }); };
+  try {
+    const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], tool: "eraser", semanticPen: undefined }] });
+    const image = "data:image/png;base64,YQ==";
+    const input = requestSchema.parse({ intent: "compose-prompt", image, ...context });
+    const result = compositionPromptSchema.parse(await runAI(input, new AbortController().signal));
+    assert.equal(result.prompt, prompt);
+    const sent = JSON.parse(payload.input[0].content[0].text);
+    assert.equal(sent.instruction, ""); assert.deepEqual(sent.features, []);
+    assert.equal(sent.compositionPens[0].implementation.parameters[0].value, 2);
+    assert.deepEqual(sent.compositionStrokes.map((s: { tool: string }) => s.tool), ["semantic", "pencil", "eraser"]);
+    assert.equal(payload.input[0].content[1].image_url, image);
+    assert.match(payload.instructions, /editable Korean composition prompt/); assert.match(payload.instructions, /No code/);
+    assert.equal(payload.text.format.name, "rulegen_compose-prompt"); assert.equal(payload.max_output_tokens, 2000);
+    const edited = "같은 Power exponent를 유지하면서 더 작게 배치해줘";
+    await runAI(requestSchema.parse({ ...input, instruction: edited }), new AbortController().signal);
+    assert.equal(JSON.parse(payload.input[0].content[0].text).instruction, edited);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "compose-prompt" }), new AbortController().signal), /스케치 이미지/);
+    globalThis.fetch = async () => Response.json({ output: [{ content: [{ type: "output_text", text: '{"prompt":"  "}' }] }] });
+    await assert.rejects(runAI(input, new AbortController().signal), /응답을 해석/);
+  } finally { globalThis.fetch = previousFetch; if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey; }
+});
