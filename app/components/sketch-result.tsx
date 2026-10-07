@@ -4,7 +4,7 @@ import { ResultAnnotations } from "./result-annotations";
 import { Icon } from "./icons";
 import { syncParameters } from "../lib/live-parameters";
 import { annotationHistoryReducer } from "../lib/annotation-history";
-import { clearedResultAnnotations, type SketchPanel } from "../lib/sketch-panels";
+import { clearedResultAnnotations, panelLiveGroups, type SketchPanel } from "../lib/sketch-panels";
 
 type Props = {
   owner: string; panel: SketchPanel; tool: string; zoom: number; documentRevision: number;
@@ -14,8 +14,8 @@ type Props = {
 export function SketchResult(props: Props) {
   const current = useRef(props); current.current = props;
   const { panel, owner, tool, zoom } = props;
-  const source = panel.generated ? syncParameters(panel.generated.code, panel.groups, panel.generated.bindings) : "";
-  const executable = panel.generated ? syncParameters(panel.executable, panel.groups, panel.generated.bindings) : "";
+  const source = panel.generated ? syncParameters(panel.generated.code, panelLiveGroups(panel), panel.generated.bindings) : "";
+  const executable = panel.generated ? syncParameters(panel.executable, panelLiveGroups(panel), panel.generated.bindings) : "";
   useEffect(() => {
     const code = panel.generated?.code;
     if (!code || (panel.preparedCode === code && panel.executable)) return;
@@ -40,6 +40,6 @@ export function SketchResult(props: Props) {
           onAdd={points => props.onPatch(previous => ({ annotationHistory: annotationHistoryReducer(previous.annotationHistory, { type: "add", annotation: { id: crypto.randomUUID(), points } }) }))} />
       </>}
     </> : <div className="frame-empty"><strong>{panel.runtimeError ? "This code needs a correction." : "Preparing p5.js…"}</strong><button onClick={props.onOpenCode}>Open code<Icon name="code" size={14} /></button></div>
-      : <div className="frame-empty"><Icon name="code" size={30} /><strong>A new possibility, in its own frame.</strong><span>Your generated p5.js output will appear here.</span><button onClick={props.onExplore}>Explore rules<Icon name="arrow" size={14} /></button></div>}
+      : <div className="frame-empty"><Icon name="code" size={30} /><strong>A new possibility, in its own frame.</strong><span>Your generated p5.js output will appear here.</span><button onClick={props.onExplore}>Explore constraints<Icon name="arrow" size={14} /></button></div>}
   </div>;
 }

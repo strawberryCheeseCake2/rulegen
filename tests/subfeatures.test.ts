@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
-import { analysisSchema, rulesSchema, requestSchema, type RuleGroup } from "../app/lib/schema";
+import { analysisSchema, rulesSchema, requestSchema, activeWidgetKindSchema, type RuleGroup } from "../app/lib/schema";
 import { activeGroups, savedGroupSchema, updateParameter, validateGroups } from "../app/lib/subfeatures";
 import { projectSchema } from "../app/lib/project";
 const wave: RuleGroup = { featureId: "wave", title: "Wave", subfeatures: [{ id: "curve", label: "Curvy shape", selectedImplementation: "sine", implementations: [
@@ -38,7 +38,8 @@ test("legacy prose is preserved on migration and parameter widgets survive savin
   const saved = projectSchema.parse({ version: 1, name: "Wave", artwork: { strokes: [], photo: null, name: "Wave", revision: 1 }, features: [], groups: [wave], analysisRevision: 1, generated: null, brush: null, savedBrushes: [] });
   assert.deepEqual(projectSchema.parse(JSON.parse(JSON.stringify(saved))).groups, [wave]);
 });
-test("LLM structured output exposes all four widget types without optional properties", () => {
+test("legacy widget types and the three active extraction types are distinct without optional properties", () => {
+  assert.deepEqual(activeWidgetKindSchema.options, ["spatial", "stylistic", "object"]);
   const json = JSON.stringify(z.toJSONSchema(rulesSchema, { target: "draft-7" }));
   for (const type of ["number", "color", "select", "toggle"]) assert.ok(json.includes(`"const":"${type}"`));
   assert.ok(json.includes("anyOf")); assert.equal(json.includes("oneOf"), false);

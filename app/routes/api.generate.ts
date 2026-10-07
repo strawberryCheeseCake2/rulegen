@@ -14,7 +14,7 @@ export async function action({ request }: Route.ActionArgs) {
     if (raw.length > 9_000_000) throw new Error("이미지가 너무 큽니다.");
     const parsed = JSON.parse(raw);
     if (parsed.intent === "prepare") {
-      if (typeof parsed.code !== "string" || parsed.code.length > 24000) throw new Error("코드가 너무 길거나 형식이 올바르지 않습니다.");
+      if (typeof parsed.code !== "string" || parsed.code.length > 200000) throw new Error("코드가 너무 길거나 형식이 올바르지 않습니다.");
       return Response.json({ executable: prepareCode(parsed.code) }, { headers });
     }
     const checked = requestSchema.safeParse(parsed);

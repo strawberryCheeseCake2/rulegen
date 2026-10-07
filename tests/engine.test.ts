@@ -41,3 +41,11 @@ test("older projects gain frames and camera positions survive export", () => {
   migrated.workspace.frames.result = { x: -250, y: 980 }; migrated.workspace.camera = { zoom: .6, x: 45, y: -160 };
   assert.deepEqual(projectSchema.parse(JSON.parse(JSON.stringify(migrated))).workspace, migrated.workspace);
 });
+
+
+test("locally declared geometry coordinates named top or parent are allowed while browser globals stay blocked", () => {
+  const code = "p.setup=()=>{p.createCanvas(900,600);const top=10,parent={x:20};p.line(parent.x,top,30,40);}";
+  assert.doesNotThrow(() => prepareCode(code));
+  assert.throws(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);top.location='x';}"));
+  assert.throws(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);parent.postMessage('x','*');}"));
+});

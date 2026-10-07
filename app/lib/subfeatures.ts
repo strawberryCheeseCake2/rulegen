@@ -8,6 +8,7 @@ export function validateGroups(groups: RuleGroup[]) {
   for (const group of groups) {
     unique(group.subfeatures.map(s => s.id));
     for (const sub of group.subfeatures) {
+      if (sub.kind && ((sub.kind === "object" && !sub.primitive) || (sub.kind !== "object" && sub.primitive))) throw new Error("위젯 종류와 primitive를 확인해주세요.");
       unique(sub.implementations.map(m => m.id));
       if (!sub.implementations.some(m => m.id === sub.selectedImplementation)) throw new Error("선택된 구현 방식을 찾지 못했습니다. 다시 생성해주세요.");
       for (const method of sub.implementations) {

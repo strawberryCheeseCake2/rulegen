@@ -1,4 +1,4 @@
-import type { Feature, RuleGroup, RevisionProposal, ResultAnnotation, Parameter } from "./schema";
+import type { Feature, RuleGroup, RevisionProposal, ResultAnnotation, Parameter, ConstraintScene } from "./schema";
 import { validateGroups } from "./subfeatures";
 
 export type RevisionChange = { path: string; before: string; after: string; kind: "add" | "change" | "remove" };
@@ -22,6 +22,8 @@ function entries(features: Feature[], groups: RuleGroup[]) {
     for (const s of g.subfeatures) {
       const root = JSON.stringify([g.featureId, s.id]);
       const path = `Widget · ${featureName} · ${s.label}`;
+      if (s.kind) add(`${root}/kind`, `${path} · Widget category`, s.kind);
+      if (s.primitive) add(`${root}/primitive`, `${path} · Primitive`, s.primitive);
       add(`${root}/label`, `${path} · Label`, s.label);
       const selected = s.implementations.find(m => m.id === s.selectedImplementation);
       const selectedLabel = selected && s.implementations.filter(m => m.label === selected.label).length === 1 ? selected.label : `${selected?.label || "Implementation"} (${s.selectedImplementation})`;
@@ -54,7 +56,7 @@ export function validateRevisionProposal(proposal: RevisionProposal, features: F
   validateGroups(proposal.groups);
   if (!revisionChanges(features, groups, proposal).length) throw new Error("실제 변경 제안이 없습니다. 수정 요청을 구체적으로 입력해주세요.");
 }
-export const revisionSnapshot = (features: Feature[], groups: RuleGroup[], code: string, annotations: ResultAnnotation[], instruction: string, image: string) => JSON.stringify({ features, groups, code, annotations, instruction, image });
+export const revisionSnapshot = (features: Feature[], groups: RuleGroup[], code: string, annotations: ResultAnnotation[], instruction: string, image: string, scene?: ConstraintScene) => JSON.stringify({ features, groups, code, annotations, instruction, image, scene });
 
 // Include the current rendering's controls and newly changed groups, preserving
 // unrelated rule groups that were never part of this generated result.

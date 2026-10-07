@@ -1,6 +1,7 @@
-export type IconName = "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "copy" | "upload" | "download" | "brush";
+export type IconName = "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "copy" | "upload" | "download" | "brush";
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
+    trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></>,
     upload: <><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6" /></>,
     download: <><path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4" /></>,
     brush: <><path d="m9 15 10-12 3 3-12 10M9 15c-5-2-3 4-7 6 6 1 10-1 8-5" /></>,

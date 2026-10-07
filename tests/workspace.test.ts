@@ -13,7 +13,8 @@ test("workspace renders a new frame before its position reaches the layout", () 
     frames: [{ id: "sketch-late", title: "Late sketch", subtitle: "", content: "Preserved sketch" }],
   }));
   assert.match(html, /Preserved sketch/);
-  assert.match(html, /left:2080px/);
+  assert.match(html, /left:832px/);
+  assert.doesNotMatch(html, /scale\(/, "SVG and text must render directly at the camera size instead of enlarging a cached layer");
   assert.equal(layout.frames["sketch-late"], undefined);
 });
 
@@ -73,4 +74,35 @@ test("saved projects restore all generated result positions, including moved res
   assert.deepEqual(restored.workspace.frames["result-sketch-a"], { x: -120, y: 1350 });
   assert.deepEqual(restored.sketchPanels.source.generated, generated);
   assert.deepEqual(restored.sketchPanels["sketch-a"].generated, generated);
+});
+
+
+test("deleted source remains deleted after serialization while a surviving sketch keeps its result", () => {
+  const artwork = { strokes: [], photo: null, name: "Remaining", revision: 0 };
+  const generated = { title: "Kept result", explanation: "", code: "p.setup=()=>p.createCanvas(900,600);", bindings: [] };
+  const project = projectSchema.parse({ version: 1, name: "Delete source", artwork, sourceVisible: false,
+    features: [], groups: [], analysisRevision: -1, generated: null, brush: null, savedBrushes: [],
+    activeSketchId: "source", sketchFrames: [{ id: "sketch-kept", artwork }],
+    sketchPanels: { source: { generated }, "sketch-kept": { generated }, "sketch-deleted": { generated } },
+    workspace: { frames: { "sketch-kept": { x: 2080, y: 0 }, "result-sketch-kept": { x: 2080, y: 750 }, "sketch-deleted": { x: 3120, y: 0 }, "result-sketch-deleted": { x: 3120, y: 750 } } },
+  });
+  const restored = projectSchema.parse(JSON.parse(JSON.stringify(project)));
+  assert.equal(restored.sourceVisible, false);
+  assert.equal(restored.activeSketchId, "sketch-kept");
+  assert.equal(restored.sketchPanels.source.generated, null);
+  assert.equal(restored.sketchPanels["sketch-deleted"], undefined);
+  assert.equal(restored.workspace.frames["sketch-deleted"], undefined);
+  assert.equal(restored.workspace.frames["result-sketch-deleted"], undefined);
+  assert.deepEqual(restored.sketchPanels["sketch-kept"].generated, generated);
+  assert.deepEqual(restored.workspace.frames["result-sketch-kept"], { x: 2080, y: 750 });
+});
+
+test("empty workspace persists after the final sketch is deleted and older projects keep their source", () => {
+  const base = { version: 1, name: "Empty", artwork: { strokes: [], photo: null, name: "Empty", revision: 0 }, features: [], groups: [], analysisRevision: -1, generated: null, brush: null, savedBrushes: [] };
+  assert.equal(projectSchema.parse(base).sourceVisible, true);
+  const empty = projectSchema.parse({ ...base, sourceVisible: false });
+  const restored = projectSchema.parse(JSON.parse(JSON.stringify(empty)));
+  assert.equal(restored.sourceVisible, false);
+  assert.deepEqual(restored.sketchFrames, []);
+  assert.equal(restored.sketchPanels.source.generated, null);
 });

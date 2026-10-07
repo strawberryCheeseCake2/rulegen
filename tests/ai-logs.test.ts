@@ -67,11 +67,12 @@ test("generated code artifact exactly matches the final code result", async () =
 
 test("every AI intent logs its final validated result and clarification retains both input images", async () => {
   const source = { ...feature, region: { x: .1, y: .1, w: .5, h: .5 } };
-  const subfeature = { id: "shape", label: "Shape", selectedImplementation: "curve", implementations: [{ id: "curve", label: "Curve", description: "Curved form", parameters: [] }] };
+  const subfeature = { kind: "spatial" as const, primitive: null, id: "shape", label: "Shape", selectedImplementation: "curve", implementations: [{ id: "curve", label: "Curve", description: "Curved form", parameters: [] }] };
   const groups = [{ featureId: source.id, title: "Curve", subfeatures: [subfeature] }];
   const code = { title: "Sketch", explanation: "곡선", code: "p.setup=()=>{p.createCanvas(900,600);p.background(250);p.circle(100,100,50);p.noLoop();}" };
   const annotations = [{ id: "annotation", points: [{ x: .1, y: .1 }, { x: .3, y: .3 }] }];
   const results = {
+    "constraint-code": { ...code, code: `p.setup=()=>{p.createCanvas(900,600); p.rect(rulegenParams["widget%3Afixture/geometry/bounds/x"], rulegenParams["widget%3Afixture/geometry/bounds/y"], rulegenParams["widget%3Afixture/geometry/bounds/w"], rulegenParams["widget%3Afixture/geometry/bounds/h"]);p.noLoop();}` },
     analyze: output, rules: { groups }, subfeature, code, compose: code,
     clarification: { clarification: "곡선을 키워줘" },
     "compose-prompt": { prompt: "곡선을 키우고 자유롭게 그린 배치와 조합해줘" },
@@ -80,7 +81,7 @@ test("every AI intent logs its final validated result and clarification retains 
   };
   for (const intent of requestSchema.shape.intent.options) {
     globalThis.fetch = async () => Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify(results[intent]) }] }] });
-    await runAI(requestSchema.parse({ intent, image, resultImage: "data:image/jpeg;base64,AQID", features: [source], groups, previous: code.code, annotations, instruction: "곡선을 키워줘", targetFeatureId: source.id, targetSubfeatureId: subfeature.id }), new AbortController().signal);
+    await runAI(requestSchema.parse({ intent, scene: { nodes: [{ id: "fixture", label: "Primitive", kind: "object", primitive: "ellipse", featureId: null, sourceSubfeatureId: null, box: { x: .1, y: .1, w: .2, h: .2 }, parentId: null, targetIds: [], algorithmIds: [] }], algorithms: [] }, image, resultImage: "data:image/jpeg;base64,AQID", features: [source], groups, previous: code.code, annotations, instruction: "곡선을 키워줘", targetFeatureId: source.id, targetSubfeatureId: subfeature.id }), new AbortController().signal);
   }
   const directories = await folders();
   assert.equal(directories.length, requestSchema.shape.intent.options.length);

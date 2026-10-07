@@ -1,9 +1,9 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type P5 from "p5";
-import { ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type BrushRecipe, type Point, type Stroke, type SemanticPen, type Viewport } from "../lib/schema";
+import { ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type BrushRecipe, type Point, type Stroke, type Viewport } from "../lib/schema";
 import { drawBrushPath } from "../lib/brush-engine";
 export type CanvasHandle = { capture: (full?: boolean) => { image: string; region: { x: number; y: number; w: number; h: number } }; clearSelection: () => void };
-type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; brush?: BrushRecipe; semanticPen?: SemanticPen; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode };
+type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; brush?: BrushRecipe; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode };
 export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null), instance = useRef<P5 | null>(null);
   const current = useRef(props); current.current = props;
@@ -87,11 +87,11 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     draft.current = null; pointer.current = null; instance.current?.redraw();
   };
   return <div ref={surface} className={`p5-surface tool-${props.tool}`} onContextMenu={e => e.preventDefault()} onPointerDown={e => {
-    if (!ready || (e.target as Element).closest("button")) return;
+    if (!ready || props.tool === "select" || (e.target as Element).closest("button")) return;
     e.currentTarget.setPointerCapture(e.pointerId); const point = coordinate(e); const mode = e.button === 1 || e.altKey ? "hand" : props.tool;
     pointer.current = { mode, last: point };
     if (mode === "lasso") { lasso.current = [world(point)]; setSelection([...lasso.current]); }
-    else if (mode !== "hand") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : mode === "brush" ? "brush" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "brush" && props.brush ? { brush: structuredClone(props.brush) } : {}), ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
+    else if (mode !== "hand") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : mode === "brush" ? "brush" : "pen", color: props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "brush" && props.brush ? { brush: structuredClone(props.brush) } : {}) };
     instance.current?.redraw();
   }} onPointerMove={e => {
     const active = pointer.current; if (!active) return; const point = coordinate(e);

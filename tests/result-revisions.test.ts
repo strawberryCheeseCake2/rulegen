@@ -15,7 +15,7 @@ process.env.RULEGEN_AI_LOG_DIR = logDirectory;
 after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
 
 const features: Feature[] = [{ id: "curve", label: "Curve", description: "곡선", region: { x: .1, y: .2, w: .5, h: .5 } }];
-const groups: RuleGroup[] = [{ featureId: "curve", title: "Curve", subfeatures: [{ id: "shape", label: "Shape", selectedImplementation: "sine", implementations: [{ id: "sine", label: "Sine", description: "Amplitude controls curve height", parameters: [{ id: "amplitude", label: "Amplitude", type: "number", value: 30, min: 0, max: 200, step: 1, unit: "px" }] }] }] }];
+const groups: RuleGroup[] = [{ featureId: "curve", title: "Curve", subfeatures: [{ kind: "spatial", primitive: null, id: "shape", label: "Shape", selectedImplementation: "sine", implementations: [{ id: "sine", label: "Sine", description: "Amplitude controls curve height", parameters: [{ id: "amplitude", label: "Amplitude", type: "number", value: 30, min: 0, max: 200, step: 1, unit: "px" }] }] }] }];
 const proposal = (): RevisionProposal => {
   const result = structuredClone({ summary: "곡선을 더 크게 만듭니다.", features, groups });
   result.groups[0].subfeatures[0].implementations[0].parameters[0].value = 70;
