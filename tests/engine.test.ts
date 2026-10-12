@@ -16,6 +16,30 @@ test("generated loops are bounded before they can freeze the browser", () => {
 test("recursive functions are guarded too", () => { const code = prepareCode("function grow(){grow()}p.setup=()=>{p.createCanvas(900,600);grow()}"); let budget = 0; const p = { setup() {}, createCanvas() {} }; vm.runInNewContext(code, { p, __rulegenGuard() { if (++budget > 20) throw new Error("budget"); } }); assert.throws(() => p.setup(), /budget/); });
 test("network, dynamic evaluation, and DOM APIs cannot enter generated sketches", () => { for (const extra of ["fetch('x')", "document.body.innerHTML='x'", "p['constructor']('x')", "import('x')"]) assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`)); });
 test("regular p5 drawing remains executable", () => { let lines = 0; const p = { setup() {}, createCanvas() {}, line() { lines++; } }; vm.runInNewContext(prepareCode("p.setup=()=>{p.createCanvas(900,600);for(let i=0;i<3;i++)p.line(i,0,i,3)}"), { p, __rulegenGuard() {} }); p.setup(); assert.equal(lines, 3); });
+test("local coordinates and function parameters can share browser-global names", () => {
+  const marks: number[][] = [];
+  const p = { setup() {}, createCanvas() {}, rect(...args: number[]) { marks.push(args); } };
+  const code = prepareCode(`
+    function drawCell(top, parent) { p.rect(0, top, 20, parent); }
+    p.setup = () => {
+      p.createCanvas(900, 600);
+      const top = 28;
+      const parent = 40;
+      drawCell(top, parent);
+      { const top = 56; drawCell(top, parent); }
+    };
+  `);
+  vm.runInNewContext(code, { p, __rulegenGuard() {} });
+  p.setup();
+  assert.deepEqual(marks, [[0, 28, 20, 40], [0, 56, 20, 40]]);
+});
+test("a local top binding does not permit browser globals or unsafe member access", () => {
+  for (const extra of ["top.postMessage('x','*')", "parent.postMessage('x','*')", "window.top", "globalThis.top", "p.top", "p['top']", "p.constructor", "p['constructor']", "eval('1')", "Function('return 1')"]) {
+    assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`), /지원하지 않는/);
+  }
+  assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /API: top/);
+  assert.throws(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const top=28;p.top;};"), /API: top/);
+});
 test("brush recursion and density produce actual p5 marks", () => { const p = fakePainter(); stamp(p, recipe, 0, 0, 0, 1); assert.equal(p.lines.length, 7); p.lines.length = 0; drawBrushPath(p, recipe, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); assert.equal(p.lines.length, 77); });
 test("spacing changes the number of motif stamps", () => { const a = fakePainter(), b = fakePainter(); drawBrushPath(a, recipe, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); drawBrushPath(b, { ...recipe, settings: { ...recipe.settings, spacing: 24 } }, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); assert.ok(a.lines.length > b.lines.length); });
 test("exported brush JavaScript is self contained", () => { const code = brushCode(recipe); assert.doesNotThrow(() => prepareCode(code)); const p = fakePainter(); Object.assign(p, { setup() {}, draw() {}, createCanvas() {}, background() {} }); vm.runInNewContext(code, { p, Math }); (p as unknown as { setup(): void }).setup(); });

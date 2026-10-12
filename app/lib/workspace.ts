@@ -2,11 +2,24 @@ import { z } from "zod";
 import type { Viewport } from "./schema";
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const defaultFrames = () => ({ source: { x: 0, y: 0 }, result: { x: 1040, y: 0 }, brush: { x: 0, y: 780 } });
-export const workspaceSchema = z.object({ camera: position.extend({ zoom: z.number().min(.15).max(3) }).nullable().default(null), frames: z.object({ source: position.default(() => defaultFrames().source), result: position.default(() => defaultFrames().result), brush: position.default(() => defaultFrames().brush) }).catchall(position).default(defaultFrames) });
+export const workspaceSchema = z.object({ camera: position.extend({ zoom: z.number().min(.15).max(3) }).nullable().default(null), hiddenFrames: z.array(z.enum(["source", "result"])).max(2).default([]), frames: z.object({ source: position.default(() => defaultFrames().source), result: position.default(() => defaultFrames().result), brush: position.default(() => defaultFrames().brush) }).catchall(position).default(defaultFrames) });
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
 export type FrameId = "source" | "result" | "brush" | `sketch-${string}` | `result-${string}`;
 export const resultFrameId = (sketchId: string): FrameId => sketchId === "source" ? "result" : `result-${sketchId}`;
 export const resultSketchId = (frameId: FrameId): string | null => frameId === "result" ? "source" : frameId.startsWith("result-") ? frameId.slice(7) : null;
+export function removeWorkspaceFrame(layout: WorkspaceLayout, id: FrameId): WorkspaceLayout {
+  if (id === "source" || id === "result") {
+    const hidden = id === "source" ? ["source", "result"] as const : ["result"] as const;
+    return { ...layout, hiddenFrames: [...new Set([...layout.hiddenFrames, ...hidden])] };
+  }
+  const frames = { ...layout.frames };
+  delete frames[id];
+  if (id.startsWith("sketch-")) delete frames[resultFrameId(id)];
+  return { ...layout, frames };
+}
+export function showWorkspaceFrame(layout: WorkspaceLayout, id: "source" | "result"): WorkspaceLayout {
+  return layout.hiddenFrames.includes(id) ? { ...layout, hiddenFrames: layout.hiddenFrames.filter(frame => frame !== id) } : layout;
+}
 export function ensureResultFramePositions(frames: WorkspaceLayout["frames"], sketchIds: readonly string[]) {
   let resolved = ensureFramePositions(frames, sketchIds);
   for (const id of sketchIds) {

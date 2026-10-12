@@ -3,8 +3,31 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FreeformWorkspace } from "../app/components/freeform-workspace";
-import { ensureFramePositions, ensureResultFramePositions, resultFrameId, resultSketchId, fitFrames, workspaceSchema } from "../app/lib/workspace";
+import { ensureFramePositions, ensureResultFramePositions, resultFrameId, resultSketchId, fitFrames, workspaceSchema, removeWorkspaceFrame, showWorkspaceFrame } from "../app/lib/workspace";
 import { projectSchema } from "../app/lib/project";
+
+test("deleting a sketch removes its result position without moving remaining frames", () => {
+  const layout = workspaceSchema.parse({ frames: { "sketch-a": { x: 3000, y: 0 }, "result-sketch-a": { x: 3000, y: 740 }, "sketch-b": { x: 4000, y: 200 } } });
+  const removed = removeWorkspaceFrame(layout, "sketch-a");
+  assert.equal(removed.frames["sketch-a"], undefined);
+  assert.equal(removed.frames["result-sketch-a"], undefined);
+  assert.deepEqual(removed.frames["sketch-b"], layout.frames["sketch-b"]);
+  assert.ok(layout.frames["sketch-a"]);
+});
+
+test("base frame deletion persists through JSON and can be shown again independently", () => {
+  const removed = removeWorkspaceFrame(workspaceSchema.parse({}), "source");
+  assert.deepEqual(workspaceSchema.parse(JSON.parse(JSON.stringify(removed))).hiddenFrames, ["source", "result"]);
+  const shown = showWorkspaceFrame(removed, "source");
+  assert.deepEqual(shown.hiddenFrames, ["result"]);
+  assert.equal(showWorkspaceFrame(shown, "source"), shown);
+});
+
+test("each frame exposes an accessible deletion button when deletion is available", () => {
+  const html = renderToStaticMarkup(createElement(FreeformWorkspace, { layout: workspaceSchema.parse({}), onChange() {}, onDeleteFrame() {}, deleteDisabled: true, tool: "pen", onDrop() {}, onBackground() {}, frames: [{ id: "source", title: "Sketch", subtitle: "", content: "" }] }));
+  assert.match(html, /aria-label="Delete Sketch frame"/);
+  assert.match(html, /title="Delete frame" disabled/);
+});
 
 test("workspace renders a new frame before its position reaches the layout", () => {
   const layout = workspaceSchema.parse({});
@@ -71,6 +94,6 @@ test("saved projects restore all generated result positions, including moved res
   project.workspace.frames["result-sketch-a"] = { x: -120, y: 1350 };
   const restored = projectSchema.parse(JSON.parse(JSON.stringify(project)));
   assert.deepEqual(restored.workspace.frames["result-sketch-a"], { x: -120, y: 1350 });
-  assert.deepEqual(restored.sketchPanels.source.generated, generated);
-  assert.deepEqual(restored.sketchPanels["sketch-a"].generated, generated);
+  assert.deepEqual(restored.sketchPanels.source.generated, { ...generated, stateMachine: null });
+  assert.deepEqual(restored.sketchPanels["sketch-a"].generated, { ...generated, stateMachine: null });
 });

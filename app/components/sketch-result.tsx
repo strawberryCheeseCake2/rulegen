@@ -3,6 +3,7 @@ import { CodePreview, type CodePreviewHandle } from "./code-preview";
 import { ResultAnnotations } from "./result-annotations";
 import { Icon } from "./icons";
 import { syncParameters } from "../lib/live-parameters";
+import { generatedSource, syncStateMachine } from "../lib/state-machine";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { clearedResultAnnotations, type SketchPanel } from "../lib/sketch-panels";
 
@@ -14,8 +15,8 @@ type Props = {
 export function SketchResult(props: Props) {
   const current = useRef(props); current.current = props;
   const { panel, owner, tool, zoom } = props;
-  const source = panel.generated ? syncParameters(panel.generated.code, panel.groups, panel.generated.bindings) : "";
-  const executable = panel.generated ? syncParameters(panel.executable, panel.groups, panel.generated.bindings) : "";
+  const source = panel.generated ? generatedSource(panel.generated, panel.groups) : "";
+  const executable = panel.generated ? syncStateMachine(syncParameters(panel.executable, panel.groups, panel.generated.bindings), panel.generated.stateMachine) : "";
   useEffect(() => {
     const code = panel.generated?.code;
     if (!code || (panel.preparedCode === code && panel.executable)) return;
@@ -32,7 +33,9 @@ export function SketchResult(props: Props) {
   }, [source, panel.annotationImage, panel.renderRevision]);
   return <div className="sketch-result-surface" data-result-owner={owner} onPointerDownCapture={props.onActivate}>
     {panel.generated ? executable ? <>
-      <CodePreview ref={props.onPreview} key={`${props.documentRevision}-${owner}-${panel.renderRevision}`} code={source} executable={executable} onError={error => props.onPatch({ runtimeError: error })} />
+      <CodePreview ref={props.onPreview} key={`${props.documentRevision}-${owner}-${panel.renderRevision}`} code={source} executable={executable} onError={error => props.onPatch({ runtimeError: error })}
+        machineEnabled={Boolean(panel.generated.stateMachine)} stateId={panel.selectedStateId} playing={panel.machinePlaying} jumpRevision={panel.stateJumpRevision}
+        onStateChange={id => props.onPatch({ runtimeStateId: id })} />
       {panel.annotating && panel.annotationImage && <>
         <img className="annotation-snapshot" src={panel.annotationImage} alt="Generated result captured for annotation" />
         <ResultAnnotations annotations={panel.annotationHistory.present} zoom={zoom} tool={tool} disabled={Boolean(panel.loading)}

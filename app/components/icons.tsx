@@ -1,6 +1,9 @@
-export type IconName = "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "copy" | "upload" | "download" | "brush";
+export type IconName = "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush";
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
+    interaction: <><path d="m7 5 1 15 4-5 5 5 3-3-5-5 5-4L7 5ZM3 3l2 2M9 1v2M1 9h2" /></>,
+    trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></>,
+    pause: <><path d="M8 4v16M16 4v16" /></>,
     upload: <><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6" /></>,
     download: <><path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4" /></>,
     brush: <><path d="m9 15 10-12 3 3-12 10M9 15c-5-2-3 4-7 6 6 1 10-1 8-5" /></>,
@@ -20,4 +23,3 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
-

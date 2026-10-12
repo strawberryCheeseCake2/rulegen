@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { RecoveryContext, RecoveredGeneration } from "../lib/generation-recovery";
+
+export const aiLogRoot = () => path.resolve(process.env.RULEGEN_AI_LOG_DIR || "ai-generations");
 
 type Status = "started" | "success" | "failed" | "cancelled";
 
@@ -16,17 +19,18 @@ export class AIGenerationLog {
   private constructor(intent: string, model: string) {
     const timestamp = this.started.toISOString();
     this.id = `${timestamp.replace(/[:.]/g, "-")}-${intent}-${randomUUID()}`;
-    const root = path.resolve(process.env.RULEGEN_AI_LOG_DIR || "ai-generations");
+    const root = aiLogRoot();
     this.directory = path.join(root, timestamp.slice(0, 10), this.id);
     this.metadata = { id: this.id, intent, model, startedAt: timestamp, status: "started" satisfies Status };
   }
 
-  static async start(intent: string, model: string, input: unknown) {
+  static async start(intent: string, model: string, input: unknown, context?: RecoveryContext) {
     const log = new AIGenerationLog(intent, model);
     await log.io(async () => {
       await mkdir(log.directory, { recursive: true, mode: 0o700 });
       await log.json("log.json", log.metadata);
       await log.json("request.json", input);
+      if (context) await log.json("context.json", context);
     });
     return log;
   }
@@ -51,9 +55,10 @@ export class AIGenerationLog {
     });
   }
 
-  async success(result: unknown) {
+  async success(result: unknown, recovery?: RecoveredGeneration) {
     await this.io(async () => {
       await this.json("result.json", result);
+      if (recovery) await this.json("recovery.json", recovery);
       if (result && typeof result === "object" && "code" in result && typeof result.code === "string") {
         await this.file("generated.js", this.redact(result.code));
       }

@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { runAI } from "../app/server/ai.server";
 import { requestSchema } from "../app/lib/schema";
+import { listGenerations, restoreGeneration, readGeneration } from "../app/server/ai-history.server";
+import { recoveryContextSchema } from "../app/lib/generation-recovery";
+import { projectSchema } from "../app/lib/project";
 
 const root = await mkdtemp(path.join(tmpdir(), "rulegen-ai-logs-"));
 const previous = { fetch: globalThis.fetch, key: process.env.OPENAI_API_KEY, directory: process.env.RULEGEN_AI_LOG_DIR };
@@ -72,6 +75,7 @@ test("every AI intent logs its final validated result and clarification retains 
   const code = { title: "Sketch", explanation: "곡선", code: "p.setup=()=>{p.createCanvas(900,600);p.background(250);p.circle(100,100,50);p.noLoop();}" };
   const annotations = [{ id: "annotation", points: [{ x: .1, y: .1 }, { x: .3, y: .3 }] }];
   const results = {
+    "state-machine": { initialState: "scene", states: [{ id: "scene", label: "Scene", description: "곡선", features: [source], groups }], transitions: [] },
     analyze: output, rules: { groups }, subfeature, code, compose: code,
     clarification: { clarification: "곡선을 키워줘" },
     "compose-prompt": { prompt: "곡선을 키우고 자유롭게 그린 배치와 조합해줘" },
@@ -87,6 +91,8 @@ test("every AI intent logs its final validated result and clarification retains 
   for (const directory of directories) {
     const log = await json(directory, "log.json"); assert.equal(log.status, "success");
     assert.ok(await json(directory, "result.json"));
+    const restored = await restoreGeneration(path.relative(root, directory));
+    assert.ok(projectSchema.safeParse(restored.project).success, `restores ${log.intent}`);
     if (log.intent === "clarification") {
       const request = await json(directory, "request.json");
       const images = (await json(directory, "prompt.json")).input[0].content.filter((part: { type: string }) => part.type === "input_image");
@@ -94,6 +100,42 @@ test("every AI intent logs its final validated result and clarification retains 
       assert.deepEqual(await readFile(path.join(directory, request.resultImage.file)), Buffer.from("AQID", "base64"));
     }
   }
+});
+
+test("project snapshots, image assets and generated features restore exactly without a second AI request", async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return response(); };
+  const artwork = { name: "Keep original", photo: image, strokes: [], revision: 3 };
+  const project = projectSchema.parse({ version: 1, name: "History", artwork, features: [], groups: [], generated: null, brush: null, savedBrushes: [], analysisRevision: -1,
+    sketchFrames: [{ id: "sketch-target", artwork: { ...artwork, name: "Target", revision: 7 } }, { id: "sketch-other", artwork }],
+    workspace: { frames: { "sketch-target": { x: 3000, y: 200 } } },
+  });
+  const context = recoveryContextSchema.parse({ project, owner: "sketch-target", region: { x: .2, y: .1, w: .5, h: .5 } });
+  await runAI(requestSchema.parse({ intent: "analyze", image }), new AbortController().signal, context);
+  const history = await listGenerations(); assert.equal(history.entries.length, 1);
+  const { key } = history.entries[0];
+  const [directory] = await folders();
+  assert.ok(await json(directory, "context.json")); assert.ok(await json(directory, "recovery.json"));
+  const restored = await restoreGeneration(key);
+  assert.equal(calls, 1); assert.equal(restored.project.activeSketchId, "sketch-target");
+  assert.deepEqual(restored.project.artwork, project.artwork);
+  assert.deepEqual(restored.project.sketchFrames, project.sketchFrames);
+  assert.deepEqual(restored.project.workspace.frames["sketch-target"], { x: 3000, y: 200 });
+  assert.equal(restored.project.sketchPanels["sketch-target"].analysisRevision, 7);
+  assert.equal(restored.project.sketchPanels["sketch-target"].features[0].region.x, .65);
+  assert.deepEqual(restored.project.sketchPanels["sketch-other"], project.sketchPanels["sketch-other"]);
+  assert.equal((await readGeneration(key)).metadata.status, "success");
+  await assert.rejects(restoreGeneration("../../.env"), /로그 ID/);
+  await assert.rejects(readGeneration(`${key}/../request.json`), /로그 ID/);
+});
+
+test("failed logs remain browsable and cannot be restored as completed output", async () => {
+  globalThis.fetch = async () => Response.json({ error: "failure" }, { status: 401 });
+  await assert.rejects(runAI(requestSchema.parse({ intent: "analyze", image }), new AbortController().signal));
+  const history = await listGenerations(); const key = history.entries[0].key;
+  assert.equal(history.entries[0].status, "failed");
+  assert.ok((await readGeneration(key)).error);
+  await assert.rejects(restoreGeneration(key), /완료된 AI 생성/);
 });
 
 test("upstream failures retain the provider response and redact keys without leaking it to the client", async () => {

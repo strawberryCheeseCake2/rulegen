@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { compositionPromptSchema, requestSchema, subfeatureSchema, type Artwork } from "../app/lib/schema";
-import { makeSemanticPen, compositionContext } from "../app/lib/algorithm-pens";
+import { createInteractionPen, makeSemanticPen, compositionContext } from "../app/lib/algorithm-pens";
 import { projectSchema } from "../app/lib/project";
 import { createSketchPanel, savedSketchPanels } from "../app/lib/sketch-panels";
 
@@ -19,6 +19,36 @@ const groups = [{ featureId: feature.id, title: "Pattern", subfeatures: [sub] }]
 const pen = makeSemanticPen(groups, feature, "size", "source", "power-pen", "#3b73c4");
 const art: Artwork = { name: "Sketch", photo: null, revision: 1, strokes: [{ tool: "pen", color: pen.color, width: 3, opacity: .8, points: [{ x: 100, y: 150 }, { x: 700, y: 300 }], semanticPen: structuredClone(pen) }, { tool: "pen", color: "#75664e", width: 3, opacity: .8, points: [{ x: 80, y: 80 }, { x: 600, y: 500 }] }] };
 const rawProject = { version: 1, name: "Semantic study", artwork: art, features: [feature], groups, analysisRevision: 0, generated: null, brush: null, savedBrushes: [], semanticPens: [pen], activeSemanticPenId: pen.id };
+
+test("old and new projects have an editable default Interaction pen alongside custom algorithm pens", () => {
+  const old = projectSchema.parse(rawProject);
+  assert.equal(old.interactionPen.kind, "interaction");
+  assert.equal(old.interactionPen.name, "Interaction pen");
+  assert.equal(old.semanticPens.length, 1);
+  assert.equal(old.semanticPens[0].kind, "algorithm");
+  const changed = { ...old.interactionPen, meaning: "원을 누르고 오른쪽 박스로 드래그하면 놓은 뒤 원이 정착합니다.", color: "#aa5533" };
+  const restored = projectSchema.parse(JSON.parse(JSON.stringify({ ...old, interactionPen: changed, activeSemanticPenId: changed.id })));
+  assert.deepEqual(restored.interactionPen, changed);
+  assert.equal(restored.activeSemanticPenId, changed.id);
+});
+
+test("interaction annotations retain per-stroke meanings, geometry and eraser order through save and AI context", () => {
+  const interaction = createInteractionPen();
+  const changed = { ...interaction, meaning: "박스 위에 놓기" };
+  const original = { ...art.strokes[0], semanticPen: interaction, color: interaction.color };
+  const artwork = { ...art, strokes: [art.strokes[1], original, { ...original, semanticPen: changed }, { ...original, tool: "eraser" as const }] };
+  const restored = projectSchema.parse(JSON.parse(JSON.stringify({ ...rawProject, artwork, interactionPen: changed })));
+  const context = compositionContext(restored.artwork);
+  assert.deepEqual(context.compositionStrokes.map(s => s.tool), ["pencil", "interaction", "interaction", "eraser"]);
+  assert.equal(context.compositionPens[0].meaning, interaction.meaning);
+  assert.equal(context.compositionPens[1].meaning, changed.meaning);
+  assert.equal(context.compositionStrokes[1].points[0].x, 100 / 900);
+  assert.notEqual(context.compositionStrokes[1].semanticPenId, context.compositionStrokes[2].semanticPenId);
+  assert.equal(context.compositionStrokes[3].semanticPenId, null);
+  assert.equal(requestSchema.safeParse({ intent: "compose", ...context }).success, true);
+  assert.equal(requestSchema.safeParse({ intent: "compose", ...context, compositionPens: [] }).success, false);
+  assert.equal(requestSchema.safeParse({ intent: "compose", ...context, compositionPens: context.compositionPens.map(p => ({ ...p, kind: "algorithm" })) }).success, false);
+});
 
 test("Make pen copies the chosen algorithm locally without producing drawing geometry", () => {
   assert.equal(pen.implementation.id, "power"); assert.equal(pen.implementation.parameters[0].value, 2); assert.equal(pen.meaning, sub.implementations[0].description);

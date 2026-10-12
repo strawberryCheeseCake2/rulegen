@@ -20,5 +20,5 @@ export function connectParameters(result: { title: string; explanation: string; 
   });
   if (bindings.some(b => !used.has(b.key))) throw new Error("일부 위젯을 코드에 연결하지 못했습니다. 다시 생성해주세요.");
   if (result.code.includes(PARAM_START)) throw new Error("파라미터 블록은 서버에서 생성합니다. 다시 시도해주세요.");
-  return { ...result, bindings, code: `${parameterBlock(parameterValues(groups, bindings))}\n\n${result.code}` };
+  return { ...result, stateMachine: null, bindings, code: `${parameterBlock(parameterValues(groups, bindings))}\n\n${result.code}` };
 }
