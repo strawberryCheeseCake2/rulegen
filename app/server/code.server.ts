@@ -17,9 +17,21 @@ export function prepareCode(source: string) {
       // Property access and dangerous reflection/evaluation names remain blocked.
       const binding = path.isBindingIdentifier(), reference = path.isReferencedIdentifier();
       if (!reserved.has(name) && (binding || reference) && path.scope.getBinding(name)) return;
+      // Plain object keys (`{ top: 5 }`) are data too.
+      const parent = path.parent;
+      if (!reserved.has(name) && (t.isObjectProperty(parent) || t.isObjectMethod(parent)) && parent.key === path.node && !parent.computed) return;
       throw new Error(`코드에서 지원하지 않는 API: ${name}`);
     },
-    StringLiteral(path) { if (blocked.has(path.node.value)) throw new Error("지원하지 않는 동적 API 접근입니다."); },
+    // Strings are data (`alignment === "top"`), except as a computed key (`p["top"]`) or a reflection name anywhere.
+    StringLiteral(path) {
+      const value = path.node.value, parent = path.parent;
+      const computedKey = (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.computed && parent.property === path.node;
+      if (reserved.has(value) || (blocked.has(value) && computedKey)) throw new Error("지원하지 않는 동적 API 접근입니다.");
+    },
+    TemplateLiteral(path) {
+      const parent = path.parent;
+      if ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.computed && parent.property === path.node && path.node.quasis.some(part => blocked.has(part.value.cooked ?? ""))) throw new Error("지원하지 않는 동적 API 접근입니다.");
+    },
     CallExpression(path) { if (t.isImport(path.node.callee)) throw new Error("생성 코드는 외부 모듈을 불러올 수 없습니다."); },
     ImportExpression() { throw new Error("생성 코드는 외부 모듈을 불러올 수 없습니다."); },
     "ForStatement|WhileStatement|DoWhileStatement|ForInStatement|ForOfStatement"(path) {

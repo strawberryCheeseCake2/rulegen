@@ -1,143 +1,193 @@
-import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Route } from "./+types/home";
-import { Icon, type IconName } from "../components/icons";
+import { Icon } from "../components/icons";
 import { SketchCanvas, type CanvasHandle } from "../components/sketch-canvas";
 import { FreeformWorkspace, type WorkspaceHandle } from "../components/freeform-workspace";
-import { nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, ensureResultFramePositions, resultFrameId, resultSketchId, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
-import { annotationHistoryReducer } from "../lib/annotation-history";
+import { ToolRail } from "../components/tool-rail";
 import { ResultRevisionPanel } from "../components/result-revision-panel";
-import { annotatedResultImage, revisionCodeFeatures, revisionCodeGroups, revisionChanges, revisionSnapshot, validateRevisionProposal } from "../lib/result-revisions";
 import type { CodePreviewHandle } from "../components/code-preview";
-import { SketchResult } from "../components/sketch-result";
+import { FrameAnnotations, FrameRender } from "../components/frame-render";
 import { GenerationHistory } from "../components/generation-history";
-import { type RecoveredGeneration } from "../lib/generation-recovery";
 import { RawCodePanel } from "../components/raw-code-panel";
-import { StateMachinePanel } from "../components/state-machine-panel";
-import { compositionPromptSchema, clarificationSchema, revisionProposalSchema, analysisSchema, rulesSchema, generatedSchema, subfeatureSchema, brushSchema, ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type RuleGroup, type BrushRecipe, type SemanticPen, type Stroke, type Viewport, type StateMachine, type GeneratedCode } from "../lib/schema";
-import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
-import { SubfeatureControls } from "../components/subfeature-controls";
-import { activeGroups, updateParameter, replaceSubfeature, removeControl } from "../lib/subfeatures";
-import { syncParameters, liveStatus, detachControls } from "../lib/live-parameters";
-import { generatedSource, syncStateMachine } from "../lib/state-machine";
-import { FeatureOverlay } from "../components/feature-overlay";
-import { AlgorithmPenSettings } from "../components/algorithm-pen-settings";
-import { compositionContext, createInteractionPen, makeSemanticPen, semanticPenColors } from "../lib/algorithm-pens";
 import { SketchComposition } from "../components/sketch-composition";
-import { brushCode } from "../lib/brush-engine";
-import { createSketchPanel, clearedResultAnnotations, updateSketchPanel, savedSketchPanels, selectedSceneState, type SketchPanel } from "../lib/sketch-panels";
+import { LayerPanel } from "../components/scene/layer-panel";
+import { SceneOverlay } from "../components/scene/scene-overlay";
+import { PropertyInspector } from "../components/scene/property-inspector";
+import { PanelResizer } from "../components/panel-resizer";
+import { AlgorithmLibrary, type AlgorithmSource } from "../components/scene/algorithm-library";
+import { NodeMachinePanel } from "../components/scene/node-machine-panel";
+import { besideFramePosition, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
+import { annotationHistoryReducer } from "../lib/annotation-history";
+import { type RecoveredGeneration } from "../lib/generation-recovery";
+import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
+import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
+import { createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
+import { createSketchPanel, clearedResultAnnotations, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
+import { emptyScene } from "../lib/scene/schema";
+import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
+import { findNode } from "../lib/scene/graph";
+import { syncScene } from "../lib/scene/machines";
+import { liveSceneSource, sceneLiveStatus } from "../lib/scene/live";
+import { editingState, inspectedNode, inspectedTransformations, commitScene } from "../lib/scene/panel-ops";
+import { penAlgorithm } from "../lib/scene/pens";
+import { markLogged, reportError } from "../lib/error-report";
+import { sceneChanges } from "../lib/scene/revisions";
+import type { StudioDeps, PanelPatch } from "../studio/deps";
+import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
+import { NODE_DRAG_TYPE, readNodeDrag, type AlgorithmClip } from "../lib/scene/transfer";
+import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
 
-export function meta({}: Route.MetaArgs) { return [{ title: "Rulegen — From a mark to a system" }, { name: "description", content: "Draw, discover visual features, and create p5.js systems and procedural brushes with AI." }]; }
+export function meta({}: Route.MetaArgs) { return [{ title: "Rulegen — From a mark to a system" }, { name: "description", content: "Draw, extract collections and objects, and create p5.js systems with AI." }]; }
 const blank = (): Artwork => ({ strokes: [], photo: null, name: "Untitled exploration", revision: 0 });
 const storageKey = "rulegen.project.v1";
-const clarificationLabel = "AI가 annotation 스케치를 보고 설명 초안을 만들고 있습니다…";
-const compositionPromptLabel = "AI가 스케치와 펜의 의미를 읽어 Compose prompt를 만들고 있습니다…";
 const drawingViewport: Viewport = { zoom: 1, x: 0, y: 0 };
+
 export default function Home() {
+  // ── Sketch frames ──────────────────────────────────────────────────────────
   const [artwork, setArtwork] = useState<Artwork>(blank);
+  const artworkRef = useRef(artwork); artworkRef.current = artwork;
   const [sketchFrames, setSketchFrames] = useState<SketchFrame[]>([]);
   const sketchFramesRef = useRef(sketchFrames); sketchFramesRef.current = sketchFrames;
-  const sketchCanvases = useRef(new Map<string, CanvasHandle>());
-  const [activeSketch, setActiveSketch] = useState("source");
-  const featureSourceId = activeSketch;
-  const activeSketchRef = useRef(activeSketch); activeSketchRef.current = activeSketch;
-  const [panels, setPanels] = useState<Record<string, SketchPanel>>(() => ({ source: createSketchPanel() }));
-  const panelsRef = useRef(panels); panelsRef.current = panels;
-  const storedPanel = panels[activeSketch] || createSketchPanel();
-  const panel = { ...storedPanel, dirtyStateIds: storedPanel.dirtyStateIds || [], stateJumpRevision: storedPanel.stateJumpRevision || 0, machinePlaying: storedPanel.machinePlaying ?? true };
-  function panelState<K extends keyof SketchPanel>(key: K): [SketchPanel[K], Dispatch<SetStateAction<SketchPanel[K]>>] {
-    const sceneState = selectedSceneState(panel);
-    const stateId = sceneState?.id;
-    if (sceneState && (key === "features" || key === "groups")) {
-      const field = key as "features" | "groups";
-      return [sceneState[field] as SketchPanel[K], next => setPanels(current => {
-        const previous = current[activeSketch];
-        const machine = previous?.generated?.stateMachine;
-        const state = machine?.states.find(state => state.id === stateId);
-        if (!previous?.generated || !machine || !state) return current;
-        const value = typeof next === "function" ? (next as (value: SketchPanel[K]) => SketchPanel[K])(state[field] as SketchPanel[K]) : next;
-        if (Object.is(state[field], value)) return current;
-        const structural = (data: unknown) => JSON.stringify(data, (key, value) => key === "value" ? null : value);
-        const dirty = structural(state[field]) !== structural(value);
-        const updated = { ...state, [field]: value } as typeof state;
-        return { ...current, [activeSketch]: { ...previous, generated: { ...previous.generated, stateMachine: { ...machine, states: machine.states.map(item => item.id === stateId ? updated : item) } }, dirtyStateIds: dirty ? [...new Set([...previous.dirtyStateIds, state.id])] : previous.dirtyStateIds } };
-      })];
-    }
-    return [panel[key], next => setPanels(current => updateSketchPanel(current, activeSketch, key, next))];
-  }
-  function updatePanel(id: string, patch: Partial<SketchPanel> | ((panel: SketchPanel) => Partial<SketchPanel>)) {
-    setPanels(current => { const previous = current[id] || createSketchPanel(); return { ...current, [id]: { ...previous, ...(typeof patch === "function" ? patch(previous) : patch) } }; });
-  }
-  const [stage, setStage] = panelState("stage");
+  const [history, setHistory] = useState<Artwork[]>([]), [future, setFuture] = useState<Artwork[]>([]);
   const [sketchHistories, setSketchHistories] = useState<Record<string, { past: Artwork[]; future: Artwork[] }>>({});
   const [sketchSelections, setSketchSelections] = useState<Record<string, boolean>>({});
-  const [pendingFrameFocus, setPendingFrameFocus] = useState<FrameId | null>(null);
-  const artworkRef = useRef(artwork); artworkRef.current = artwork;
-  const [features, setFeatures] = panelState("features"), [groups, setGroups] = panelState("groups");
-  const [selected, setSelected] = panelState("selected"), [hovered, setHovered] = panelState("hovered");
-  const [analysisRevision, setAnalysisRevision] = panelState("analysisRevision");
+  const [hasSelection, setHasSelection] = useState(false);
+  const sketchCanvases = useRef(new Map<string, CanvasHandle>());
+  const canvas = useRef<CanvasHandle>(null);
+  const [activeSketch, setActiveSketch] = useState("source");
+  const activeSketchRef = useRef(activeSketch); activeSketchRef.current = activeSketch;
+
+  // ── Per-sketch panels (kept in a ref too, so chained actions see their own writes) ──
+  const [panels, setPanels] = useState<Record<string, SketchPanel>>(() => ({ source: createSketchPanel() }));
+  const panelsRef = useRef(panels);
+  function mutatePanels(edit: (current: Record<string, SketchPanel>) => Record<string, SketchPanel>) {
+    const next = edit(panelsRef.current);
+    if (next !== panelsRef.current) { panelsRef.current = next; setPanels(next); }
+  }
+  function updatePanel(id: string, patch: PanelPatch) {
+    mutatePanels(current => {
+      const previous = current[id] || createSketchPanel();
+      const changes = typeof patch === "function" ? patch(previous) : patch;
+      return Object.keys(changes).length ? { ...current, [id]: { ...previous, ...changes } } : current;
+    });
+  }
+  const panel = panels[activeSketch] || createSketchPanel();
+  const patchActive = (patch: PanelPatch) => updatePanel(activeSketch, patch);
+
+  // ── Tools, pens, workspace and app chrome ──────────────────────────────────
   const [tool, setTool] = useState("pen"), [pencilOpen, setPencilOpen] = useState(false);
   const [color, setColor] = useState("#75664e"), [width, setWidth] = useState(3), [opacity, setOpacity] = useState(80);
-  const viewport = drawingViewport;
   const [workspace, setWorkspace] = useState<WorkspaceLayout>(() => workspaceSchema.parse({}));
   const workspaceCanvas = useRef<WorkspaceHandle>(null);
-  const [, setRenderRevision] = panelState("renderRevision");
-  const [hasSelection, setHasSelection] = useState(false);
-  const [generated, setGenerated] = panelState("generated"), [codeDraft, setCodeDraft] = panelState("codeDraft"), [, setExecutable] = panelState("executable");
+  const [pendingFrameFocus, setPendingFrameFocus] = useState<FrameId | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const resultPreviews = useRef(new Map<string, CodePreviewHandle>());
-  const [annotating, setAnnotating] = panelState("annotating"), [annotationImage] = panelState("annotationImage");
-  const [annotationHistory, setAnnotationHistory] = panelState("annotationHistory");
-  const editAnnotations = (action: Parameters<typeof annotationHistoryReducer>[1]) => setAnnotationHistory(current => annotationHistoryReducer(current, action));
-  const annotations = annotationHistory.present;
-  const [clarifying, setClarifying] = panelState("clarifying");
-  const [clarificationContext, setClarificationContext] = panelState("clarificationContext");
-  const [revisionInstruction, setRevisionInstruction] = panelState("revisionInstruction");
-  const [revisionProposal, setRevisionProposal] = panelState("revisionProposal");
-  const [removedControls, setRemovedControls] = panelState("removedControls");
-  const [runtimeError, setRuntimeError] = panelState("runtimeError");
-  const [brush, setBrush] = panelState("brush"), [savedBrushes, setSavedBrushes] = useState<BrushRecipe[]>([]), [blend, setBlend] = panelState("blend");
-  const [drawingBrush, setDrawingBrush] = useState<BrushRecipe | null>(null), [penSettingsOpen, setPenSettingsOpen] = useState(false);
-  const activeDrawingBrush = drawingBrush || brush;
+  // Studio-wide clipboard for algorithm blocks (copy in one sketch, paste in any).
+  const [clip, setClip] = useState<AlgorithmClip | null>(null);
+  const clipRef = useRef(clip); clipRef.current = clip;
+  const [penSettingsOpen, setPenSettingsOpen] = useState(false);
+  // Right panel width chosen by dragging its edge (null = responsive default); remembered per browser.
+  const inspectorPanel = useRef<HTMLElement>(null);
+  const [inspectorWidth, setInspectorWidth] = useState<number | null>(null);
   const [semanticPens, setSemanticPens] = useState<SemanticPen[]>([]), [activeSemanticPenId, setActiveSemanticPenId] = useState<string | null>(null);
   const [interactionPen, setInteractionPen] = useState<SemanticPen>(createInteractionPen);
   const algorithmPens = [interactionPen, ...semanticPens];
   const activeSemanticPen = algorithmPens.find(pen => pen.id === activeSemanticPenId);
-  const [lab, setLab] = panelState("lab"), [labFuture, setLabFuture] = panelState("labFuture"), [gesture, setGesture] = panelState("gesture");
-  const [loading, setLoading] = panelState("loading"), [error, setError] = panelState("error"), [toast, setToast] = useState("");
-  const [model, setModel] = useState(""), [configured, setConfigured] = useState<boolean | null>(null);
+  const [toast, setToast] = useState(""), [model, setModel] = useState(""), [configured, setConfigured] = useState<boolean | null>(null);
   const [restoreReady, setRestoreReady] = useState(false), [saveState, setSaveState] = useState("Local draft");
-  const [historyOpen, setHistoryOpen] = useState(false);
-  const [modal, setModal] = useState(false), [exportOpen, setExportOpen] = useState(false), [newName, setNewName] = useState("");
-  const [composePrompt, setComposePrompt] = panelState("composePrompt"), [generationMode, setGenerationMode] = panelState("generationMode");
-  const [instruction, setInstruction] = panelState("instruction");
-  const [brushDescription, setBrushDescription] = panelState("brushDescription");
-  const [history, setHistory] = useState<Artwork[]>([]), [future, setFuture] = useState<Artwork[]>([]);
-  const canvas = useRef<CanvasHandle>(null), brushCanvas = useRef<CanvasHandle>(null), upload = useRef<HTMLInputElement>(null), importInput = useRef<HTMLInputElement>(null);
+  const [historyOpen, setHistoryOpen] = useState(false), [modal, setModal] = useState(false), [exportOpen, setExportOpen] = useState(false), [newName, setNewName] = useState("");
+  const upload = useRef<HTMLInputElement>(null), importInput = useRef<HTMLInputElement>(null), inspector = useRef<HTMLDivElement>(null);
   const abort = useRef<AbortController | null>(null), requestNumber = useRef(0), activeDocument = useRef(0), prepareNumber = useRef(0);
-  const inspector = useRef<HTMLDivElement>(null);
-  const chosen = features.find(f => f.id === selected);
-  const active = features.find(f => f.id === (hovered || selected));
-  const visibleGroups = groups.filter(g => !selected || g.featureId === selected);
+
+  // ── Derived view of the active sketch ──────────────────────────────────────
+  const { scene, generated, annotating } = panel;
+  const annotations = panel.annotationHistory.present;
+  const busy = Boolean(panel.loading);
+  const artworkOf = (id: string) => id === "source" ? artworkRef.current : sketchFramesRef.current.find(frame => frame.id === id)?.artwork;
   const currentSketch = activeSketch === "source" ? artwork : sketchFrames.find(f => f.id === activeSketch)?.artwork || artwork;
-  const analyzedSketch = featureSourceId === "source" ? artwork : sketchFrames.find(f => f.id === featureSourceId)?.artwork || artwork;
   const currentSelection = activeSketch === "source" ? hasSelection : Boolean(sketchSelections[activeSketch]);
-  const busy = Boolean(loading), sourcePresent = Boolean(currentSketch.photo || currentSketch.strokes.length);
-  const stale = !generated?.stateMachine && features.length > 0 && analysisRevision !== analyzedSketch.revision;
-  const liveSource = useMemo(() => generated ? generatedSource(generated, groups) : "", [generated, groups]);
-  const machine = generated?.stateMachine || null;
-  const selectedStateId = panel.selectedStateId || panel.runtimeStateId || machine?.initialState || null;
-  const controlsStatus = machine ? panel.dirtyStateIds.includes(selectedStateId || "") ? "changed" : "live" : generated ? liveStatus(generated.code, groups, generated.bindings) : "unlinked";
+  const sourcePresent = Boolean(currentSketch.photo || currentSketch.strokes.length);
+  // A derived frame is stale when the sketch it was extracted from has changed since.
+  const sourceSketch = panel.sourceFrameId ? artworkOf(panel.sourceFrameId) : undefined;
+  const stale = scene.nodes.length > 0 && (sourceSketch ? panel.analysisRevision !== sourceSketch.revision : !panel.sourceFrameId && panel.analysisRevision >= 0 && panel.analysisRevision !== currentSketch.revision);
+  const liveSource = liveSceneSource(generated, scene);
+  const liveStatus = sceneLiveStatus(generated, scene);
+  const node = inspectedNode(panel);
+  const nodeState = editingState(panel, node);
+  const machineNode = node || scene.nodes.find(item => item.machine);
+  const proposalStale = Boolean(panel.revisionProposal && panel.revisionProposal.snapshot !== revisionSnapshot(panel));
+  const proposalChanges = panel.revisionProposal ? sceneChanges(scene, panel.revisionProposal.proposal.scene) : [];
 
-  const currentRevisionSnapshot = revisionSnapshot(features, groups, liveSource, annotations, revisionInstruction, annotationImage);
-  const currentSketchSnapshot = revisionSnapshot(features, groups, liveSource, annotations, "", annotationImage);
-  const revisionState = useRef(currentRevisionSnapshot); revisionState.current = currentRevisionSnapshot;
-  const proposalStale = Boolean(revisionProposal && revisionProposal.snapshot !== currentRevisionSnapshot);
-  const proposalChanges = useMemo(() => revisionProposal ? revisionChanges(features, groups, revisionProposal.proposal) : [], [features, groups, revisionProposal]);
-  const resultOwners = [{ id: "source", name: artwork.name }, ...sketchFrames.map(frame => ({ id: frame.id, name: frame.artwork.name }))].filter(owner => (owner.id === "source" && !workspace.hiddenFrames.includes("result")) || panels[owner.id]?.generated);
-  const resultPositions = ensureResultFramePositions(workspace.frames, resultOwners.map(owner => owner.id));
-  const resultLayout = resultPositions === workspace.frames ? workspace : { ...workspace, frames: resultPositions };
-  useEffect(() => { if (panels.source?.generated) setWorkspace(current => showWorkspaceFrame(current, "result")); }, [panels.source?.generated]);
-  useEffect(() => { if (resultPositions !== workspace.frames) setWorkspace(current => ({ ...current, frames: ensureResultFramePositions(current.frames, resultOwners.map(owner => owner.id)) })); }, [resultPositions, workspace.frames]);
+  // ── Server requests ────────────────────────────────────────────────────────
+  function projectData() {
+    return { version: 2 as const, name: artwork.name, artwork: artworkRef.current, sketchFrames: sketchFramesRef.current, activeSketchId: activeSketchRef.current,
+      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, workspace };
+  }
+  async function request(intent: string, body: object, owner = activeSketch) {
+    updatePanel(owner, { error: "" });
+    const controller = new AbortController(); abort.current = controller;
+    const ownerPanel = panelsRef.current[owner] || createSketchPanel();
+    const recoveryContext = { project: { ...projectData(), activeSketchId: owner }, owner,
+      region: (body as { recoveryRegion?: { x: number; y: number; w: number; h: number } }).recoveryRegion,
+      annotations: ownerPanel.annotationHistory.present, annotationImage: ownerPanel.annotationImage, revisionInstruction: ownerPanel.revisionInstruction, proposal: ownerPanel.revisionProposal?.proposal || null };
+    const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent, ...body, recoveryContext }), signal: controller.signal });
+    const result = await response.json();
+    if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+    if (!response.ok || result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error || "요청을 처리하지 못했습니다."); }
+    return result;
+  }
+  async function task(label: string, work: () => Promise<void>, owner = activeSketch) {
+    if (panelsRef.current[owner]?.loading) return;
+    const number = ++requestNumber.current; updatePanel(owner, { loading: label, error: "" });
+    try { await work(); } catch (e) { if (number === requestNumber.current && !(e instanceof DOMException && e.name === "AbortError")) updatePanel(owner, { error: e instanceof Error ? e.message : "처리 중 오류가 발생했습니다." }); }
+    finally { if (number === requestNumber.current) updatePanel(owner, { loading: "" }); }
+  }
+  function cancel() { requestNumber.current++; abort.current?.abort(); updatePanel(activeSketchRef.current, { loading: "" }); }
+  const canvasFor = (id: string) => id === "source" ? canvas.current : sketchCanvases.current.get(id);
+  function addPen(make: (id: string, color: string) => SemanticPen) {
+    if (semanticPens.length >= 32) { patchActive({ error: "툴바에 펜이 가득 찼습니다. 사용하지 않는 펜을 제거해주세요." }); return; }
+    const pen = make(crypto.randomUUID(), semanticPenColors.find(c => !semanticPens.some(p => p.color === c)) || semanticPenColors[semanticPens.length % semanticPenColors.length]);
+    const baseName = pen.name.slice(0, 90); let name = baseName, suffix = 2;
+    while (semanticPens.some(item => item.name === name)) name = `${baseName} ${suffix++}`;
+    const next = { ...pen, name };
+    setSemanticPens(current => [...current, next]); selectAlgorithmPen(next);
+    setToast(`${name}을 툴바에 추가했습니다. 자유롭게 그린 뒤 Compose prompt로 조합하세요.`);
+  }
+  /** A new sketch frame placed beside `fromId` (used for extracted/composed scenes). */
+  function createFrame(fromId: string, name: string): string | null {
+    if (sketchFramesRef.current.length >= 24) return null;
+    const id: FrameId = `sketch-${crypto.randomUUID()}`;
+    const frames = [...sketchFramesRef.current, { id, artwork: { ...blank(), name: name.slice(0, 200) } }];
+    sketchFramesRef.current = frames; setSketchFrames(frames);
+    setWorkspace(current => ({ ...current, frames: { ...current.frames, [id]: besideFramePosition(current.frames, fromId) } }));
+    setSketchHistories(current => ({ ...current, [id]: { past: [], future: [] } }));
+    mutatePanels(current => ({ ...current, [id]: createSketchPanel() }));
+    return id;
+  }
+  /** What a frame shows: its rendered result (if any) under its strokes, as one image. */
+  async function captureFrame(owner: string, full = false) {
+    const handle = canvasFor(owner); if (!handle) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
+    const render = panelsRef.current[owner]?.generated ? resultPreviews.current.get(owner)?.capture() : "";
+    if (!render) return handle.capture(full);
+    const sketch = handle.capture(full, true), region = sketch.region;
+    const load = async (src: string) => { const image = new Image(); image.src = src; await image.decode(); return image; };
+    const [under, over] = await Promise.all([load(render), load(sketch.image)]);
+    const canvas = document.createElement("canvas"); canvas.width = over.width; canvas.height = over.height;
+    const ctx = canvas.getContext("2d")!; ctx.fillStyle = "#fffefa"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(under, region.x * under.width, region.y * under.height, region.w * under.width, region.h * under.height, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(over, 0, 0);
+    return { image: canvas.toDataURL("image/png"), region };
+  }
+  const deps: StudioDeps = {
+    panel: id => panelsRef.current[id] || createSketchPanel(), updatePanel, request, task,
+    capture: captureFrame, createFrame,
+    artwork: artworkOf, documentId: () => activeDocument.current, requestId: () => requestNumber.current,
+    toast: setToast, focus: setPendingFrameFocus, addPen,
+    clip: () => clipRef.current, setClip: next => { clipRef.current = next; setClip(next); }, activate: id => activateSketch(id),
+  };
+  const edits = sceneEdits(deps, activeSketch), ai = sceneAI(deps, activeSketch), revisions = revisionActions(deps, activeSketch);
 
+  // ── Persistence and effects ────────────────────────────────────────────────
   useEffect(() => {
     try {
       const raw = localStorage.getItem(storageKey); if (raw) { const result = projectSchema.safeParse(JSON.parse(raw)); if (result.success) restore(result.data); else setToast("저장된 프로젝트 형식이 변경되어 새 작업실을 열었습니다."); }
@@ -151,66 +201,74 @@ export default function Home() {
     setSaveState("Saving…");
     const timer = setTimeout(() => { try { localStorage.setItem(storageKey, JSON.stringify(projectData())); setSaveState("Saved locally"); } catch { setSaveState("Storage full · export JSON"); } }, 450);
     return () => clearTimeout(timer);
-  }, [artwork, sketchFrames, activeSketch, panels, savedBrushes, drawingBrush, semanticPens, interactionPen, activeSemanticPenId, workspace, restoreReady]);
+  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, workspace, restoreReady]);
+  useEffect(() => { try { const saved = Number(localStorage.getItem("rulegen-inspector-width")); if (saved >= 280 && saved <= 900) setInspectorWidth(saved); } catch { /* storage unavailable */ } }, []);
+  useEffect(() => { try { if (inspectorWidth) localStorage.setItem("rulegen-inspector-width", String(inspectorWidth)); else localStorage.removeItem("rulegen-inspector-width"); } catch { /* storage unavailable */ } }, [inspectorWidth]);
+  // Every error a frame shows is written to error-logs/ (runtime errors with the failing program).
+  const reportedErrors = useRef(new Map<string, string>());
+  useEffect(() => {
+    for (const [id, item] of Object.entries(panels)) for (const [field, source] of [["error", "ui"], ["runtimeError", "runtime"]] as const) {
+      const key = `${id}:${field}`, message = item[field];
+      if (message === reportedErrors.current.get(key)) continue;
+      reportedErrors.current.set(key, message);
+      if (message) reportError({ source, message, owner: id, frame: artworkOf(id)?.name || id, code: source === "runtime" ? item.generated?.code || "" : "" });
+    }
+  }, [panels]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 6000); return () => clearTimeout(timer); }, [toast]);
+  // Widget edits only patch the host block of the code draft.
+  useEffect(() => { if (generated) patchActive(previous => { const codeDraft = syncScene(previous.codeDraft || "", previous.scene); return codeDraft === previous.codeDraft ? {} : { codeDraft, runtimeError: "" }; }); }, [scene, generated]);
+  useEffect(() => { inspector.current?.scrollTo({ top: 0 }); }, [node?.id, activeSketch]);
+  useEffect(() => { if (pendingFrameFocus) { workspaceCanvas.current?.focus(pendingFrameFocus); setPendingFrameFocus(null); } }, [pendingFrameFocus, sketchFrames, panels]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (historyOpen || modal || exportOpen || (e.target as HTMLElement).closest("input,textarea,select,[contenteditable]")) return;
-      if (e.key === "Escape") { setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-      else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
-      else if (!(e.metaKey || e.ctrlKey || e.altKey)) { const key = e.key.toLowerCase(); if (key === "p") chooseTool("pen"); if (key === "e") chooseTool("eraser"); if (key === "l") chooseTool("lasso"); if (key === "h") chooseTool("hand"); }
+      const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
+      if (e.key === "Escape") { setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
+      if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+      else if (command && key === "y") { e.preventDefault(); redo(); }
+      else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
+      else if (tool === "select" && panel.selectedNodeIds.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); edits.remove(); }
+      else if (tool === "select" && panel.selectedNodeIds.length && e.key.startsWith("Arrow")) { e.preventDefault(); const step = e.shiftKey ? 10 : 1; edits.nudge((e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0) / 900, (e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0) / 600); }
+      else if (!(command || e.altKey)) { if (key === "v") chooseTool("select"); if (key === "p") chooseTool("pen"); if (key === "e") chooseTool("eraser"); if (key === "l") chooseTool("lasso"); if (key === "h") chooseTool("hand"); }
     };
-    window.addEventListener("keydown", onKey); return () => window.removeEventListener("keydown", onKey);
-  }, [history, future, artwork, stage, lab, labFuture, brush, annotating, annotationHistory, busy, activeSketch, sketchFrames, sketchHistories, panels, historyOpen, modal, exportOpen]);
-  useEffect(() => { if (generated) { setCodeDraft(current => syncStateMachine(syncParameters(current, groups, generated.bindings), generated.stateMachine)); setRuntimeError(""); } }, [groups, generated]);
-  useEffect(() => { if (brush) setLab(current => ({ ...current, strokes: current.strokes.map(s => ({ ...s, brush: structuredClone(brush) })) })); }, [brush]);
+    window.addEventListener("keydown", onKey); window.addEventListener("paste", pastePhoto);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("paste", pastePhoto); };
+  });
 
-  useEffect(() => { inspector.current?.scrollTo({ top: 0 }); }, [stage, selected, activeSketch]);
-  useEffect(() => { if (stage === "brush" && !annotating) workspaceCanvas.current?.focus("brush"); }, [stage, annotating]);
-  useEffect(() => { if (pendingFrameFocus) { workspaceCanvas.current?.focus(pendingFrameFocus); setPendingFrameFocus(null); } }, [pendingFrameFocus, sketchFrames, panels]);
-
-  function projectData() { return { version: 1 as const, name: artwork.name, artwork, sketchFrames, activeSketchId: activeSketch, sketchPanels: savedSketchPanels(panels), featureSourceId, features, groups, analysisRevision, generated: generated ? { ...generated, code: liveSource } : null, brush, savedBrushes, drawingBrush, semanticPens, interactionPen, activeSemanticPenId, brushDescription, workspace }; }
+  // ── Project lifecycle ──────────────────────────────────────────────────────
   function restore(data: ReturnType<typeof projectSchema.parse>) {
     activeDocument.current++; cancel(); prepareNumber.current++;
     setArtwork(data.artwork); artworkRef.current = data.artwork; setSketchFrames(data.sketchFrames); sketchFramesRef.current = data.sketchFrames;
-    setPanels(Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
+    mutatePanels(() => Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
-    setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSavedBrushes(data.savedBrushes); setDrawingBrush(data.drawingBrush); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
+    setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
     setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
-  function commit(next: Artwork) { setWorkspace(current => showWorkspaceFrame(current, "source")); const previous = artworkRef.current; const updated = { ...next, revision: previous.revision + 1 }; setHistory(h => [...h.slice(-39), previous]); setFuture([]); artworkRef.current = updated; setArtwork(updated); }
-  function undo() { if (annotating) { if (!busy) editAnnotations({ type: "undo" }); return; } if (stage === "brush") { if (!lab.strokes.length) return; setLabFuture(f => [...f, lab.strokes[lab.strokes.length - 1]]); setLab(a => ({ ...a, strokes: a.strokes.slice(0, -1) })); return; } if (activeSketch !== "source") { undoSketchFrame(); return; } if (!history.length) return; setFuture(f => [...f, artwork]); setArtwork(history[history.length - 1]); setHistory(h => h.slice(0, -1)); }
-  function redo() { if (annotating) { if (!busy) editAnnotations({ type: "redo" }); return; } if (stage === "brush") { if (!labFuture.length) return; const stroke = labFuture[labFuture.length - 1]; setLab(a => ({ ...a, strokes: [...a.strokes, { ...stroke, brush: brush || stroke.brush }] })); setLabFuture(f => f.slice(0, -1)); return; } if (activeSketch !== "source") { redoSketchFrame(); return; } if (!future.length) return; setHistory(h => [...h, artwork]); setArtwork(future[future.length - 1]); setFuture(f => f.slice(0, -1)); }
-  function chooseTool(next: string) { setPenSettingsOpen(false); if (annotating) { setTool(next); setPencilOpen(false); return; } setTool(next); setPencilOpen(next === "pen" ? !pencilOpen : false); if (stage === "brush") { setStage("features"); workspaceCanvas.current?.focus(activeSketch as FrameId); } }
-  function selectFeature(id: string) { setSelected(selected === id ? null : id); setHovered(null); }
-  function selectSketchFeature(owner: string, id: string) {
-    activateSketch(owner);
-    updatePanel(owner, previous => ({ selected: previous.selected === id ? null : id, hovered: null }));
+  function newProject() {
+    cancel(); activeDocument.current++; prepareNumber.current++;
+    const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
+    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source";
+    setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({});
+    setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
+    setTool("pen"); setPencilOpen(false); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
   }
-  function zoom(change: number) { workspaceCanvas.current?.zoom(change); }
-  async function request(intent: string, body: object, owner = activeSketch) {
-    updatePanel(owner, { error: "" }); const controller = new AbortController(); abort.current = controller;
-    const ownerPanel = panelsRef.current[owner] || createSketchPanel();
-    const recoveryContext = { project: { ...projectData(), artwork: artworkRef.current, sketchFrames: sketchFramesRef.current, sketchPanels: savedSketchPanels(panelsRef.current), activeSketchId: owner, featureSourceId: owner }, owner,
-      region: (body as { recoveryRegion?: { x: number; y: number; w: number; h: number } }).recoveryRegion,
-      annotations: ownerPanel.annotationHistory.present, annotationImage: ownerPanel.annotationImage, revisionInstruction: ownerPanel.revisionInstruction, proposal: ownerPanel.revisionProposal?.proposal || null };
-    const ownerArtwork = owner === "source" ? artworkRef.current : sketchFramesRef.current.find(frame => frame.id === owner)?.artwork;
-    const codeContext = intent === "code" && ownerArtwork ? { ...compositionContext(ownerArtwork), image: (owner === "source" ? canvas.current : sketchCanvases.current.get(owner))?.capture(true).image } : {};
-    const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent, ...codeContext, ...((intent === "code" || intent === "compose") ? { withStateMachine: true, ...(intent === "code" ? { stateMachine: panelsRef.current[owner]?.generated?.stateMachine || null } : {}) } : {}), ...body, recoveryContext }), signal: controller.signal });
-    const result = await response.json(); if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError"); if (!response.ok || result.error) throw new Error(result.error || "요청을 처리하지 못했습니다."); return result;
+  function restoreAIHistory(data: RecoveredGeneration) {
+    restore(data.project);
+    const saved = data.project.sketchPanels[data.owner];
+    const restored = { ...createSketchPanel(saved), annotationHistory: { past: [], present: data.annotations, future: [] }, annotationImage: data.annotationImage, revisionInstruction: data.revisionInstruction };
+    updatePanel(data.owner, { annotationHistory: restored.annotationHistory, annotationImage: data.annotationImage, annotationSource: liveSceneSource(restored.generated, restored.scene),
+      annotating: Boolean(data.annotationImage && data.annotations.length && restored.generated), clarifying: Boolean(data.revisionInstruction), revisionInstruction: data.revisionInstruction,
+      clarificationContext: revisionSnapshot(restored, ""), revisionProposal: data.proposal ? { proposal: data.proposal, snapshot: revisionSnapshot(restored) } : null });
+    setHistoryOpen(false); setPendingFrameFocus(data.owner as FrameId);
+    setToast("AI 생성 기록을 복원했습니다.");
   }
-  async function task(label: string, work: () => Promise<void>, owner = activeSketch) {
-    if (panelsRef.current[owner]?.loading) return; const number = ++requestNumber.current; updatePanel(owner, { loading: label, error: "" });
-    try { await work(); } catch (e) { if (number === requestNumber.current && !(e instanceof DOMException && e.name === "AbortError")) updatePanel(owner, { error: e instanceof Error ? e.message : "처리 중 오류가 발생했습니다." }); }
-    finally { if (number === requestNumber.current) updatePanel(owner, { loading: "" }); }
-  }
-  function cancel() { requestNumber.current++; abort.current?.abort(); updatePanel(activeSketchRef.current, { loading: "" }); }
+
+  // ── Frames and drawing history ─────────────────────────────────────────────
   function activateSketch(id: string) {
     if (id === activeSketchRef.current) return;
     cancel(); prepareNumber.current++;
     updatePanel(activeSketchRef.current, { loading: "", hovered: null });
-    setPanels(current => current[id] ? current : { ...current, [id]: createSketchPanel() });
+    mutatePanels(current => current[id] ? current : { ...current, [id]: createSketchPanel() });
     activeSketchRef.current = id; setActiveSketch(id);
   }
   function addSketchFrame() {
@@ -229,34 +287,17 @@ export default function Home() {
   }
   function deleteFrame(id: FrameId) {
     if (busy) return;
-    const owner = resultSketchId(id);
-    if (panelsRef.current[owner || (id === "brush" ? activeSketch : id)]?.loading) return;
+    if (panelsRef.current[id]?.loading) return;
     cancel(); activeDocument.current++; prepareNumber.current++;
     setPendingFrameFocus(null); setPencilOpen(false); setPenSettingsOpen(false);
-    if (id === "brush") {
-      updatePanel(activeSketch, { stage: "features", lab: { ...blank(), name: "Brush playground" }, labFuture: [] });
-    } else if (owner) {
-      setPanels(current => {
-        const updated = updateSketchPanel(current, owner, "generated", null);
-        return { ...updated, [owner]: { ...updated[owner], ...clearedResultAnnotations(), runtimeError: "", removedControls: [], runtimeStateId: null, stage: updated[owner].stage === "code" ? "rules" : updated[owner].stage } };
-      });
-      resultPreviews.current.delete(owner);
-      setWorkspace(current => removeWorkspaceFrame(current, id));
-    } else {
+    {
       const remaining = sketchFramesRef.current.filter(frame => frame.id !== id);
       sketchFramesRef.current = remaining; setSketchFrames(remaining);
-      setPanels(current => {
-        const next = { ...current };
-        if (id === "source") next.source = createSketchPanel(); else delete next[id];
-        return next;
-      });
+      mutatePanels(current => { const next = { ...current }; if (id === "source") next.source = createSketchPanel(); else delete next[id]; return next; });
       setSketchHistories(current => { const next = { ...current }; delete next[id]; return next; });
       setSketchSelections(current => { const next = { ...current }; delete next[id]; return next; });
       sketchCanvases.current.delete(id); resultPreviews.current.delete(id);
-      if (id === "source") {
-        const empty = { ...blank(), name: artworkRef.current.name };
-        artworkRef.current = empty; setArtwork(empty); setHistory([]); setFuture([]); setHasSelection(false);
-      }
+      if (id === "source") { const empty = { ...blank(), name: artworkRef.current.name }; artworkRef.current = empty; setArtwork(empty); setHistory([]); setFuture([]); setHasSelection(false); }
       setWorkspace(current => removeWorkspaceFrame(current, id));
       if (activeSketchRef.current === id) {
         const fallback = id !== "source" && !workspace.hiddenFrames.includes("source") ? "source" : remaining[0]?.id || "source";
@@ -264,8 +305,9 @@ export default function Home() {
         if (fallback !== "source" || (id !== "source" && !workspace.hiddenFrames.includes("source"))) setPendingFrameFocus(fallback as FrameId);
       }
     }
-    setToast(owner ? "결과 프레임을 삭제했습니다. 원본 스케치는 유지됩니다." : "프레임을 삭제했습니다.");
+    setToast("프레임을 삭제했습니다.");
   }
+  function commit(next: Artwork) { setWorkspace(current => showWorkspaceFrame(current, "source")); const previous = artworkRef.current; const updated = { ...next, revision: previous.revision + 1 }; setHistory(h => [...h.slice(-39), previous]); setFuture([]); artworkRef.current = updated; setArtwork(updated); }
   function commitSketchFrame(id: string, next: Artwork) {
     const previous = sketchFramesRef.current.find(f => f.id === id)?.artwork; if (!previous) return;
     const updated = { ...next, revision: previous.revision + 1 };
@@ -273,357 +315,242 @@ export default function Home() {
     const frames = sketchFramesRef.current.map(f => f.id === id ? { ...f, artwork: updated } : f);
     sketchFramesRef.current = frames; setSketchFrames(frames);
   }
-  function undoSketchFrame() {
-    const state = sketchHistories[activeSketch]; if (!state?.past.length) return;
-    const previous = state.past[state.past.length - 1];
-    setSketchFrames(current => current.map(f => f.id === activeSketch ? { ...f, artwork: previous } : f));
-    setSketchHistories(current => ({ ...current, [activeSketch]: { past: state.past.slice(0, -1), future: [...state.future, currentSketch] } }));
+  const commitFrame = (id: string, next: Artwork) => id === "source" ? commit(next) : commitSketchFrame(id, next);
+  function stepSketchFrame(direction: "undo" | "redo") {
+    const state = sketchHistories[activeSketch]; const stack = direction === "undo" ? state?.past : state?.future;
+    if (!stack?.length) return;
+    const target = stack[stack.length - 1];
+    setSketchFrames(current => current.map(f => f.id === activeSketch ? { ...f, artwork: target } : f));
+    setSketchHistories(current => ({ ...current, [activeSketch]: direction === "undo" ? { past: state.past.slice(0, -1), future: [...state.future, currentSketch] } : { past: [...state.past, currentSketch], future: state.future.slice(0, -1) } }));
   }
-  function redoSketchFrame() {
-    const state = sketchHistories[activeSketch]; if (!state?.future.length) return;
-    const next = state.future[state.future.length - 1];
-    setSketchFrames(current => current.map(f => f.id === activeSketch ? { ...f, artwork: next } : f));
-    setSketchHistories(current => ({ ...current, [activeSketch]: { past: [...state.past, currentSketch], future: state.future.slice(0, -1) } }));
+  const editAnnotations = (action: Parameters<typeof annotationHistoryReducer>[1]) => patchActive(previous => ({ annotationHistory: annotationHistoryReducer(previous.annotationHistory, action) }));
+  function undo() {
+    if (annotating) { if (!busy) editAnnotations({ type: "undo" }); return; }
+    if (tool === "select") { edits.undo(); return; }
+    if (activeSketch !== "source") { stepSketchFrame("undo"); return; }
+    if (!history.length) return; setFuture(f => [...f, artwork]); setArtwork(history[history.length - 1]); setHistory(h => h.slice(0, -1));
   }
-  async function analyze() { await analyzeFrame(activeSketch); }
-  async function analyzeFrame(id: string) {
-    activateSketch(id);
-    await task("스케치의 시각적 특징을 분석하고 있습니다…", async () => {
-      const frameArtwork = () => id === "source" ? artworkRef.current : sketchFramesRef.current.find(f => f.id === id)?.artwork;
-      const revision = frameArtwork()?.revision, document = activeDocument.current;
-      const handle = id === "source" ? canvas.current : sketchCanvases.current.get(id);
-      if (!handle) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
-      const capture = handle.capture(); const result = analysisSchema.parse(await request("analyze", { image: capture.image, recoveryRegion: capture.region }, id));
-      if (document !== activeDocument.current || revision !== frameArtwork()?.revision) throw new Error("분석 중 스케치가 변경되었습니다. 다시 분석해주세요.");
-      const mapped = result.features.map(f => ({ ...f, region: { x: capture.region.x + f.region.x * capture.region.w, y: capture.region.y + f.region.y * capture.region.h, w: f.region.w * capture.region.w, h: f.region.h * capture.region.h } }));
-      updatePanel(id, { ...createSketchPanel(), features: mapped, analysisRevision: revision! }); setToast(`${mapped.length}개의 특징을 발견했습니다.`);
-    }, id);
+  function redo() {
+    if (annotating) { if (!busy) editAnnotations({ type: "redo" }); return; }
+    if (tool === "select") { edits.redo(); return; }
+    if (activeSketch !== "source") { stepSketchFrame("redo"); return; }
+    if (!future.length) return; setHistory(h => [...h, artwork]); setArtwork(future[future.length - 1]); setFuture(f => f.slice(0, -1));
   }
-  async function generateRules(target?: string, alternative = false) {
-    const wanted = target ? features.filter(f => f.id === target) : selected ? features.filter(f => f.id === selected) : features;
-    if (!wanted.length) { setError("먼저 스케치나 사진을 분석해주세요."); return; }
-    await task("선택한 특징의 subfeature와 파라미터를 만들고 있습니다…", async () => {
-      const result = rulesSchema.parse(await request("rules", { features: wanted, groups: groups.filter(g => wanted.some(f => f.id === g.featureId)), alternative, instruction }));
-      setGroups(current => [...current.filter(g => !wanted.some(f => f.id === g.featureId)), ...result.groups]); setRemovedControls([]); setStage("rules");
-    });
+  const canUndo = annotating ? !busy && panel.annotationHistory.past.length > 0 : tool === "select" ? panel.sceneHistory.length > 0 : activeSketch !== "source" ? Boolean(sketchHistories[activeSketch]?.past.length) : history.length > 0;
+  const canRedo = annotating ? !busy && panel.annotationHistory.future.length > 0 : tool === "select" ? panel.sceneFuture.length > 0 : activeSketch !== "source" ? Boolean(sketchHistories[activeSketch]?.future.length) : future.length > 0;
+  function clearCanvas() {
+    if (annotating) { editAnnotations({ type: "clear" }); return; }
+    commitFrame(activeSketch, { ...currentSketch, strokes: [], photo: null });
+    canvasFor(activeSketch)?.clearSelection();
   }
-  function deleteControl(featureId: string, subId: string, methodId?: string, parameterId?: string) {
-    if (busy) return;
-    const updated = removeControl(groups, featureId, subId, methodId, parameterId);
-    setRemovedControls(history => [...history.slice(-19), { groups, generated: generated ? { ...generated, code: liveSource } : null }]);
-    setGroups(updated);
-    if (generated && !generated.stateMachine) setGenerated(detachControls(generated, groups, updated));
-    setToast("위젯을 삭제했습니다. 현재 그림은 유지됩니다.");
+  function chooseTool(next: string) {
+    setPenSettingsOpen(false); setTool(next);
+    if (annotating) { setPencilOpen(false); return; }
+    setPencilOpen(next === "pen" ? !pencilOpen : false);
   }
-  function undoControlDeletion() {
-    const previous = removedControls[removedControls.length - 1]; if (!previous || busy) return;
-    setGroups(previous.groups); setGenerated(previous.generated); setRemovedControls(history => history.slice(0, -1));
+  function selectAlgorithmPen(pen: SemanticPen) {
+    setActiveSemanticPenId(pen.id); setTool("semantic"); patchActive({ annotating: false }); setPencilOpen(false); setPenSettingsOpen(true);
+    workspaceCanvas.current?.focus(activeSketch as FrameId);
   }
-  async function refreshBoundCode(updated: RuleGroup[], featureId: string, subfeatureId: string) {
-    if (!generated?.bindings.some(b => b.featureId === featureId && b.subfeatureId === subfeatureId)) return;
-    setLoading("새 위젯을 코드에 연결하고 있습니다…");
-    const scope = updated.filter(g => generated.bindings.some(b => b.featureId === g.featureId));
-    const result = generatedSchema.parse(await request("code", { features: features.filter(f => scope.some(g => g.featureId === f.id)), groups: activeGroups(scope), previous: liveSource, instruction: `${instruction}\nOnly change the implementation of subfeature ${subfeatureId} for feature ${featureId}; preserve other subfeatures and composition.` }));
-    setGenerated(result); setRemovedControls([]);
+  function editDrawingPen(pen: SemanticPen) { if (pen.id === interactionPen.id) { setInteractionPen(pen); return; } setSemanticPens(current => current.map(item => item.id === pen.id ? pen : item)); }
+
+  // ── Photos ─────────────────────────────────────────────────────────────────
+  async function attach(file: File) {
+    const targetId = activeSketch, document = activeDocument.current;
+    try {
+      const photo = await readPhoto(file);
+      if (document !== activeDocument.current) return false;
+      const previous = artworkOf(targetId);
+      if (!previous) return false;
+      cancel();
+      commitFrame(targetId, { ...previous, photo, strokes: [], name: file.name.replace(/\.[^.]+$/, "") });
+      canvasFor(targetId)?.clearSelection();
+      // A new photo starts a new scene; the previous one stays reachable with layer undo.
+      updatePanel(targetId, previous => ({ ...commitScene(previous, emptyScene()), selectedNodeIds: [], editingStates: {}, generated: null, codeDraft: "", analysisRevision: -1 }));
+      if (activeSketchRef.current === targetId) workspaceCanvas.current?.focus(targetId as FrameId);
+      return true;
+    } catch (e) { if (document === activeDocument.current) patchActive({ error: (e as Error).message }); return false; }
   }
-  async function changeImplementation(featureId: string, subId: string, methodId: string) {
-    const updated = groups.map(g => g.featureId !== featureId ? g : { ...g, subfeatures: g.subfeatures.map(s => s.id !== subId ? s : { ...s, selectedImplementation: methodId }) });
-    setGroups(updated); setRemovedControls([]);
-    if (generated?.bindings.some(b => b.featureId === featureId && b.subfeatureId === subId)) await task("구현 방식을 코드에 반영하고 있습니다…", () => refreshBoundCode(updated, featureId, subId));
+  /** Paste an image into the selected frame. Listens on window: clicking a frame does not focus anything inside the studio. */
+  function pastePhoto(event: ClipboardEvent) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!event.clipboardData || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']") || modal || exportOpen || historyOpen || busy) return;
+    const item = Array.from(event.clipboardData.items).find(item => item.kind === "file" && item.type.startsWith("image/"));
+    const image = item?.getAsFile() || Array.from(event.clipboardData.files).find(file => file.type.startsWith("image/"));
+    if (!image) return;
+    event.preventDefault();
+    const extension = image.type === "image/jpeg" ? "jpg" : image.type === "image/webp" ? "webp" : "png";
+    void attach(new File([image], `Clipboard image.${extension}`, { type: image.type })).then(attached => { if (attached) setToast("클립보드 이미지를 첨부했습니다."); });
   }
-  async function regenerateSubfeature(featureId: string, subfeatureId: string) {
-    const group = groups.find(g => g.featureId === featureId); if (!group) return;
-    await task("이 subfeature의 구현과 위젯만 다시 만들고 있습니다…", async () => {
-      const replacement = subfeatureSchema.parse(await request("subfeature", { features: features.filter(f => f.id === featureId), groups: [group], targetFeatureId: featureId, targetSubfeatureId: subfeatureId, instruction }));
-      const updated = replaceSubfeature(groups, featureId, subfeatureId, replacement); setGroups(updated); setRemovedControls([]);
-      await refreshBoundCode(updated, featureId, subfeatureId);
-    });
+
+  // ── Results and state preview ─────────────────────────────────────
+  async function prepare(code: string) {
+    const number = ++prepareNumber.current; patchActive({ runtimeError: "" });
+    try { const result = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "prepare", code }) }).then(r => r.json()); if (number !== prepareNumber.current) return; if (result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error); } patchActive({ executable: result.executable, preparedCode: code }); }
+    catch (e) { if (number === prepareNumber.current) patchActive({ runtimeError: e instanceof Error ? e.message : "코드를 실행하지 못했습니다." }); }
   }
-  async function generateCode(repair = false) {
-    if (machine) { await generateStateScene(true, repair); return; }
-    if (!visibleGroups.length) { setError("먼저 해당 특징의 subfeature를 생성해주세요."); return; }
-    await task(repair ? "실행 오류를 수정하고 있습니다…" : "규칙을 p5.js 코드로 번역하고 있습니다…", async () => {
-      const relevant = features.filter(f => visibleGroups.some(g => g.featureId === f.id));
-      const result = generatedSchema.parse(await request("code", { features: relevant, groups: activeGroups(visibleGroups), instruction: repair ? `${instruction}\nFix this runtime error: ${runtimeError}` : instruction, previous: generated ? liveSource : "" }));
-      setGenerated(result); updatePanel(activeSketch, { generationMode: "rules" }); setRemovedControls([]); setRuntimeError(""); setStage("code"); setPendingFrameFocus(resultFrameId(activeSketch));
-    });
-  }
-  async function prepare(code: string) { const number = ++prepareNumber.current; setRuntimeError(""); try { const result = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "prepare", code }) }).then(r => r.json()); if (number !== prepareNumber.current) return; if (result.error) throw new Error(result.error); setExecutable(result.executable); updatePanel(activeSketch, { preparedCode: code }); } catch (e) { if (number === prepareNumber.current) setRuntimeError(e instanceof Error ? e.message : "코드를 실행하지 못했습니다."); } }
-  function resetAnnotations() { updatePanel(activeSketch, clearedResultAnnotations()); }
   function beginAnnotations(owner = activeSketch) {
     activateSketch(owner);
     const resultPanel = panelsRef.current[owner]; if (!resultPanel) return;
     if (resultPanel.annotating) { updatePanel(owner, { annotating: false }); return; }
     const image = resultPanel.annotationImage || resultPreviews.current.get(owner)?.capture();
     if (!image || !resultPanel.generated) { updatePanel(owner, { error: "결과 렌더링이 완료된 뒤 Annotate를 눌러주세요." }); return; }
-    const code = generatedSource(resultPanel.generated, resultPanel.groups);
-    updatePanel(owner, { annotationImage: image, annotationSource: code, annotationRenderRevision: resultPanel.renderRevision, annotating: true,
-      ...(resultPanel.generated.stateMachine ? { selectedStateId: resultPanel.runtimeStateId || resultPanel.generated.stateMachine.initialState, machinePlaying: false } : {}) });
-    setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); workspaceCanvas.current?.focus(resultFrameId(owner));
+    updatePanel(owner, { annotationImage: image, annotationSource: liveSceneSource(resultPanel.generated, resultPanel.scene), annotationRenderRevision: resultPanel.renderRevision, annotating: true, machinePlaying: false });
+    setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); workspaceCanvas.current?.focus(owner as FrameId);
   }
-  function openResultCode(owner: string) { activateSketch(owner); updatePanel(owner, { stage: "code" }); }
-  function jumpState(id: string, playing = false) {
-    if (!machine?.states.some(state => state.id === id) || busy) return;
-    updatePanel(activeSketch, previous => ({ selectedStateId: id, runtimeStateId: id, selected: null, hovered: null, machinePlaying: playing, stateJumpRevision: (previous.stateJumpRevision || 0) + 1, ...clearedResultAnnotations() }));
-    workspaceCanvas.current?.focus(resultFrameId(activeSketch));
-  }
-  function editMachine(edit: (machine: StateMachine) => StateMachine, dirtyId?: string) {
-    updatePanel(activeSketch, previous => {
-      if (!previous.generated?.stateMachine || previous.loading) return {};
-      return { generated: { ...previous.generated, stateMachine: edit(previous.generated.stateMachine) },
-        dirtyStateIds: dirtyId ? [...new Set([...previous.dirtyStateIds, dirtyId])] : previous.dirtyStateIds };
-    });
-  }
-  function editState(id: string, edit: (state: StateMachine["states"][number]) => StateMachine["states"][number], dirty = false) {
-    editMachine(machine => ({ ...machine, states: machine.states.map(state => state.id === id ? edit(state) : state) }), dirty ? id : undefined);
-  }
-  function emitTransition(id: string) {
-    const transition = machine?.transitions.find(item => item.id === id && item.trigger === "event" && item.from === (panel.runtimeStateId || machine.initialState));
+  function emitTransition(nodeId: string, transitionId: string) {
+    const machine = findNode(scene, nodeId)?.machine, current = panel.runtimeStates[nodeId] || machine?.initialState;
+    const transition = machine?.transitions.find(item => item.id === transitionId && item.trigger === "event" && item.from === current);
     if (!transition || busy) return;
-    resultPreviews.current.get(activeSketch)?.emit(id);
-    updatePanel(activeSketch, { selectedStateId: transition.to, selected: null, hovered: null, ...clearedResultAnnotations() });
-    workspaceCanvas.current?.focus(resultFrameId(activeSketch));
+    resultPreviews.current.get(activeSketch)?.emit(nodeId, transitionId);
+    patchActive({ editingStates: { ...panel.editingStates, [nodeId]: transition.to }, ...clearedResultAnnotations() });
   }
-  async function generateStateScene(preserveMachine = false, repair = false) {
-    if (!generated || busy) return;
-    const owner = activeSketch, document = activeDocument.current, snapshot = JSON.stringify(generated), draft = codeDraft;
-    await task(preserveMachine ? "상태별 constraint를 장면 코드에 반영하고 있습니다…" : "AI가 상태와 전이, 동적인 장면을 생성하고 있습니다…", async () => {
-      const result = generatedSchema.parse(await request("code", { features, groups: activeGroups(groups), previous: liveSource,
-        stateMachine: preserveMachine ? machine : null,
-        instruction: `${composePrompt || instruction}\n${preserveMachine ? "Apply the edited state constraints exactly; preserve all other states and transitions." : "Preserve the existing scene and refine its dynamic intent into the finest meaningful editable states and semantically labeled transitions."}${repair ? `\nFix this runtime error: ${runtimeError}` : ""}`,
-      }, owner));
-      if (document !== activeDocument.current || snapshot !== JSON.stringify(panelsRef.current[owner]?.generated) || draft !== panelsRef.current[owner]?.codeDraft) throw new Error("생성 중 코드 또는 constraint가 변경되었습니다. 다시 적용해주세요.");
-      commitStateScene(owner, result);
-    }, owner);
+  function restartMachine(nodeId: string) {
+    const machine = findNode(scene, nodeId)?.machine; if (!machine) return;
+    patchActive(previous => ({ machinePlaying: true, stateJump: { nodeId, stateId: machine.initialState, revision: (previous.stateJump?.revision || 0) + 1 }, editingStates: { ...previous.editingStates, [nodeId]: machine.initialState } }));
   }
-  function commitStateScene(owner: string, result: GeneratedCode) {
-    updatePanel(owner, previous => ({ generated: result, codeDraft: generatedSource(result, previous.groups), executable: "", preparedCode: "", runtimeError: "", dirtyStateIds: [],
-      selectedStateId: result.stateMachine?.states.some(state => state.id === previous.selectedStateId) ? previous.selectedStateId : result.stateMachine?.initialState || null,
-      runtimeStateId: null, selected: null, hovered: null, machinePlaying: previous.machinePlaying ?? true, stateJumpRevision: (previous.stateJumpRevision || 0) + 1, ...clearedResultAnnotations() }));
-    setPendingFrameFocus(resultFrameId(owner));
-  }
-  async function beginClarification() {
-    if (busy || !annotations.length) return;
-    setClarifying(true);
-    if (revisionInstruction.trim() && clarificationContext === currentSketchSnapshot) return;
-    await requestClarification();
-  }
-  async function requestClarification() {
-    if (busy || !generated || !annotationImage || !annotations.length) return;
-    const snapshot = currentRevisionSnapshot, sketchSnapshot = currentSketchSnapshot;
-    await task(clarificationLabel, async () => {
-      const number = requestNumber.current;
-      const image = await annotatedResultImage(annotationImage, annotations);
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      const result = clarificationSchema.parse(await request("clarification", { image, resultImage: annotationImage, annotations, features, groups, previous: liveSource, instruction: revisionInstruction }));
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      setRevisionInstruction(result.clarification); setClarificationContext(sketchSnapshot); setRevisionProposal(null);
-    });
-  }
-  async function requestRevision() {
-    if (!generated || !annotationImage || !annotations.length || !revisionInstruction.trim()) return;
-    const snapshot = currentRevisionSnapshot;
-    await task("스케치와 clarification을 바탕으로 feature와 rule 변경안을 만들고 있습니다…", async () => {
-      const number = requestNumber.current;
-      const image = await annotatedResultImage(annotationImage, annotations);
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      const proposal = revisionProposalSchema.parse(await request("revision", { image, annotations, features, groups, previous: liveSource, instruction: revisionInstruction }));
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      validateRevisionProposal(proposal, features, groups);
-      setRevisionProposal({ proposal, snapshot });
-    });
-  }
-  async function confirmRevision() {
-    if (!revisionProposal || proposalStale || !generated) return;
-    const { proposal, snapshot } = revisionProposal;
-    await task("확인한 변경안을 위젯과 p5.js 결과에 적용하고 있습니다…", async () => {
-      const number = requestNumber.current;
-      const image = await annotatedResultImage(annotationImage, annotations);
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      const scope = revisionCodeGroups(proposal, features, groups, generated.bindings.map(b => b.featureId));
-      const revisedMachine = machine ? { ...machine, states: machine.states.map(state => state.id === selectedStateId ? { ...state, features: proposal.features, groups: proposal.groups } : state) } : null;
-      const result = generatedSchema.parse(await request("code", { features: revisionCodeFeatures(proposal, features, scope), groups: activeGroups(scope), previous: liveSource, image, annotations, revisionSummary: proposal.summary, instruction: revisionInstruction, stateMachine: revisedMachine }));
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      // Validate execution before committing any feature, widget or code changes.
-      await request("prepare", { code: result.code });
-      if (number !== requestNumber.current || revisionState.current !== snapshot) return;
-      setFeatures(proposal.features); setGroups(proposal.groups); setGenerated(result); setRemovedControls([]); setRuntimeError("");
-      setSelected(null); setHovered(null); resetAnnotations(); setStage("rules");
-      setToast("확인한 feature·widget 변경안을 적용하고 결과를 업데이트했습니다.");
-    });
-  }
-  async function generateBrush(alternative = false) {
-    const sources = selected ? features.filter(f => f.id === selected || blend.includes(f.id)) : features;
-    if (!sources.length) { setError("먼저 스케치나 사진을 분석해주세요."); return; }
-    await task("특징을 담은 procedural brush를 만들고 있습니다…", async () => {
-      const result = brushSchema.parse(await request("brush", { features: sources, groups: activeGroups(groups.filter(g => sources.some(f => f.id === g.featureId))), image: (featureSourceId === "source" ? canvas.current : sketchCanvases.current.get(featureSourceId))?.capture().image, alternative, previous: alternative && brush ? JSON.stringify(brush) : "", instruction, brushDescription: brushDescription.trim() }));
-      setBrush(result); applyGesture(gesture, result); setStage("brush"); setPencilOpen(false);
-    });
-  }
-  function applyGesture(path: string, recipe = brush) {
-    setGesture(path); setLabFuture([]);  if (!recipe) return;
-    const points = Array.from({ length: 151 }, (_, i) => { const t = i / 150; return { x: 95 + t * 710, y: path === "line" ? 310 : path === "wave" ? 300 + Math.sin(t * Math.PI * 2) * 65 : 370 - Math.sin(t * Math.PI) * 150 }; });
-    setLab({ ...blank(), strokes: [{ tool: "brush", brush: recipe, points, width: 3, color: recipe.settings.color, opacity: 1 }] });
-  }
-  async function attach(file: File) {
-    const targetId = activeSketch, document = activeDocument.current;
-    try {
-      const photo = await readPhoto(file);
-      if (document !== activeDocument.current) return false;
-      const previous = targetId === "source" ? artworkRef.current : sketchFramesRef.current.find(f => f.id === targetId)?.artwork;
-      if (!previous) return false;
-      cancel();
-      const next = { ...previous, photo, strokes: [], name: file.name.replace(/\.[^.]+$/, "") };
-      if (targetId === "source") commit(next); else commitSketchFrame(targetId, next);
-      const handle = targetId === "source" ? canvas.current : sketchCanvases.current.get(targetId);
-      handle?.clearSelection();
-      if (panelsRef.current[targetId]) {
-        setFeatures([]); setGroups([]); setRemovedControls([]); setGenerated(null); setSelected(null); setHovered(null); setAnalysisRevision(-1);
-      }
-      if (activeSketchRef.current === targetId) { activateSketch(targetId); workspaceCanvas.current?.focus(targetId as FrameId); }
-      return true;
-    } catch (e) { if (document === activeDocument.current) setError((e as Error).message); return false; }
-  }
-  function pastePhoto(event: React.ClipboardEvent) {
-    if ((event.target as Element).closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']") || modal || exportOpen || historyOpen) return;
-    const item = Array.from(event.clipboardData.items).find(item => item.kind === "file" && item.type.startsWith("image/"));
-    const image = item?.getAsFile() || Array.from(event.clipboardData.files).find(file => file.type.startsWith("image/"));
-    if (!image) return;
-    event.preventDefault();
-    const extension = image.type === "image/jpeg" ? "jpg" : image.type === "image/webp" ? "webp" : "png";
-    const file = new File([image], `Clipboard image.${extension}`, { type: image.type });
-    void attach(file).then(attached => { if (attached) setToast("클립보드 이미지를 첨부했습니다."); });
-  }
-  function saveBrush() { if (!brush) return; setSavedBrushes(current => [...current.filter(b => b.name !== brush.name), structuredClone(brush)].slice(-32)); setToast("브러시를 로컬 라이브러리에 저장했습니다."); }
-  function useBrush(recipe = brush) { if (!recipe) return; setDrawingBrush(structuredClone(recipe)); setTool("brush"); setAnnotating(false); setStage("features"); workspaceCanvas.current?.focus(activeSketch as FrameId); setPencilOpen(false); setPenSettingsOpen(false); setToast("스케치 위에서 드래그하면 선택한 펜으로 그려집니다."); }
-  function editDrawingPen(pen: SemanticPen) { if (pen.id === interactionPen.id) { setInteractionPen(pen); return; } setSemanticPens(current => current.map(item => item.id === pen.id ? pen : item)); }
-  function selectAlgorithmPen(pen: SemanticPen) {
-    setActiveSemanticPenId(pen.id); setTool("semantic"); setAnnotating(false); setPencilOpen(false); setPenSettingsOpen(true);
-    if (stage === "brush") setStage("features");
-    workspaceCanvas.current?.focus(activeSketch as FrameId);
-  }
-  function generateAlgorithmPen(featureId: string, subfeatureId: string) {
-    if (semanticPens.length >= 32) { setError("툴바에 펜이 가득 찼습니다. 사용하지 않는 펜을 제거해주세요."); return; }
-    const feature = features.find(f => f.id === featureId); if (!feature) return;
-    try {
-      const pen = makeSemanticPen(groups, feature, subfeatureId, activeSketch, crypto.randomUUID(), semanticPenColors.find(c => !semanticPens.some(p => p.color === c)) || semanticPenColors[semanticPens.length % semanticPenColors.length]);
-      const baseName = pen.name.slice(0, 90); let name = baseName, suffix = 2;
-      while (semanticPens.some(item => item.name === name)) name = `${baseName} ${suffix++}`;
-      const next = { ...pen, name };
-      setSemanticPens(current => [...current, next]); selectAlgorithmPen(next);
-      setToast(`${name}을 툴바에 추가했습니다. 자유롭게 그린 뒤 Compose prompt로 조합하세요.`);
-    } catch (e) { setError(e instanceof Error ? e.message : "펜에 알고리즘을 담지 못했습니다."); }
-  }
-  async function draftComposePrompt() {
-    if (busy || !sourcePresent) return;
-    const owner = activeSketch, document = activeDocument.current, revision = currentSketch.revision, previousPrompt = composePrompt;
-    await task(compositionPromptLabel, async () => {
-      const number = requestNumber.current;
-      const handle = owner === "source" ? canvas.current : sketchCanvases.current.get(owner);
-      if (!handle) throw new Error("스케치 캔버스가 준비될 때까지 잠시 기다려주세요.");
-      const capture = handle.capture(true), context = compositionContext(currentSketch);
-      const result = compositionPromptSchema.parse(await request("compose-prompt", { image: capture.image, ...context, instruction: previousPrompt }, owner));
-      const latest = owner === "source" ? artworkRef.current : sketchFramesRef.current.find(f => f.id === owner)?.artwork;
-      if (number !== requestNumber.current || document !== activeDocument.current) return;
-      if (revision !== latest?.revision || previousPrompt !== panelsRef.current[owner]?.composePrompt) throw new Error("스케치 또는 prompt가 변경되었습니다. AI prompt를 다시 만들어주세요.");
-      updatePanel(owner, { composePrompt: result.prompt });
-      setToast("AI가 Compose prompt를 작성했습니다. 설명을 확인하거나 수정한 뒤 Compose sketch를 눌러주세요.");
-    }, owner);
-  }
-  async function composeSketch(repair = false) {
-    if (repair && machine) { await generateStateScene(true, true); return; }
-    const owner = activeSketch, document = activeDocument.current, prompt = composePrompt.trim();
-    if (!sourcePresent) { setError("먼저 스케치하거나 사진을 추가해주세요."); return; }
-    if (!prompt) { await draftComposePrompt(); return; }
-    const revision = currentSketch.revision;
-    await task("펜의 의미와 스케치를 prompt로 조합하고 있습니다…", async () => {
-      const handle = owner === "source" ? canvas.current : sketchCanvases.current.get(owner);
-      if (!handle) throw new Error("스케치 캔버스가 준비될 때까지 잠시 기다려주세요.");
-      const capture = handle.capture(true), context = compositionContext(currentSketch);
-      const result = generatedSchema.parse(await request("compose", { image: capture.image, ...context, instruction: repair ? `${prompt}\nFix this runtime error: ${runtimeError}` : prompt, previous: repair ? liveSource : "" }, owner));
-      const latest = owner === "source" ? artworkRef.current : sketchFramesRef.current.find(f => f.id === owner)?.artwork;
-      if (document !== activeDocument.current || revision !== latest?.revision || prompt !== panelsRef.current[owner]?.composePrompt.trim()) throw new Error("스케치 또는 prompt가 변경되었습니다. 다시 Compose해주세요.");
-      updatePanel(owner, { generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", removedControls: [], stage: "code", generationMode: "compose", selectedStateId: result.stateMachine?.initialState || null, runtimeStateId: null, dirtyStateIds: [], machinePlaying: true });
-      setPendingFrameFocus(resultFrameId(owner));
-    }, owner);
-  }
-  function restoreAIHistory(data: RecoveredGeneration) {
-    restore(data.project);
-    const saved = data.project.sketchPanels[data.owner];
-    const restored = createSketchPanel(saved);
-    const scene = selectedSceneState(restored);
-    const source = restored.generated ? generatedSource(restored.generated, restored.groups) : "";
-    const snapshot = revisionSnapshot(scene?.features || restored.features, scene?.groups || restored.groups, source, data.annotations, data.revisionInstruction, data.annotationImage);
-    updatePanel(data.owner, { annotationHistory: { past: [], present: data.annotations, future: [] }, annotationImage: data.annotationImage, annotationSource: source,
-      annotating: Boolean(data.annotationImage && data.annotations.length && restored.generated), clarifying: Boolean(data.revisionInstruction), revisionInstruction: data.revisionInstruction,
-      clarificationContext: revisionSnapshot(scene?.features || restored.features, scene?.groups || restored.groups, source, data.annotations, "", data.annotationImage),
-      revisionProposal: data.proposal ? { proposal: data.proposal, snapshot } : null });
-    setHistoryOpen(false); setPendingFrameFocus(saved.generated ? resultFrameId(data.owner) : data.owner as FrameId);
-    setToast("AI 생성 기록을 복원했습니다.");
-  }
-  function newProject() {
-    cancel(); activeDocument.current++; prepareNumber.current++;
-    const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
-    setPanels({ source: createSketchPanel() }); setActiveSketch("source"); activeSketchRef.current = "source";
-    setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({});
-    setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
-    setTool("pen"); setPencilOpen(false); setDrawingBrush(null); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
-  }
-  const setFeatureLabel = (id: string, label: string) => { if (machine && !label.trim()) return; setFeatures(fs => fs.map(f => f.id === id ? { ...f, label } : f)); };
-  const featureName = (id: string) => features.find(f => f.id === id)?.label || id;
-  const toolButton = (name: string, icon: IconName, label: string) => <button className={`rail-button ${tool === name && (annotating || stage !== "brush") ? "active" : ""}`} aria-label={label} aria-pressed={tool === name && (annotating || stage !== "brush")} aria-expanded={name === "pen" ? pencilOpen : undefined} onClick={() => chooseTool(name)}><Icon name={icon} /></button>;
+  // Algorithms from other sketches and from pens can be imported into this sketch.
+  const algorithmImports: (AlgorithmSource & { source: NonNullable<ReturnType<typeof penAlgorithm>> })[] = [
+    ...Object.entries(panels).filter(([id]) => id !== activeSketch).flatMap(([id, other]) => other.scene.algorithms.map(algorithm => ({
+      key: `sketch:${id}:${algorithm.id}`, label: artworkOf(id)?.name || id, algorithm,
+      source: { call: instantiate(other.scene.algorithms, algorithm.id), library: algorithmClosure(other.scene.algorithms, [algorithm.id]) } }))),
+    ...semanticPens.flatMap(pen => { const source = penAlgorithm(pen); const algorithm = source?.library.find(item => item.id === source.call.algorithmId); return source && algorithm ? [{ key: `pen:${pen.id}`, label: pen.name, algorithm, source }] : []; }),
+  ].filter(item => !scene.algorithms.some(algorithm => JSON.stringify(algorithm) === JSON.stringify(item.algorithm)));
 
-  return <div className={`studio live-studio freeform-studio ${stage === "brush" ? "brush-mode" : ""}`} onPaste={pastePhoto}>
+  // ── Frames on the infinite canvas ──────────────────────────────────────────
+  // Layers dragged from the Layers panel can land on a sketch frame or on its result frame.
+  const layerDrop = (id: string, highlight: string, measure: (target: HTMLElement) => Element) => ({
+    onDragOver: (e: React.DragEvent<HTMLElement>) => { if (!e.dataTransfer.types.includes(NODE_DRAG_TYPE) || busy) return; e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = "copy"; if (dropTarget !== highlight) setDropTarget(highlight); },
+    onDragLeave: (e: React.DragEvent<HTMLElement>) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null); },
+    onDrop: (e: React.DragEvent<HTMLElement>) => {
+      setDropTarget(null);
+      const payload = readNodeDrag(e.dataTransfer); if (!payload) return;
+      e.preventDefault(); e.stopPropagation();
+      const box = measure(e.currentTarget).getBoundingClientRect();
+      void dropNode(deps, payload.sketchId, payload.nodeId, id, { x: Math.max(0, Math.min(1, (e.clientX - box.left) / box.width)), y: Math.max(0, Math.min(1, (e.clientY - box.top) / box.height)) });
+    },
+  });
+  const sketchFrameContent = (id: string, frameArtwork: Artwork, ref: React.Ref<CanvasHandle>, empty: React.ReactNode) => (boardZoom: number) => {
+    const owner = panels[id] || createSketchPanel(), frameEdits = sceneEdits(deps, id);
+    return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${dropTarget === id ? "node-drop-target" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
+      onPointerDown={e => { if (tool === "select" && !(e.target as Element).closest(".scene-node")) frameEdits.select(null); }}
+      {...layerDrop(id, id, target => target.querySelector(".p5-surface") || target)}>
+      {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
+      <FrameRender owner={id} panel={owner} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+        onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
+      <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
+        onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "한 프레임에는 최대 500개의 획을 저장할 수 있습니다. 새 스케치 프레임을 추가해주세요." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
+        onViewport={() => {}} onSelection={value => id === "source" ? setHasSelection(value) : setSketchSelections(current => current[id] === value ? current : { ...current, [id]: value })} onError={message => updatePanel(id, { error: message })}>
+        <SceneOverlay scene={owner.scene} selected={owner.selectedNodeIds} hovered={owner.hovered} zoom={boardZoom} interactive={tool === "select"}
+          onSelect={(nodeId, additive) => { activateSketch(id); frameEdits.select(nodeId, additive); }}
+          onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />
+      </SketchCanvas>
+      <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
+      {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
+  };
+  // Header controls for a frame: run/pause and re-render its result, (re)generate code, annotate, extract.
+  const frameActions = (id: string, selection: boolean, present: boolean) => {
+    const frame = panels[id] || createSketchPanel(), frameBusy = Boolean(frame.loading);
+    const status = sceneLiveStatus(frame.generated, frame.scene);
+    return <>
+      {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
+      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
+      {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={busy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
+      {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
+      <button disabled={busy || !(present || frame.generated)} title="Extract collections into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
+    </>;
+  };
+  const frameSubtitle = (id: string, artwork: Artwork, selection: boolean) => {
+    const frame = panels[id], from = frame?.sourceFrameId ? artworkOf(frame.sourceFrameId)?.name : null;
+    return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
+  };
+  const frames = [
+    { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork, hasSelection),
+      actions: <><button title="Load example sketch" aria-label="Load example sketch" disabled={busy} onClick={() => { activateSketch("source"); commit({ ...blank(), name: "Branch studies", strokes: exampleStrokes() }); updatePanel("source", createSketchPanel()); }}><Icon name="pen" size={13} /></button>{frameActions("source", hasSelection, Boolean(artwork.photo || artwork.strokes.length))}</>,
+      content: sketchFrameContent("source", artwork, canvas, <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start with a mark.</strong><span>Draw here, drop a photo, or paste an image.</span><button onClick={() => upload.current?.click()}>Attach photo<Icon name="upload" size={14} /></button></div>) },
+    ...sketchFrames.map(frame => ({ id: frame.id as FrameId, title: frame.artwork.name, subtitle: frameSubtitle(frame.id, frame.artwork, Boolean(sketchSelections[frame.id])),
+      actions: frameActions(frame.id, Boolean(sketchSelections[frame.id]), Boolean(frame.artwork.photo || frame.artwork.strokes.length)),
+      content: sketchFrameContent(frame.id, frame.artwork, handle => { if (handle) sketchCanvases.current.set(frame.id, handle); else sketchCanvases.current.delete(frame.id); }, <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start a new sketch.</strong><span>Draw here, then extract its collections.</span></div>) })),
+  ].filter(frame => frame.id !== "source" || !workspace.hiddenFrames.includes("source"));
+
+  // ── Inspector (right) ──────────────────────────────────────────────────────
+  const statusLabel = liveStatus === "live" ? panel.dirtyNodeIds.length ? "Live · descriptions changed, regenerate to apply" : "Live · controls update code & visual" : liveStatus === "changed" ? "Structure changed · update code to connect" : generated ? "Connect controls to your current code" : "Generate code to enable live controls";
+  const propertiesStage = <>
+    {stale && <div className="stale-banner">{sourceSketch ? `원본 스케치(${sourceSketch.name})가 바뀌었습니다. 원본에서 다시 Extract하면 새 프레임으로 추출됩니다.` : "스케치가 바뀌었습니다. 다시 Extract하면 새 프레임으로 추출됩니다."}</div>}
+    {scene.nodes.length > 0 && <div className={`live-controls-status status-${liveStatus}`} role="status"><span className="status-dot" />{statusLabel}</div>}
+    {scene.nodes.length > 0 && <button className="primary-button rules-generate-button" disabled={busy} onClick={() => { void ai.generateCode(); }}>{generated && (liveStatus !== "live" || panel.dirtyNodeIds.length) ? "Update code" : generated ? "Regenerate code" : "Generate code"}<Icon name="code" size={17} /></button>}
+    {panel.runtimeError && generated && <div className="runtime-error" role="alert">{panel.runtimeError}<button disabled={busy} onClick={() => { void ai.generateCode(true); }}>Fix with AI</button></div>}
+    {node ? <PropertyInspector node={node} transformations={inspectedTransformations(panel, node)} library={scene.algorithms} state={nodeState} busy={busy} clip={clip}
+      onNode={patch => edits.editNode(node.id, patch)} onTransformation={(id, patch) => edits.editTransformation(node.id, id, patch)}
+      onAddTransformation={() => edits.addTransformation(node.id)} onRemoveTransformation={id => edits.removeTransformation(node.id, id)} onMoveTransformation={(id, offset) => edits.moveTransformation(node.id, id, offset)} onChooseState={stateId => edits.chooseState(node.id, stateId)}
+      onState={patch => nodeState && edits.editState(node.id, nodeState.id, patch)} onTransition={(id, patch) => edits.editTransition(node.id, id, patch)}
+      onScalar={(propertyId, path, value) => edits.scalar(node.id, propertyId, path, value)} onSwap={(propertyId, path, choice) => edits.swap(node.id, propertyId, path, choice)}
+      onProperty={(propertyId, patch) => edits.editProperty(node.id, propertyId, patch)} onRemoveProperty={propertyId => edits.removeProperty(node.id, propertyId)}
+      onAddProperty={(algorithmId, transformationId) => edits.addProperty(node.id, algorithmId, transformationId)} onRegenerate={target => { void ai.regenerate(node.id, target); }}
+      onMakePen={(propertyId, path) => edits.makePen({ nodeId: node.id, propertyId, path })}
+      onCopy={(propertyId, path) => edits.copySlot(node.id, propertyId, path)} onPaste={(propertyId, path, dropped) => edits.pasteSlot(node.id, propertyId, path, dropped)}
+      clipFor={(propertyId, path) => edits.clipFor(node.id, propertyId, path)} onAddBlock={(block, transformationId) => edits.addBlock(node.id, block, transformationId)} onGenerateMachine={() => { void ai.generateMachine(node.id); }} onRemoveMachine={() => edits.removeMachine(node.id)} />
+      : <><div className="section-kicker">LOOK A LITTLE CLOSER</div><h2>Every sketch is<br />a set of systems.</h2>
+        <p className="section-description">{scene.nodes.length ? "Select a collection or object in Layers or on the sketch to edit its semantic transformation." : "Draw or attach a photo, then extract its collections and objects."}</p>
+        {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No collections yet.</p><span>Sketch → Extract → Explore</span><button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
+        {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
+      </>}
+    <AlgorithmLibrary scene={scene} busy={busy} targetName={node?.name || null} imports={algorithmImports}
+      onEdit={edits.editAlgorithm} onUse={algorithmId => { if (node) edits.addProperty(node.id, algorithmId); }} onMakePen={algorithmId => edits.makePen({ algorithmId })}
+      onCopy={edits.copyDefinition} clipFor={edits.definitionClip}
+      onImport={key => { const item = algorithmImports.find(entry => entry.key === key); if (item) { edits.importAlgorithm(item.source); setToast(`${item.algorithm.name} 블록을 이 스케치로 가져왔습니다.`); } }} />
+  </>;
+
+  return <div className="studio live-studio freeform-studio scene-studio">
     <header className="topbar"><a className="brand" href="/" aria-label="Rulegen home"><span className="brand-mark"><i /><i /><i /></span>rulegen<span className="beta">LAB</span></a><div className="project-title"><span className="slash">/</span><input aria-label="Project name" value={artwork.name} maxLength={200} onChange={e => setArtwork(a => ({ ...a, name: e.target.value }))} /><span className="saved-dot" /><span className="saved-label">{saveState}</span></div><div className="top-actions"><button className="text-button" onClick={() => setHistoryOpen(true)}>AI history<Icon name="undo" size={14} /></button><button className="text-button" onClick={() => setExportOpen(true)}>Export project <Icon name="download" size={14} /></button><button className="text-button" onClick={() => importInput.current?.click()}>Open JSON</button><button className="text-button" onClick={() => { setNewName(""); setModal(true); }}>New exploration <Icon name="plus" size={15} /></button></div></header>
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Attach photograph" onChange={e => { if (e.target.files?.[0]) void attach(e.target.files[0]); e.target.value = ""; }} />
-    <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("프로젝트 파일이 너무 큽니다."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { setError("올바른 Rulegen 프로젝트 JSON 파일을 선택해주세요."); } }} />
+    <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("프로젝트 파일이 너무 큽니다."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "올바른 Rulegen 프로젝트 JSON 파일을 선택해주세요." }); } }} />
     <div className="workspace">
-      <nav className="rail" aria-label="Workspace toolbar"><button className="rail-button" aria-label="Exploration workspace" onClick={() => setStage("features")}><Icon name="grid" size={20} /></button><button className="rail-button" aria-label="Add sketch frame" title="Add sketch frame" disabled={busy || (sketchFrames.length >= 24 && !workspace.hiddenFrames.includes("source"))} onClick={addSketchFrame}><Icon name="plus" size={20} /></button><button className="rail-button" aria-label="Attach photo" title="Attach photo" onClick={() => upload.current?.click()}><Icon name="upload" size={20} /></button><div className="rail-line" /><div className="left-sketch-tools" role="toolbar" aria-label="Sketch tools"><div className="left-tool-anchor">{toolButton("pen", "pen", "Pencil")}{pencilOpen && <div className="pencil-popover" role="group" aria-label="Pencil settings"><div className="pencil-popover-heading"><span>Pencil settings</span><button aria-label="Close pencil settings" onClick={() => setPencilOpen(false)}><Icon name="close" size={14} /></button></div><span className="left-setting-title">INK COLOR</span><div className="left-colors">{["#75664e", "#397461", "#333a3b", "#b56850"].map(c => <button key={c} className={`color ${color === c ? "active" : ""}`} style={{ background: c }} aria-label={`Select color ${c}`} aria-pressed={color === c} onClick={() => setColor(c)} />)}</div><label><span>Size</span><input aria-label="Pencil size" type="range" min="1" max="20" value={width} onChange={e => setWidth(+e.target.value)} /><output>{width}px</output></label><label><span>Opacity</span><input aria-label="Pencil opacity" type="range" min="5" max="100" value={opacity} onChange={e => setOpacity(+e.target.value)} /><output>{opacity}%</output></label></div>}</div>{toolButton("eraser", "eraser", "Eraser")}{toolButton("lasso", "lasso", "Lasso selection")}{toolButton("hand", "hand", "Pan")}{activeDrawingBrush && toolButton("brush", "brush", "Generated brush")}{algorithmPens.length > 0 && <div className="left-tool-anchor algorithm-pen-anchor"><div className="algorithm-pen-toolbar" role="group" aria-label="Drawing pens">{algorithmPens.map(pen => <button key={pen.id} style={{ color: pen.color }} className={`rail-button algorithm-pen-button ${tool === "semantic" && activeSemanticPenId === pen.id ? "active" : ""}`} title={`${pen.name} · ${pen.meaning}`} aria-label={pen.kind === "interaction" ? "Use Interaction pen" : `Use algorithm pen ${pen.name}`} aria-pressed={tool === "semantic" && activeSemanticPenId === pen.id} onClick={() => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectAlgorithmPen(pen); }}><Icon name={pen.kind === "interaction" ? "interaction" : "pen"} size={18} /><span className="semantic-pen-dot" style={{ background: pen.color }} /></button>)}</div>{penSettingsOpen && activeSemanticPen && tool === "semantic" && <AlgorithmPenSettings pen={activeSemanticPen} onChange={editDrawingPen} onClose={() => setPenSettingsOpen(false)} onRemove={activeSemanticPen.kind === "interaction" ? undefined : () => { setSemanticPens(current => current.filter(pen => pen.id !== activeSemanticPen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} />}</div>}<div className="rail-line" /><button className="rail-button" aria-label="Undo" disabled={annotating ? busy || !annotationHistory.past.length : stage === "brush" ? !lab.strokes.length : activeSketch !== "source" ? !sketchHistories[activeSketch]?.past.length : !history.length} onClick={undo}><Icon name="undo" size={16} /></button><button className="rail-button" aria-label="Redo" disabled={annotating ? busy || !annotationHistory.future.length : stage === "brush" ? !labFuture.length : activeSketch !== "source" ? !sketchHistories[activeSketch]?.future.length : !future.length} onClick={redo}><Icon name="redo" size={16} /></button><button className="rail-button" aria-label="Clear canvas" disabled={annotating && (busy || !annotations.length)} onClick={() => { if (annotating) { editAnnotations({ type: "clear" }); return; } if (stage === "brush") { setLabFuture(lab.strokes.slice().reverse()); setLab(blank()); } else if (activeSketch !== "source") { commitSketchFrame(activeSketch, { ...currentSketch, strokes: [], photo: null }); sketchCanvases.current.get(activeSketch)?.clearSelection(); } else { commit({ ...artwork, strokes: [], photo: null }); if (featureSourceId === "source") { setFeatures([]); setGroups([]); setRemovedControls([]); setGenerated(null); setSelected(null); } } canvas.current?.clearSelection(); }}><Icon name="close" size={16} /></button></div><div className="left-zoom"><button className="rail-button" aria-label="Zoom in" onClick={() => zoom(.1)}><Icon name="plus" size={14} /></button><button aria-label="Fit canvas frames" onClick={() => workspaceCanvas.current?.fit()}>{Math.round((workspace.camera?.zoom || .4) * 100)}%</button><button className="rail-button" aria-label="Zoom out" onClick={() => zoom(-.1)}><Icon name="minus" size={14} /></button></div><button className="help-button" aria-label="Keyboard shortcuts" onClick={() => setToast("P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+Z 실행 취소 · Space/Alt+드래그 이동 · ⌘/Ctrl+스크롤 확대 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제")}>?</button></nav>
+      <ToolRail tool={tool} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={algorithmPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
+        busy={busy} canAddSketch={!busy && (sketchFrames.length < 24 || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
+        onTool={chooseTool} onPencilClose={() => setPencilOpen(false)} onColor={setColor} onWidth={setWidth} onOpacity={setOpacity}
+        onPen={pen => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectAlgorithmPen(pen); }}
+        onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
+        onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
+        onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
+        onHelp={() => setToast("V 선택·이동 · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제")} />
+      <aside className="layer-sidebar">
+        <LayerPanel scene={scene} sketchId={activeSketch} selected={panel.selectedNodeIds} hovered={panel.hovered} busy={busy} canUndo={panel.sceneHistory.length > 0} canRedo={panel.sceneFuture.length > 0} title={currentSketch.name}
+          onSelect={edits.select} onHover={edits.hover}
+          onRename={edits.rename} onToggleVisible={edits.toggleVisible} onGroup={edits.group} onUngroup={edits.ungroup} onDelete={edits.remove}
+          onMove={edits.reparent} onReorder={edits.reorder} onAdd={edits.add} onUndo={edits.undo} onRedo={edits.redo}
+          onExtract={() => { void ai.extract(); }} canExtract={sourcePresent} />
+      </aside>
       <main className="canvas-workspace">
-        <FreeformWorkspace ref={workspaceCanvas} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={resultLayout} onChange={setWorkspace} activeFrame={activeSketch as FrameId} onActivateFrame={id => { const owner = resultSketchId(id); if (owner) activateSketch(owner); else if (id === "source" || id.startsWith("sketch-")) activateSketch(id); }} tool={tool} onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={[
-          { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: `${artwork.strokes.length} strokes${hasSelection ? " · selection" : ""}${activeSketch === "source" ? " · active" : ""}`, actions: <><button title="Load example sketch" aria-label="Load example sketch" disabled={busy} onClick={() => { activateSketch("source"); commit({ ...blank(), name: "Branch studies", strokes: exampleStrokes() }); updatePanel("source", createSketchPanel()); }}><Icon name="pen" size={13} /></button><button disabled={!(artwork.photo || artwork.strokes.length) || busy} onClick={() => { activateSketch("source"); void analyzeFrame("source"); }}>{hasSelection ? "Analyze selection" : "Analyze"}<Icon name="spark" size={13} /></button></>, content: (boardZoom: number) => <div className="sketch-frame-surface" onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch("source"); }}><SketchCanvas ref={canvas} artwork={artwork} tool={tool} color={color} width={width} opacity={opacity} transparent viewport={viewport} brush={activeDrawingBrush || undefined} semanticPen={activeSemanticPen} onStroke={stroke => { if (artworkRef.current.strokes.length >= 500) { setError("한 프레임에는 최대 500개의 획을 저장할 수 있습니다. 새 스케치 프레임을 추가해주세요."); return; } setStage("features"); commit({ ...artworkRef.current, strokes: [...artworkRef.current.strokes, stroke] }); }} onViewport={() => {}} onSelection={setHasSelection} onError={message => updatePanel("source", { error: message })}>
-              <FeatureOverlay features={selectedSceneState(panels.source)?.features || panels.source?.features || []} selected={panels.source?.selected || null} hovered={activeSketch === "source" ? hovered : null} zoom={boardZoom} onSelect={id => selectSketchFeature("source", id)} onHover={id => { if (activeSketch === "source") setHovered(id); }} />
-            </SketchCanvas>{!(artwork.photo || artwork.strokes.length) && <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start with a mark.</strong><span>Draw here, drop a photo, or paste an image.</span><button onClick={() => upload.current?.click()}>Attach photo<Icon name="upload" size={14} /></button></div>}</div> },
-          ...sketchFrames.map(frame => ({ id: frame.id as FrameId, title: frame.artwork.name, subtitle: `${frame.artwork.strokes.length} strokes${sketchSelections[frame.id] ? " · selection" : ""}${activeSketch === frame.id ? " · active" : ""}`, actions: <button disabled={busy || !(frame.artwork.photo || frame.artwork.strokes.length)} onClick={() => { activateSketch(frame.id); void analyzeFrame(frame.id); }}>{sketchSelections[frame.id] ? "Analyze selection" : "Analyze"}<Icon name="spark" size={13} /></button>, content: (boardZoom: number) => <div className="sketch-frame-surface" onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(frame.id); }}><SketchCanvas ref={handle => { if (handle) sketchCanvases.current.set(frame.id, handle); else sketchCanvases.current.delete(frame.id); }} artwork={frame.artwork} tool={tool} color={color} width={width} opacity={opacity} viewport={viewport} brush={activeDrawingBrush || undefined} semanticPen={activeSemanticPen} onStroke={stroke => { if (frame.artwork.strokes.length >= 500) { setError("한 프레임에는 최대 500개의 획을 저장할 수 있습니다."); return; } activateSketch(frame.id); commitSketchFrame(frame.id, { ...sketchFramesRef.current.find(f => f.id === frame.id)!.artwork, strokes: [...sketchFramesRef.current.find(f => f.id === frame.id)!.artwork.strokes, stroke] }); }} onViewport={() => {}} onSelection={value => setSketchSelections(current => current[frame.id] === value ? current : { ...current, [frame.id]: value })} onError={message => updatePanel(frame.id, { error: message })}><FeatureOverlay features={selectedSceneState(panels[frame.id])?.features || panels[frame.id]?.features || []} selected={panels[frame.id]?.selected || null} hovered={activeSketch === frame.id ? hovered : null} zoom={boardZoom} onSelect={id => selectSketchFeature(frame.id, id)} onHover={id => { if (activeSketch === frame.id) setHovered(id); }} /></SketchCanvas>{!(frame.artwork.photo || frame.artwork.strokes.length) && <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start a new sketch.</strong><span>Draw here, then analyze this frame.</span></div>}</div> })),
-          ...resultOwners.map(owner => {
-            const resultPanel = panels[owner.id] || createSketchPanel();
-            return { id: resultFrameId(owner.id), title: `Generated result · ${owner.name}`, subtitle: resultPanel.annotating ? "Sketch → clarification → suggestions" : "p5.js", actions: <>
-              <button disabled={!resultPanel.executable || Boolean(resultPanel.loading)} aria-pressed={resultPanel.annotating} onClick={() => beginAnnotations(owner.id)}><Icon name="pen" size={13} />{resultPanel.annotating ? "Done" : "Annotate"}</button>
-              <button disabled={!resultPanel.executable || Boolean(resultPanel.loading)} aria-label="Rerun generated result" onClick={() => { activateSketch(owner.id); updatePanel(owner.id, previous => ({ renderRevision: previous.renderRevision + 1 })); }}><Icon name="play" size={13} />Run again</button>
-            </>, content: (boardZoom: number) => <SketchResult owner={owner.id} panel={resultPanel} tool={tool} zoom={boardZoom} documentRevision={activeDocument.current}
-              onActivate={() => activateSketch(owner.id)} onPatch={patch => updatePanel(owner.id, patch)}
-              onPreview={handle => { if (handle) resultPreviews.current.set(owner.id, handle); else resultPreviews.current.delete(owner.id); }}
-              onOpenCode={() => openResultCode(owner.id)} onExplore={() => { activateSketch(owner.id); updatePanel(owner.id, { stage: "rules" }); }} /> };
-          }),
-          ...(stage === "brush" ? [{ id: "brush" as const, title: brush?.name || "Brush playground", subtitle: "Draw to try your brush", actions: <button onClick={() => { setLabFuture(lab.strokes.slice().reverse()); setLab(blank()); }}>Clear</button>, content: <><SketchCanvas ref={brushCanvas} artwork={lab} tool={brush ? "brush" : "pen"} color={color} width={width} opacity={100} viewport={viewport} brush={brush || undefined} onStroke={stroke => { setLabFuture([]); setLab(a => ({ ...a, strokes: [...a.strokes.slice(-499), stroke] })); }} onViewport={() => {}} onSelection={() => {}} onError={setError} /></> }] : [])
-        ].filter(frame => frame.id !== "source" || !workspace.hiddenFrames.includes("source"))} />
+        <FreeformWorkspace ref={workspaceCanvas} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          onActivateFrame={id => activateSketch(id)}
+          onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
       </main>
-      <aside className="inspector"><div className="inspector-title"><span aria-label="Inspector sketch" title={currentSketch.name}>{currentSketch.name}</span><Icon name="spark" size={17} /></div><div className="stage-tabs" role="tablist" aria-label="Exploration steps">{(["features", "rules", "code", "brush"] as const).map((s, i) => <button key={s} role="tab" aria-selected={stage === s} className={stage === s ? "active" : ""} onClick={() => { setStage(s); setPencilOpen(false); }}><span>0{i + 1}</span>{s === "features" ? "Features" : s === "rules" ? "Rules" : s === "code" ? "Code" : "Brush"}</button>)}</div>
-        {loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{loading}</span><button onClick={cancel}>Cancel</button></div>}{error && <div className="error-banner" role="alert"><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError("")}><Icon name="close" size={14} /></button></div>}
+      <aside ref={inspectorPanel} className={`inspector ${inspectorWidth ? "inspector-resized" : ""}`} style={inspectorWidth ? { "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties : undefined}>
+        <PanelResizer label="Resize properties panel" min={280} max={Math.max(320, Math.min(900, (typeof window === "undefined" ? 1400 : window.innerWidth) - 520))}
+          measure={() => inspectorPanel.current?.getBoundingClientRect().width || 354} onResize={setInspectorWidth} onReset={() => setInspectorWidth(null)} /><div className="inspector-title"><span aria-label="Inspector sketch" title={currentSketch.name}>{node ? `${currentSketch.name} / ${node.name}` : currentSketch.name}</span><Icon name="spark" size={17} /></div>
+        {clip && <div className="block-clipboard" title="Right-click a socket to paste, or drag blocks from the palette"><span className="algorithm-badge">ƒ</span>Clipboard · <strong>{clip.label}</strong></div>}
+        {panel.loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{panel.loading}</span><button onClick={cancel}>Cancel</button></div>}{panel.error && <div className="error-banner" role="alert"><span>{panel.error}</span><button aria-label="Dismiss error" onClick={() => patchActive({ error: "" })}><Icon name="close" size={14} /></button></div>}
         <div ref={inspector} className="inspector-content live-inspector-content">
-          {stage !== "brush" && !annotating && <SketchComposition artwork={currentSketch} prompt={composePrompt} onPrompt={setComposePrompt} onDraft={() => { void draftComposePrompt(); }} onCompose={() => { void composeSketch(); }} busy={busy} drafting={loading === compositionPromptLabel} />}
-          {annotating && <ResultRevisionPanel hasSketch={Boolean(annotations.length)} clarifying={clarifying} onClarify={() => { void beginClarification(); }} onRegenerateClarification={() => { void requestClarification(); }} generatingClarification={loading === clarificationLabel} clarificationStale={Boolean(clarificationContext && clarificationContext !== currentSketchSnapshot)} onSketch={() => setClarifying(false)} instruction={revisionInstruction} proposal={revisionProposal?.proposal || null} changes={proposalChanges} stale={proposalStale} busy={busy} tool={tool} canUndo={Boolean(annotationHistory.past.length)} canRedo={Boolean(annotationHistory.future.length)} onTool={chooseTool} onUndo={undo} onRedo={redo} onInstruction={setRevisionInstruction} onRequest={() => { void requestRevision(); }} onConfirm={() => { void confirmRevision(); }} onDiscard={() => setRevisionProposal(null)} onClose={() => setAnnotating(false)} />}
-
-          {stage === "features" && <><div className="section-kicker">LOOK A LITTLE CLOSER</div><h2>Every sketch has<br />a story to tell.</h2><p className="section-description">{features.length ? "Pick a visual ingredient. Edit it to match what you see." : "Draw or attach a photo, then analyze it to discover 2–6 visual ingredients."}</p>{stale && <div className="stale-banner">스케치가 변경되었습니다. 다시 분석하면 최신 특징으로 업데이트됩니다.</div>}{!features.length ? <div className="empty-features"><Icon name="spark" size={30} /><p>No features yet.</p><span>Sketch → Analyze → Explore</span><button className="primary-button" disabled={!sourcePresent || busy} onClick={analyze}>Analyze {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div> : <><div className="feature-list">{features.map((feature, i) => <div key={feature.id} className={`feature-item ${selected === feature.id ? "active" : ""}`}><button className="feature-select" aria-label={`Select ${feature.label}`} aria-pressed={selected === feature.id} onClick={() => selectFeature(feature.id)}><span className="feature-number">0{i + 1}</span></button><input aria-label={`Edit feature ${i + 1}`} value={feature.label} maxLength={100} onChange={e => setFeatureLabel(feature.id, e.target.value)} /></div>)}</div>{chosen && <p className="chosen-feature-description">{chosen.description}</p>}<div className="selection-summary"><span>{chosen ? "EXPLORING" : "NO FEATURE FILTER"}</span><strong>{chosen?.label || "All sketch features"}</strong>{selected && <button className="clear-feature" onClick={() => setSelected(null)}>Clear selection<Icon name="close" size={12} /></button>}</div><button className="primary-button" disabled={busy} onClick={() => generateRules()}>Generate subfeatures<Icon name="arrow" size={17} /></button><button className="feature-brush-button" disabled={busy} onClick={() => { setStage("brush"); setPencilOpen(false); }}><span><Icon name="brush" size={16} /><span>Create procedural brush<small>Turn selected features into a drawing tool</small></span></span><Icon name="arrow" size={15} /></button><button className="copy-button" disabled={busy} onClick={analyze}>Reanalyze {currentSelection ? "selection" : "sketch"}</button></>}</>}
-          {stage === "rules" && <><div className="section-kicker">FROM FEATURE TO PARAMETERS</div><div className="rule-feature-filters" role="group" aria-label="Filter rules by visual feature"><button className={!selected ? "active" : ""} aria-pressed={!selected} onClick={() => setSelected(null)}>All features<span>{groups.reduce((n, g) => n + g.subfeatures.length, 0)}</span></button>{features.map(f => <button key={f.id} className={selected === f.id ? "active" : ""} aria-pressed={selected === f.id} onClick={() => selectFeature(f.id)}>{f.label}<span>{groups.find(g => g.featureId === f.id)?.subfeatures.length || 0}</span></button>)}</div><div className="rules-count" role="status">{visibleGroups.reduce((n, g) => n + g.subfeatures.length, 0)} subfeatures · {chosen?.label || "all features"}</div>{removedControls.length > 0 && <button className="undo-control-deletion" disabled={busy} onClick={undoControlDeletion}><Icon name="undo" size={13} />Undo deletion</button>}{!visibleGroups.length && <div className="empty-panel">No subfeatures for this selection yet.<button className="primary-button" disabled={busy || !features.length} onClick={() => generateRules()}>Generate subfeatures<Icon name="spark" size={16} /></button></div>}{visibleGroups.length > 0 && <div className={`live-controls-status status-${controlsStatus}`} role="status"><span className="status-dot" />{controlsStatus === "live" ? "Live · controls update code & visual" : controlsStatus === "changed" ? "Implementation changed · update code to connect" : generated ? "Connect widgets to your current code" : "Generate code to enable live controls"}</div>}{visibleGroups.length > 0 && <button className="primary-button rules-generate-button" disabled={busy} onClick={() => generateCode()}>{generated && controlsStatus !== "live" ? "Connect live controls" : "Generate code"}<Icon name="code" size={17} /></button>}{visibleGroups.map(group => <SubfeatureControls key={group.featureId} group={group} name={featureName(group.featureId)} busy={busy} onMethod={(subId, methodId) => { void changeImplementation(group.featureId, subId, methodId); }} onParameter={(subId, methodId, parameterId, value) => { setRemovedControls([]); setGroups(current => updateParameter(current, group.featureId, subId, methodId, parameterId, value)); }} onAlternative={() => generateRules(group.featureId, true)} onMakePen={subId => generateAlgorithmPen(group.featureId, subId)} onRegenerate={subId => regenerateSubfeature(group.featureId, subId)} onRemove={(subId, methodId, parameterId) => deleteControl(group.featureId, subId, methodId, parameterId)} />)}</>}
-          {stage === "code" && <><div className="section-kicker">MAKE ROOM FOR THE UNEXPECTED</div><h2>{generationMode === "compose" ? <>See your sketch<br />become a system.</> : <>See your rules<br />come to life.</>}</h2>{!generated ? <div className="empty-panel">Generate a rule set, then translate it into p5.js.<button className="primary-button" onClick={() => setStage("rules")}>Explore rules<Icon name="arrow" size={16} /></button></div> : <><p className="section-description">{generated.title}</p><div className="preview-tabs"><button onClick={() => workspaceCanvas.current?.focus(resultFrameId(activeSketch))}><Icon name="grid" size={13} />Focus result frame</button><span>p5.js</span></div><textarea className="live-code-editor" spellCheck={false} aria-label="Generated p5.js code" value={codeDraft} onChange={e => setCodeDraft(e.target.value)} /><button className="alternative-button" onClick={async () => { if (generated.code === codeDraft) await prepare(codeDraft); else setGenerated({ ...generated, code: codeDraft }); setRenderRevision(r => r + 1); }}>Run edited code<Icon name="play" size={14} /></button>{runtimeError && <div className="runtime-error" role="alert">{runtimeError}<button disabled={busy} onClick={() => generationMode === "compose" ? composeSketch(true) : generateCode(true)}>Fix with AI</button></div>}<p className="chosen-feature-description">{generated.explanation}</p><button className="primary-button" disabled={busy} onClick={() => generationMode === "compose" ? composeSketch() : generateCode()}>{generationMode === "compose" ? "Recompose sketch" : "Regenerate from rules"}<Icon name="spark" size={16} /></button><button className="copy-button" onClick={() => downloadFile(`${generated.title}.js`, codeDraft)}>Download p5.js code<Icon name="download" size={14} /></button><button className="copy-button" onClick={async () => { try { await navigator.clipboard.writeText(codeDraft); setToast("p5.js 코드를 복사했습니다."); } catch { setError("클립보드에 접근하지 못했습니다. 다운로드를 이용해주세요."); } }}>Copy code<Icon name="copy" size={14} /></button></>}</>}
-          {stage === "brush" && <><div className="section-kicker">FROM FEATURE TO GESTURE</div><h2>A little logic.<br />A living brush.</h2><p className="section-description">Generate a drawing tool from your visual ingredients.</p><div className="brush-origin"><span>PRIMARY FEATURE</span><strong>{chosen?.label || "All sketch features"}</strong></div>{features.length > 0 && <div className="brush-blend"><span className="brush-section-label">BLEND FEATURES</span><div>{features.filter(f => f.id !== selected).map(f => <button key={f.id} className={blend.includes(f.id) ? "active" : ""} aria-pressed={blend.includes(f.id)} onClick={() => setBlend(b => b.includes(f.id) ? b.filter(id => id !== f.id) : [...b, f.id])}><span>{blend.includes(f.id) ? "✓" : "+"}</span>{f.label}</button>)}</div></div>}<div className="sample-paths">{["curve", "wave", "line"].map(path => <button key={path} className={gesture === path ? "active" : ""} disabled={!brush} onClick={() => applyGesture(path)}>{path}</button>)}</div>{savedBrushes.length > 0 && <div className="saved-brush-library"><span className="eyebrow">BRUSH LIBRARY</span><div>{savedBrushes.map((item, i) => <button key={i} onClick={() => { setBrush(structuredClone(item)); applyGesture(gesture, item); }}>{item.name}</button>)}</div></div>}<label className="refinement-input brush-description-input"><span>BRUSH DESCRIPTION <small>optional</small></span><textarea aria-label="Brush description" placeholder="예: 작은 파란 잎이 성기게 반복되고, 끝으로 갈수록 가늘어지는 브러시" value={brushDescription} maxLength={2000} rows={4} onChange={e => setBrushDescription(e.target.value)} /><span className="brush-description-help">원하는 모양·색상·반복 방식을 설명하면 선택한 특징과 함께 반영됩니다.</span></label><button className="alternative-button" disabled={busy || !features.length} onClick={() => generateBrush(Boolean(brush))}><Icon name="spark" size={15} />{brush ? "Generate another brush" : "Generate brush"}</button>{brush && <><p className="chosen-feature-description">{brush.description}</p><div className="brush-controls-heading"><span className="brush-section-label">SHAPE THE BRUSH</span><strong>{brush.name}</strong></div><div className="brush-controls">{([{ key: "spacing", label: "Spacing", min: 5, max: 80, unit: "px" }, { key: "size", label: "Size", min: 8, max: 100, unit: "px" }, { key: "spread", label: "Spread", min: 0, max: 90, unit: "°" }, { key: "variation", label: "Variation", min: 0, max: 80, unit: "%" }, { key: "taper", label: "Taper", min: 0, max: 100, unit: "%" }] as const).map(control => <label className="brush-control" key={control.key}><span><strong>{control.label}</strong><output>{Math.round(brush.settings[control.key])}{control.unit}</output></span><input aria-label={`Brush ${control.label.toLowerCase()}`} type="range" min={control.min} max={control.max} value={brush.settings[control.key]} onChange={e => setBrush(b => b ? { ...b, settings: { ...b.settings, [control.key]: +e.target.value } } : b)} /></label>)}<label className="brush-palette">Ink color<input aria-label="Brush ink color" type="color" value={brush.settings.color} onChange={e => setBrush(b => b ? { ...b, settings: { ...b.settings, color: e.target.value } } : b)} /></label></div><button className="primary-button" onClick={() => useBrush()}>Use on sketch<Icon name="brush" size={16} /></button><button className="alternative-button" onClick={saveBrush}>Save brush<Icon name="plus" size={15} /></button><button className="copy-button" onClick={() => downloadFile(`${brush.name}.json`, JSON.stringify(brush, null, 2), "application/json")}>Download brush recipe<Icon name="download" size={14} /></button><button className="copy-button" onClick={() => downloadFile(`${brush.name}.js`, brushCode(brush))}>Download p5.js brush<Icon name="code" size={14} /></button></>}</>}
-          {features.length > 0 && stage !== "brush" && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder="예: 더 유기적으로, 반복은 적게, 파란색으로…" value={instruction} maxLength={2000} onChange={e => setInstruction(e.target.value)} /></label>}
+          {!annotating && <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} onDraft={() => { void ai.draftComposePrompt(); }} onCompose={() => { void ai.compose(); }} busy={busy} drafting={panel.loading === compositionPromptLabel} />}
+          {annotating && <ResultRevisionPanel hasSketch={Boolean(annotations.length)} clarifying={panel.clarifying} onClarify={() => { void revisions.beginClarification(); }} onRegenerateClarification={() => { void revisions.requestClarification(); }} generatingClarification={panel.loading === clarificationLabel} clarificationStale={Boolean(panel.clarificationContext && panel.clarificationContext !== revisionSnapshot(panel, ""))} onSketch={() => patchActive({ clarifying: false })} instruction={panel.revisionInstruction} proposal={panel.revisionProposal?.proposal || null} changes={proposalChanges} stale={proposalStale} busy={busy} tool={tool} canUndo={panel.annotationHistory.past.length > 0} canRedo={panel.annotationHistory.future.length > 0} onTool={chooseTool} onUndo={undo} onRedo={redo} onInstruction={value => patchActive({ revisionInstruction: value })} onRequest={() => { void revisions.requestRevision(); }} onConfirm={() => { void revisions.confirmRevision(); }} onDiscard={() => patchActive({ revisionProposal: null })} onClose={() => patchActive({ annotating: false })} />}
+          {propertiesStage}
+          {scene.nodes.length > 0 && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder="예: 더 유기적으로, 반복은 적게, 파란색으로…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>}
         </div><div className="inspector-footer"><span className="tiny-dot" />Built for exploration, not perfection.</div></aside>
     </div>
-    <RawCodePanel code={liveSource} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("p5.js 코드를 복사했습니다.")} onError={setError}
-      machinePanel={<StateMachinePanel machine={machine} hasCode={Boolean(generated)} selectedId={selectedStateId} runtimeId={panel.runtimeStateId} playing={panel.machinePlaying} busy={busy} dirty={panel.dirtyStateIds.length > 0}
-        onGenerate={() => { void generateStateScene(); }} onJump={jumpState} onPlay={playing => updatePanel(activeSketch, { machinePlaying: playing })} onRestart={() => { if (machine) jumpState(machine.initialState, true); }} onEvent={emitTransition}
-        onState={(id, patch) => editState(id, state => ({ ...state, ...patch }), true)}
-        onFeature={(stateId, featureId, patch) => editState(stateId, state => ({ ...state, features: state.features.map(feature => feature.id === featureId ? { ...feature, ...patch } : feature) }), true)}
-        onMethod={(stateId, featureId, subId, methodId) => editState(stateId, state => ({ ...state, groups: state.groups.map(group => group.featureId !== featureId ? group : { ...group, subfeatures: group.subfeatures.map(sub => sub.id === subId ? { ...sub, selectedImplementation: methodId } : sub) }) }), true)}
-        onParameter={(stateId, featureId, subId, methodId, parameterId, value) => editState(stateId, state => ({ ...state, groups: updateParameter(state.groups, featureId, subId, methodId, parameterId, value) }))}
-        onTransition={(id, patch) => editMachine(machine => ({ ...machine, transitions: machine.transitions.map(transition => transition.id === id ? { ...transition, ...patch } : transition) }))}
-        onApply={() => { void generateStateScene(true); }} />} />
+    <RawCodePanel code={liveSource} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("p5.js 코드를 복사했습니다.")} onError={message => patchActive({ error: message })}
+      editor={{ draft: panel.codeDraft || "", busy, runtimeError: panel.runtimeError, onDraft: value => patchActive({ codeDraft: value }),
+        onRun: () => { if (!generated) return; if (generated.code === panel.codeDraft) void prepare(panel.codeDraft); else patchActive({ generated: { ...generated, code: panel.codeDraft || "" }, executable: "", preparedCode: "" }); patchActive(previous => ({ renderRevision: previous.renderRevision + 1 })); },
+        onFix: () => { void ai.generateCode(true); } }}
+      machinePanel={<NodeMachinePanel scene={scene} node={machineNode} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
+        playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}
+        onSelectNode={id => edits.select(id)} onState={stateId => machineNode && edits.chooseState(machineNode.id, stateId)}
+        onGenerate={() => { if (machineNode) void ai.generateMachine(machineNode.id); }} onPlay={playing => patchActive({ machinePlaying: playing })}
+        onRestart={() => machineNode && restartMachine(machineNode.id)} onEvent={transitionId => machineNode && emitTransition(machineNode.id, transitionId)} />} />
     {toast && <div className="toast" role="status"><Icon name="spark" size={17} /><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={15} /></button></div>}
     {historyOpen && <GenerationHistory disabled={busy} onClose={() => setHistoryOpen(false)} onRestore={restoreAIHistory} />}
-    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>스케치·사진·특징·규칙·코드·브러시가 함께 저장됩니다. JSON 파일로 다운로드하거나 복사할 수 있어요.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("프로젝트 JSON을 복사했습니다."); } catch { setError("JSON 내용을 선택해 복사하거나 다운로드해주세요."); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
+    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>스케치·사진·collection·object·알고리즘 블록·코드가 함께 저장됩니다. JSON 파일로 다운로드하거나 복사할 수 있어요.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("프로젝트 JSON을 복사했습니다."); } catch { patchActive({ error: "JSON 내용을 선택해 복사하거나 다운로드해주세요." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
     {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>새 탐색을 시작하면 현재 로컬 초안이 교체됩니다. JSON으로 내보내면 언제든 다시 열 수 있어요.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
   </div>;
 }

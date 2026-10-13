@@ -24,8 +24,10 @@ function highlightLines(code: string) {
   return lines;
 }
 
-export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel }: {
+export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel, editor }: {
   code: string;
+  /** Editing the generated code (replaces the old inspector Code tab). */
+  editor?: { draft: string; busy: boolean; runtimeError: string; onDraft: (code: string) => void; onRun: () => void; onFix: () => void };
   sketchName: string;
   fileName: string;
   onCopy: () => void;
@@ -34,6 +36,7 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
 }) {
   const [expanded, setExpanded] = useState(true);
   const [mode, setMode] = useState<"code" | "machine">("code");
+  const [editing, setEditing] = useState(false);
   const lines = useMemo(() => highlightLines(code), [code]);
 
   async function copyCode() {
@@ -50,12 +53,16 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
       <span className="raw-code-sketch" title={sketchName}>{sketchName}</span>
       {code && mode === "code" && <span className="raw-code-count">{lines.length} lines</span>}
       <div className="raw-code-actions">
+        {editor && code && mode === "code" && <button className="raw-code-edit" aria-pressed={editing} title={editing ? "Show highlighted code" : "Edit code"} onClick={() => setEditing(value => !value)}><Icon name="edit" size={15} /></button>}
+        {editor && editing && mode === "code" && <button className="raw-code-run" title="Run edited code" aria-label="Run edited code" disabled={editor.busy} onClick={editor.onRun}><Icon name="play" size={14} /></button>}
         <button aria-label="Copy raw p5.js code" title="Copy code" disabled={!code} onClick={() => { void copyCode(); }}><Icon name="copy" size={15} /></button>
         <button aria-label="Download raw p5.js code" title="Download code" disabled={!code} onClick={() => downloadFile(`${fileName}.js`, code)}><Icon name="download" size={15} /></button>
       </div>
     </header>
+    {expanded && mode === "code" && editor?.runtimeError && <div className="runtime-error raw-runtime-error" role="alert">{editor.runtimeError}<button disabled={editor.busy} onClick={editor.onFix}>Fix with AI</button></div>}
     {expanded && (mode === "machine" ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div id="raw-p5-code" role="tabpanel" className="raw-code-body">
-      {code ? <pre tabIndex={0} aria-label="Raw p5.js source"><code>{lines.map((line, index) => <span className="raw-code-line" key={index}><span className="raw-code-number" aria-hidden="true">{index + 1}</span><span>{line.length ? line.map((segment, part) => <span key={part} className={segment.className || undefined}>{segment.text}</span>) : "\n"}</span></span>)}</code></pre>
+      {editor && editing && code ? <textarea className="raw-code-editor" spellCheck={false} aria-label="Generated p5.js code" value={editor.draft} onChange={e => editor.onDraft(e.target.value)} />
+        : code ? <pre tabIndex={0} aria-label="Raw p5.js source"><code>{lines.map((line, index) => <span className="raw-code-line" key={index}><span className="raw-code-number" aria-hidden="true">{index + 1}</span><span>{line.length ? line.map((segment, part) => <span key={part} className={segment.className || undefined}>{segment.text}</span>) : "\n"}</span></span>)}</code></pre>
         : <div className="raw-code-empty">No generated p5.js code</div>}
     </div>)}
   </section>;

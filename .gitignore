@@ -9,3 +9,4 @@
 
 # Local AI inputs, images and generated outputs
 /ai-generations/
+/error-logs/

@@ -72,9 +72,7 @@ export async function restoreGeneration(key: string) {
   if (metadata.status !== "success") throw new Error("완료된 AI 생성만 복원할 수 있습니다.");
   const recovery = await optionalJson(directory, "recovery.json");
   if (recovery) return recoveredGenerationSchema.parse(await hydrate(directory, recovery));
-  const rawInput = await hydrate(directory, await json(directory, "request.json")) as Record<string, unknown>;
-  // Older releases generated creative code under this intent name.
-  const input = requestSchema.parse({ ...rawInput, intent: rawInput.intent === "constraint-code" ? "code" : rawInput.intent });
+  const input = requestSchema.parse(await hydrate(directory, await json(directory, "request.json")));
   const context = await optionalJson(directory, "context.json");
   return recoverGeneration(input, await hydrate(directory, await json(directory, "result.json")), context ? recoveryContextSchema.parse(await hydrate(directory, context)) : undefined);
 }

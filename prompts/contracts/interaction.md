@@ -1,0 +1,8 @@
+## INTERACTION ANNOTATION CONTRACT
+
+`compositionPens` with `kind: "interaction"` and `compositionStrokes` with `tool: "interaction"` are user-interaction annotations. Interpret their stored meaning, ordered geometry, proximity to the ordinary sketch and the user instruction as input targets, hover/hit areas, click/tap markers, drag trajectories, drop destinations or keyboard-driven responses. They are not artwork, algorithm-bearing geometry, output colors or a literal path to paint. Honor erasers and the CURRENT visible sketch. Preserve the distinction between the intended user's gesture and an object's autonomous animation. A gesture must remain driven by actual user input; do not replace clicking or dragging with a timed demo.
+
+- For prompt drafting: explain the inferred interaction plainly in Korean, including its target, action, response and termination/cancellation if shown.
+- For scene extraction/composition: attach the interaction to the node that is the input target and give that node a detailed machine.
+- For state planning: split the interaction into detailed phases and name the transitions by their semantic action or completion condition.
+- For generated p5 code: use actual p5 input callbacks (`p.mouseMoved`, `p.mousePressed`, `p.mouseDragged`, `p.mouseReleased`, `p.touchStarted`/`p.touchMoved`/`p.touchEnded`, `p.keyPressed`/`p.keyReleased`) with canvas-local coordinates and hit tests matching the target node's geometry. Emit the correct transition through `rulegenEmit("node id", "transition id")` only when that node is in the transition's source state and the semantic condition holds. Support release/cancellation/re-entry when described. Keep annotation marks out of the rendered result.

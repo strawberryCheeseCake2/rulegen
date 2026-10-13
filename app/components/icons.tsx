@@ -1,6 +1,13 @@
-export type IconName = "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush";
+export type IconName = "select" | "collection" | "object" | "eye" | "eye-off" | "layers" | "function" | "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush";
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
+    select: <path d="M5 3l14 8-6 2-2 6L5 3Z" />,
+    collection: <><path d="M3 7h7l2 2h9v10H3V7Z" /><path d="M3 7V5h6l2 2" /></>,
+    object: <><rect x="5" y="5" width="14" height="14" rx="3" /></>,
+    eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
+    "eye-off": <><path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.2 7.6A17 17 0 0 0 2 12s4 6 10 6a9.6 9.6 0 0 0 4.3-1" /></>,
+    layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 13 9 5 9-5" /></>,
+    function: <><path d="M14 4h-1a3 3 0 0 0-3 3v10a3 3 0 0 1-3 3H6M7 11h8M15 14l5 5M20 14l-5 5" /></>,
     interaction: <><path d="m7 5 1 15 4-5 5 5 3-3-5-5 5-4L7 5ZM3 3l2 2M9 1v2M1 9h2" /></>,
     trash: <><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></>,
     pause: <><path d="M8 4v16M16 4v16" /></>,

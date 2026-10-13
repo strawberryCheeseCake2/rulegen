@@ -2,11 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import { prepareCode } from "../app/server/code.server";
-import { brushSchema, requestSchema } from "../app/lib/schema";
-import { stamp, drawBrushPath, brushCode } from "../app/lib/brush-engine";
+import { requestSchema } from "../app/lib/schema";
 import { projectSchema, exampleStrokes } from "../app/lib/project";
-const recipe = brushSchema.parse({ name: "Branch ink", description: "Recursive motif", settings: { spacing: 12, size: 30, spread: 35, variation: 20, taper: 60, color: "#547d64" }, primitives: [{ kind: "branch", coords: [0, 0, .6, -1.5], weight: .05, filled: false, depth: 3 }] });
-function fakePainter() { const lines: number[][] = []; return { lines, color: () => ({ setAlpha() {} }), push() {}, pop() {}, translate() {}, rotate() {}, scale() {}, stroke() {}, noFill() {}, fill() {}, strokeWeight() {}, line: (...args: number[]) => lines.push(args) } as unknown as Parameters<typeof stamp>[0] & { lines: number[][] }; }
 test("generated loops are bounded before they can freeze the browser", () => {
   const code = prepareCode("p.setup=()=>{p.createCanvas(900,600);while(true){p.line(0,0,1,1)}};");
   let budget = 0; const p = { setup() {}, createCanvas() {}, line() {} };
@@ -40,12 +37,8 @@ test("a local top binding does not permit browser globals or unsafe member acces
   assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /API: top/);
   assert.throws(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const top=28;p.top;};"), /API: top/);
 });
-test("brush recursion and density produce actual p5 marks", () => { const p = fakePainter(); stamp(p, recipe, 0, 0, 0, 1); assert.equal(p.lines.length, 7); p.lines.length = 0; drawBrushPath(p, recipe, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); assert.equal(p.lines.length, 77); });
-test("spacing changes the number of motif stamps", () => { const a = fakePainter(), b = fakePainter(); drawBrushPath(a, recipe, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); drawBrushPath(b, { ...recipe, settings: { ...recipe.settings, spacing: 24 } }, [{ x: 0, y: 0 }, { x: 120, y: 0 }]); assert.ok(a.lines.length > b.lines.length); });
-test("exported brush JavaScript is self contained", () => { const code = brushCode(recipe); assert.doesNotThrow(() => prepareCode(code)); const p = fakePainter(); Object.assign(p, { setup() {}, draw() {}, createCanvas() {}, background() {} }); vm.runInNewContext(code, { p, Math }); (p as unknown as { setup(): void }).setup(); });
-test("remote image URLs are rejected", () => { assert.equal(requestSchema.safeParse({ intent: "analyze", image: "https://example.com/private" }).success, false); });
-test("brush bounds reject runaway recursion and malformed settings", () => { assert.equal(brushSchema.safeParse({ ...recipe, primitives: [{ ...recipe.primitives[0], depth: 99 }] }).success, false); assert.equal(brushSchema.safeParse({ ...recipe, settings: { ...recipe.settings, spacing: 0 } }).success, false); });
-test("projects serialize actual strokes and editable results without secrets", () => { const artwork = { strokes: exampleStrokes(), photo: null, name: "Branch studies", revision: 1 }; const saved = projectSchema.parse({ version: 1, name: artwork.name, artwork, features: [], groups: [], analysisRevision: -1, generated: null, brush: recipe, savedBrushes: [recipe] }); const restored = projectSchema.parse(JSON.parse(JSON.stringify(saved))); assert.equal(restored.artwork.strokes.length, 63); assert.equal(restored.brush!.name, recipe.name); assert.equal(JSON.stringify(saved).includes("OPENAI_API_KEY"), false); });
+test("remote image URLs are rejected", () => { assert.equal(requestSchema.safeParse({ intent: "extract", image: "https://example.com/private" }).success, false); });
+test("projects serialize actual strokes and editable results without secrets", () => { const artwork = { strokes: exampleStrokes(), photo: null, name: "Branch studies", revision: 1 }; const saved = projectSchema.parse({ version: 2, name: artwork.name, artwork }); const restored = projectSchema.parse(JSON.parse(JSON.stringify(saved))); assert.equal(restored.artwork.strokes.length, 63); assert.equal(JSON.stringify(saved).includes("OPENAI_API_KEY"), false); });
 
 test("zoom keeps the world point beneath the cursor fixed", async () => {
   const { zoomAt } = await import("../app/lib/workspace");
@@ -59,9 +52,16 @@ test("fit includes freely moved frames at negative world coordinates", async () 
   const frames = [{ x: -800, y: -200 }, { x: 240, y: 0 }], view = fitFrames(frames, 900, 650);
   for (const f of frames) { assert.ok(f.x * view.zoom + view.x >= 0); assert.ok(f.y * view.zoom + view.y >= 0); assert.ok((f.x + 900) * view.zoom + view.x <= 900); assert.ok((f.y + 600) * view.zoom + view.y <= 650); }
 });
-test("older projects gain frames and camera positions survive export", () => {
-  const old = { version: 1, name: "Old", artwork: { strokes: [], photo: null, name: "Old", revision: 0 }, features: [], groups: [], analysisRevision: -1, generated: null, brush: null, savedBrushes: [] };
-  const migrated = projectSchema.parse(old); assert.equal(migrated.workspace.camera, null);
-  migrated.workspace.frames.result = { x: -250, y: 980 }; migrated.workspace.camera = { zoom: .6, x: 45, y: -160 };
+test("new projects gain frames and camera positions survive export", () => {
+  const migrated = projectSchema.parse({ version: 2, name: "New", artwork: { strokes: [], photo: null, name: "New", revision: 0 } }); assert.equal(migrated.workspace.camera, null);
+  migrated.workspace.frames.source = { x: -250, y: 980 }; migrated.workspace.camera = { zoom: .6, x: 45, y: -160 };
   assert.deepEqual(projectSchema.parse(JSON.parse(JSON.stringify(migrated))).workspace, migrated.workspace);
+});
+test("strings named like browser APIs are plain data unless used as a computed key or a reflection name", () => {
+  const wrap = (body: string) => `p.setup=()=>{p.createCanvas(900,600);${body}};`;
+  // A select value compared in generated code (the reported failure), object keys and labels.
+  for (const ok of ["const alignment = 'top'; p.translate(0, alignment === 'top' ? -30 : 0);", "const box = { top: 4, parent: null }; p.rect(0, box['y'] || 0, 2, 2);", "const labels = ['window', 'location']; p.text(labels[0], 0, 0);", "const align = `top`;"])
+    assert.doesNotThrow(() => prepareCode(wrap(ok)), ok);
+  for (const bad of ["p['top']", "p[`window`]", "p?.['parent']", "const k = 'constructor';", "Reflect.get(p, '__proto__')", "({ constructor: 1 })", "box.top"])
+    assert.throws(() => prepareCode(wrap(`const box = {}; ${bad}`)), bad);
 });

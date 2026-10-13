@@ -24,6 +24,18 @@ export class AIGenerationLog {
     this.metadata = { id: this.id, intent, model, startedAt: timestamp, status: "started" satisfies Status };
   }
 
+  /** `<date>/<id>`, the key AI history uses. */
+  get key() { return `${this.started.toISOString().slice(0, 10)}/${this.id}`; }
+
+  /** Transient provider failures that were retried, kept beside the final response. */
+  async retried(attempt: number, retry: number, status: number, body: string) {
+    await this.io(async () => {
+      this.metadata.retries = [...(this.metadata.retries as unknown[] || []), { attempt, retry, status, at: new Date().toISOString() }];
+      await this.file(`response-${attempt}-retry${retry}.txt`, this.redact(body));
+      await this.json("log.json", this.metadata);
+    });
+  }
+
   static async start(intent: string, model: string, input: unknown, context?: RecoveryContext) {
     const log = new AIGenerationLog(intent, model);
     await log.io(async () => {
@@ -35,22 +47,25 @@ export class AIGenerationLog {
     return log;
   }
 
-  async prompt(body: unknown) { await this.io(() => this.json("prompt.json", body)); }
+  /** Later attempts (repair rounds) are kept next to the first: prompt-2.json, response-2.json … */
+  private attemptName = (name: string, attempt: number) => attempt > 1 ? name.replace(/\.(\w+)$/, `-${attempt}.$1`) : name;
 
-  async response(response: Response, body: string) {
+  async prompt(body: unknown, attempt = 1) { await this.io(() => this.json(this.attemptName("prompt.json", attempt), body)); }
+
+  async response(response: Response, body: string, attempt = 1) {
     await this.io(async () => {
       this.metadata.httpStatus = response.status;
       this.metadata.openaiRequestId = response.headers.get("x-request-id");
       let parsed: unknown;
       try { parsed = JSON.parse(body); } catch { /* Preserve non-JSON provider responses too. */ }
       if (parsed !== undefined) {
-        await this.json("response.json", parsed);
+        await this.json(this.attemptName("response.json", attempt), parsed);
         if (parsed && typeof parsed === "object") {
           const details = parsed as Record<string, unknown>;
           this.metadata.responseId = details.id;
           this.metadata.usage = details.usage;
         }
-      } else await this.file("response.txt", this.redact(body));
+      } else await this.file(this.attemptName("response.txt", attempt), this.redact(body));
       await this.json("log.json", this.metadata);
     });
   }

@@ -34,13 +34,13 @@ test("drawing and clear remain reversible; new strokes discard redo", () => {
 test("new sketch frames preserve independent artwork, analyzed source and moved positions across export", () => {
   const workspace = workspaceSchema.parse({});
   const id = "sketch-test"; workspace.frames[id] = nextSketchPosition(workspace.frames);
-  assert.ok(workspace.frames[id].x >= workspace.frames.result.x + 1040);
+  assert.ok(workspace.frames[id].x >= workspace.frames.source.x + 1040);
   workspace.frames[id] = { x: -340, y: 710 };
   const artwork = { strokes: [], photo: null, name: "Original", revision: 0 };
-  const project = projectSchema.parse({ version: 1, name: "Frames", artwork, features: [], groups: [], analysisRevision: 0, generated: null, brush: null, savedBrushes: [], sketchFrames: [{ id, artwork: { ...artwork, name: "Sketch 2", revision: 3, strokes: [{ points: [{ x: 10, y: 20 }], color: "#397461", width: 3, opacity: 1, tool: "pen" }] } }], featureSourceId: id, workspace });
+  const project = projectSchema.parse({ version: 2, name: "Frames", artwork, sketchFrames: [{ id, artwork: { ...artwork, name: "Sketch 2", revision: 3, strokes: [{ points: [{ x: 10, y: 20 }], color: "#397461", width: 3, opacity: 1, tool: "pen" }] } }], activeSketchId: id, workspace });
   const restored = projectSchema.parse(JSON.parse(JSON.stringify(project)));
   assert.equal(restored.artwork.strokes.length, 0); assert.equal(restored.sketchFrames[0].artwork.strokes.length, 1);
-  assert.equal(restored.featureSourceId, id); assert.deepEqual(restored.workspace.frames[id], { x: -340, y: 710 });
+  assert.equal(restored.activeSketchId, id); assert.deepEqual(restored.workspace.frames[id], { x: -340, y: 710 });
   assert.equal(projectSchema.safeParse({ ...project, sketchFrames: [...project.sketchFrames, ...project.sketchFrames] }).success, false);
-  assert.equal(projectSchema.safeParse({ ...project, featureSourceId: "sketch-missing" }).success, false);
+  assert.equal(projectSchema.parse({ ...project, activeSketchId: "sketch-missing" }).activeSketchId, "source");
 });

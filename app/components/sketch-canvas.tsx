@@ -1,14 +1,13 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type P5 from "p5";
-import { ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type BrushRecipe, type Point, type Stroke, type SemanticPen, type Viewport } from "../lib/schema";
-import { drawBrushPath } from "../lib/brush-engine";
-export type CanvasHandle = { capture: (full?: boolean) => { image: string; region: { x: number; y: number; w: number; h: number } }; clearSelection: () => void };
-type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; brush?: BrushRecipe; semanticPen?: SemanticPen; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode };
+import { ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type Point, type Stroke, type SemanticPen, type Viewport } from "../lib/schema";
+export type CanvasHandle = { capture: (full?: boolean, transparentBackground?: boolean) => { image: string; region: { x: number; y: number; w: number; h: number } }; clearSelection: () => void };
+type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; semanticPen?: SemanticPen; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode };
 export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null), instance = useRef<P5 | null>(null);
   const current = useRef(props); current.current = props;
   const draft = useRef<Stroke | null>(null), lasso = useRef<Point[]>([]), pointer = useRef<{ mode: string; last: Point } | null>(null);
-  const photo = useRef<HTMLImageElement | null>(null), render = useRef<(applyView?: boolean) => void>(() => {});
+  const photo = useRef<HTMLImageElement | null>(null), render = useRef<(applyView?: boolean, transparentBackground?: boolean) => void>(() => {});
   const [ready, setReady] = useState(false), [selection, setSelection] = useState<Point[]>([]);
   useEffect(() => {
     let disposed = false;
@@ -24,17 +23,16 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
           for (const stroke of [...state.artwork.strokes, ...(draft.current ? [draft.current] : [])]) {
             layer.push(); const ctx = layer.drawingContext as CanvasRenderingContext2D;
             ctx.globalCompositeOperation = stroke.tool === "eraser" ? "destination-out" : "source-over";
-            if (stroke.tool === "brush" && stroke.brush) drawBrushPath(layer, stroke.brush, stroke.points, stroke.opacity);
-            else { const ink = layer.color(stroke.color); ink.setAlpha(stroke.opacity * 255); layer.stroke(ink); layer.strokeWeight(stroke.width); layer.strokeCap(p.ROUND); layer.noFill();
+            { const ink = layer.color(stroke.color); ink.setAlpha(stroke.opacity * 255); layer.stroke(ink); layer.strokeWeight(stroke.width); layer.strokeCap(p.ROUND); layer.noFill();
               if (stroke.points.length === 1) { layer.point(stroke.points[0].x, stroke.points[0].y); }
               else for (let i = 1; i < stroke.points.length; i++) layer.line(stroke.points[i - 1].x, stroke.points[i - 1].y, stroke.points[i].x, stroke.points[i].y);
             }
             layer.pop();
           }
-          render.current = (applyView = true) => {
-            if (applyView && state.transparent) p.clear(); else p.background("#fffefa"); p.push();
+          render.current = (applyView = true, transparentBackground = false) => {
+            if ((applyView && state.transparent) || transparentBackground) p.clear(); else p.background("#fffefa"); p.push();
             if (applyView) { p.translate(state.viewport.x, state.viewport.y); p.scale(state.viewport.zoom); }
-            if (!applyView || !state.transparent) { p.noStroke(); p.fill("#fffefa"); p.rect(0, 0, W, H); }
+            if (!transparentBackground && (!applyView || !state.transparent)) { p.noStroke(); p.fill("#fffefa"); p.rect(0, 0, W, H); }
             if (photo.current) { const img = photo.current; const scale = Math.min(W / img.naturalWidth, H / img.naturalHeight); (p.drawingContext as CanvasRenderingContext2D).drawImage(img, (W - img.naturalWidth * scale) / 2, (H - img.naturalHeight * scale) / 2, img.naturalWidth * scale, img.naturalHeight * scale); }
             p.image(layer, 0, 0); p.pop();
           };
@@ -58,11 +56,11 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
   useEffect(() => { lasso.current = []; setSelection([]); props.onSelection(false); }, [props.artwork.photo]);
   useImperativeHandle(ref, () => ({
     clearSelection() { lasso.current = []; setSelection([]); current.current.onSelection(false); },
-    capture(full = false) {
+    capture(full = false, transparentBackground = false) {
       const canvas = host.current?.querySelector("canvas");
       if (!canvas || !ready) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
       if (current.current.artwork.photo && !photo.current) throw new Error("사진을 불러오는 중입니다. 잠시 후 분석해주세요.");
-      instance.current?.redraw(); render.current(false);
+      instance.current?.redraw(); render.current(false, transparentBackground);
       try {
       const region = { x: 0, y: 0, w: 1, h: 1 };
       let image: string;
@@ -72,7 +70,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
         const width = Math.min(W - x, Math.ceil(Math.max(...points.map(p => p.x))) - x), height = Math.min(H - y, Math.ceil(Math.max(...points.map(p => p.y))) - y);
         if (width < 10 || height < 10) throw new Error("더 넓은 영역을 선택해주세요.");
         const crop = document.createElement("canvas"); crop.width = width; crop.height = height; const ctx = crop.getContext("2d")!;
-        ctx.fillStyle = "#fffefa"; ctx.fillRect(0, 0, width, height); ctx.save(); ctx.beginPath(); points.forEach((point, i) => i ? ctx.lineTo(point.x - x, point.y - y) : ctx.moveTo(point.x - x, point.y - y)); ctx.closePath(); ctx.clip(); ctx.drawImage(canvas, -x, -y); ctx.restore();
+        if (!transparentBackground) { ctx.fillStyle = "#fffefa"; ctx.fillRect(0, 0, width, height); } ctx.save(); ctx.beginPath(); points.forEach((point, i) => i ? ctx.lineTo(point.x - x, point.y - y) : ctx.moveTo(point.x - x, point.y - y)); ctx.closePath(); ctx.clip(); ctx.drawImage(canvas, -x, -y); ctx.restore();
         Object.assign(region, { x: x / W, y: y / H, w: width / W, h: height / H }); image = crop.toDataURL("image/png");
       } else image = canvas.toDataURL("image/png");
       return { image, region };
@@ -91,7 +89,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     e.currentTarget.setPointerCapture(e.pointerId); const point = coordinate(e); const mode = e.button === 1 || e.altKey ? "hand" : props.tool;
     pointer.current = { mode, last: point };
     if (mode === "lasso") { lasso.current = [world(point)]; setSelection([...lasso.current]); }
-    else if (mode !== "hand") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : mode === "brush" ? "brush" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "brush" && props.brush ? { brush: structuredClone(props.brush) } : {}), ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
+    else if (mode !== "hand" && mode !== "select") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
     instance.current?.redraw();
   }} onPointerMove={e => {
     const active = pointer.current; if (!active) return; const point = coordinate(e);

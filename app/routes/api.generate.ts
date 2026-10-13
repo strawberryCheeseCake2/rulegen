@@ -3,6 +3,7 @@ import { requestSchema, MAX_CODE_LENGTH } from "../lib/schema";
 import { runAI, configuration } from "../server/ai.server";
 import { prepareCode } from "../server/code.server";
 import { recoveryContextSchema } from "../lib/generation-recovery";
+import { errorDetails, logError } from "../server/error-log.server";
 export function loader() { return Response.json(configuration()); }
 export async function action({ request }: Route.ActionArgs) {
   const headers = { "Cache-Control": "no-store" };
@@ -16,14 +17,17 @@ export async function action({ request }: Route.ActionArgs) {
     const parsed = JSON.parse(raw);
     if (parsed.intent === "prepare") {
       if (typeof parsed.code !== "string" || parsed.code.length > MAX_CODE_LENGTH) throw new Error("코드가 너무 길거나 형식이 올바르지 않습니다.");
-      return Response.json({ executable: prepareCode(parsed.code) }, { headers });
+      try { return Response.json({ executable: prepareCode(parsed.code) }, { headers }); }
+      catch (error) { const logged = await logError({ source: "prepare", ...errorDetails(error), code: parsed.code }); return Response.json({ error: (error as Error).message, logged }, { status: 400, headers }); }
     }
     const checked = requestSchema.safeParse(parsed);
-    if (!checked.success) return Response.json({ error: "요청 형식이 올바르지 않습니다." }, { status: 400, headers });
+    if (!checked.success) { const logged = await logError({ source: "server", message: "요청 형식이 올바르지 않습니다.", intent: String(parsed?.intent ?? ""), detail: checked.error.issues.slice(0, 20) }); return Response.json({ error: "요청 형식이 올바르지 않습니다.", logged }, { status: 400, headers }); }
     const context = parsed.recoveryContext === undefined ? undefined : recoveryContextSchema.parse(parsed.recoveryContext);
-    const result = await runAI(checked.data, request.signal, context);
-    return Response.json(result, { headers });
+    try { return Response.json(await runAI(checked.data, request.signal, context), { headers }); }
+    // runAI has already written the error log.
+    catch (error) { return Response.json({ error: error instanceof Error ? error.message : "요청을 처리하지 못했습니다.", logged: true }, { status: 400, headers }); }
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "요청을 처리하지 못했습니다." }, { status: 400, headers });
+    const logged = await logError({ source: "server", ...errorDetails(error) });
+    return Response.json({ error: error instanceof Error ? error.message : "요청을 처리하지 못했습니다.", logged }, { status: 400, headers });
   }
 }

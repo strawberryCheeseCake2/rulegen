@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "./icons";
-import type { RevisionProposal } from "../lib/schema";
-import type { RevisionChange } from "../lib/result-revisions";
+import type { SceneChange, SceneProposal } from "../lib/scene/revisions";
 
 export function ResultRevisionPanel({ hasSketch, clarifying, generatingClarification, clarificationStale, instruction, proposal, changes, stale, busy, tool, canUndo, canRedo, onTool, onUndo, onRedo, onClarify, onRegenerateClarification, onSketch, onInstruction, onRequest, onConfirm, onDiscard, onClose }: {
-  hasSketch: boolean; clarifying: boolean; instruction: string; proposal: RevisionProposal | null; changes: RevisionChange[]; stale: boolean; busy: boolean;
+  hasSketch: boolean; clarifying: boolean; instruction: string; proposal: SceneProposal | null; changes: SceneChange[]; stale: boolean; busy: boolean;
   tool: string; canUndo: boolean; canRedo: boolean; onTool: (tool: string) => void; onUndo: () => void; onRedo: () => void;
   generatingClarification: boolean; clarificationStale: boolean; onRegenerateClarification: () => void;
   onClarify: () => void; onSketch: () => void; onInstruction: (text: string) => void; onRequest: () => void; onConfirm: () => void; onDiscard: () => void; onClose: () => void;
@@ -33,7 +32,7 @@ export function ResultRevisionPanel({ hasSketch, clarifying, generatingClarifica
       {!hasSketch && <p className="revision-stale">결과 위에 스케치를 추가한 뒤 변경안을 요청해주세요.</p>}
       <button className="primary-button" disabled={busy || !hasSketch || !instruction.trim()} onClick={onRequest}>{proposal ? "변경안 다시 요청" : "변경 제안 받기"}</button>
       <button className="copy-button" disabled={busy} onClick={onSketch}>스케치로 돌아가기</button>
-      {proposal && <div className="revision-proposal" aria-label="Proposed feature and widget changes">
+      {proposal && <div className="revision-proposal" aria-label="Proposed collection and property changes">
         <strong>Rule · Visual feature 제안</strong><p>{proposal.summary}</p>
         {changes.map((c, i) => <div className="revision-change" key={i}><strong><span className={`revision-kind kind-${c.kind}`}>{c.kind === "add" ? "추가" : c.kind === "remove" ? "삭제" : "변경"}</span>{c.path}</strong><div><span>Before</span><pre>{c.before}</pre></div><div><span>After</span><pre>{c.after}</pre></div></div>)}
         {stale && <p role="alert" className="revision-stale">스케치·clarification 또는 현재 결과가 변경되었습니다. 변경안을 다시 요청해주세요.</p>}
