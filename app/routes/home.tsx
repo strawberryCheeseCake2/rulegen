@@ -223,6 +223,8 @@ export default function Home() {
     const onKey = (e: KeyboardEvent) => {
       if (historyOpen || modal || exportOpen || (e.target as HTMLElement).closest("input,textarea,select,[contenteditable]")) return;
       const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
+      // Interaction mode: the frame only takes input for its running result.
+      if (panel.interacting) { if (e.key === "Escape") updatePanel(activeSketch, { interacting: false }); return; }
       if (e.key === "Escape") { setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
@@ -374,7 +376,7 @@ export default function Home() {
   /** Paste an image into the selected frame. Listens on window: clicking a frame does not focus anything inside the studio. */
   function pastePhoto(event: ClipboardEvent) {
     const target = event.target instanceof Element ? event.target : null;
-    if (!event.clipboardData || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']") || modal || exportOpen || historyOpen || busy) return;
+    if (!event.clipboardData || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']") || modal || exportOpen || historyOpen || busy || panelsRef.current[activeSketch]?.interacting) return;
     const item = Array.from(event.clipboardData.items).find(item => item.kind === "file" && item.type.startsWith("image/"));
     const image = item?.getAsFile() || Array.from(event.clipboardData.files).find(file => file.type.startsWith("image/"));
     if (!image) return;
@@ -395,7 +397,7 @@ export default function Home() {
     if (resultPanel.annotating) { updatePanel(owner, { annotating: false }); return; }
     const image = resultPanel.annotationImage || resultPreviews.current.get(owner)?.capture();
     if (!image || !resultPanel.generated) { updatePanel(owner, { error: "결과 렌더링이 완료된 뒤 Annotate를 눌러주세요." }); return; }
-    updatePanel(owner, { annotationImage: image, annotationSource: liveSceneSource(resultPanel.generated, resultPanel.scene), annotationRenderRevision: resultPanel.renderRevision, annotating: true, machinePlaying: false });
+    updatePanel(owner, { annotationImage: image, annotationSource: liveSceneSource(resultPanel.generated, resultPanel.scene), annotationRenderRevision: resultPanel.renderRevision, annotating: true, interacting: false, machinePlaying: false });
     setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); workspaceCanvas.current?.focus(owner as FrameId);
   }
   function emitTransition(nodeId: string, transitionId: string) {
@@ -432,18 +434,20 @@ export default function Home() {
   });
   const sketchFrameContent = (id: string, frameArtwork: Artwork, ref: React.Ref<CanvasHandle>, empty: React.ReactNode) => (boardZoom: number) => {
     const owner = panels[id] || createSketchPanel(), frameEdits = sceneEdits(deps, id);
-    return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${dropTarget === id ? "node-drop-target" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
-      onPointerDown={e => { if (tool === "select" && !(e.target as Element).closest(".scene-node")) frameEdits.select(null); }}
-      {...layerDrop(id, id, target => target.querySelector(".p5-surface") || target)}>
+    // Interaction mode: sketch strokes, layer boxes and layer drops are switched off; only the result takes input.
+    const interacting = owner.interacting && Boolean(owner.generated);
+    return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${interacting ? "frame-interacting" : ""} ${dropTarget === id ? "node-drop-target" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
+      onPointerDown={e => { if (!interacting && tool === "select" && !(e.target as Element).closest(".scene-node")) frameEdits.select(null); }}
+      {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
       <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
         onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "한 프레임에는 최대 500개의 획을 저장할 수 있습니다. 새 스케치 프레임을 추가해주세요." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
         onViewport={() => {}} onSelection={value => id === "source" ? setHasSelection(value) : setSketchSelections(current => current[id] === value ? current : { ...current, [id]: value })} onError={message => updatePanel(id, { error: message })}>
-        <SceneOverlay scene={owner.scene} selected={owner.selectedNodeIds} hovered={owner.hovered} zoom={boardZoom} interactive={tool === "select"}
+        {!interacting && <SceneOverlay scene={owner.scene} selected={owner.selectedNodeIds} hovered={owner.hovered} zoom={boardZoom} interactive={tool === "select"}
           onSelect={(nodeId, additive) => { activateSketch(id); frameEdits.select(nodeId, additive); }}
-          onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />
+          onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />}
       </SketchCanvas>
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
@@ -456,13 +460,15 @@ export default function Home() {
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={busy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
+      {frame.generated && <button className={frame.interacting ? "interaction-mode-on" : ""} disabled={!frame.executable} aria-pressed={frame.interacting} title={frame.interacting ? "Leave interaction mode (Esc)" : "Interaction mode: only the running result takes mouse, touch and keyboard input"}
+        onClick={() => { activateSketch(id); updatePanel(id, previous => previous.interacting ? { interacting: false } : { interacting: true, annotating: false, machinePlaying: true, selectedNodeIds: [], hovered: null }); }}><Icon name="interaction" size={13} />{frame.interacting ? "Done" : "Interact"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
       <button disabled={busy || !(present || frame.generated)} title="Extract collections into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
     </>;
   };
   const frameSubtitle = (id: string, artwork: Artwork, selection: boolean) => {
     const frame = panels[id], from = frame?.sourceFrameId ? artworkOf(frame.sourceFrameId)?.name : null;
-    return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
+    return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame?.interacting && frame.generated ? "interaction mode" : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
   const frames = [
     { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork, hasSelection),
@@ -545,7 +551,15 @@ export default function Home() {
         onFix: () => { void ai.generateCode(true); } }}
       machinePanel={<NodeMachinePanel scene={scene} node={machineNode} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
         playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}
-        onSelectNode={id => edits.select(id)} onState={stateId => machineNode && edits.chooseState(machineNode.id, stateId)}
+        target={machineNode && panel.machineTarget?.nodeId === machineNode.id ? { kind: panel.machineTarget.kind, id: panel.machineTarget.id } : null} draft={panel.machineDraft}
+        onSelectNode={id => edits.select(id)}
+        onState={stateId => { if (!machineNode) return; edits.chooseState(machineNode.id, stateId); patchActive({ machineTarget: { nodeId: machineNode.id, kind: "state", id: stateId } }); }}
+        onTransition={transitionId => machineNode && patchActive({ machineTarget: { nodeId: machineNode.id, kind: "transition", id: transitionId } })}
+        onClearTarget={() => patchActive({ machineTarget: null })}
+        onDeselect={() => { if (!machineNode) return; patchActive(previous => { const editingStates = { ...previous.editingStates }; delete editingStates[machineNode.id]; return { machineTarget: null, editingStates }; }); }}
+        layout={machineNode ? panel.machineLayouts[machineNode.id] : undefined}
+        onLayout={next => machineNode && patchActive(previous => { const machineLayouts = { ...previous.machineLayouts }; if (next) machineLayouts[machineNode.id] = next; else delete machineLayouts[machineNode.id]; return { machineLayouts }; })} onDraft={draft => patchActive({ machineDraft: draft })} onError={message => patchActive({ error: message })}
+        onRefine={request => { if (machineNode) void ai.refineMachine(machineNode.id, request); }}
         onGenerate={() => { if (machineNode) void ai.generateMachine(machineNode.id); }} onPlay={playing => patchActive({ machinePlaying: playing })}
         onRestart={() => machineNode && restartMachine(machineNode.id)} onEvent={transitionId => machineNode && emitTransition(machineNode.id, transitionId)} />} />
     {toast && <div className="toast" role="status"><Icon name="spark" size={17} /><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={15} /></button></div>}

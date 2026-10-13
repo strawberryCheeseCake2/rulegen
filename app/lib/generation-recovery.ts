@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { projectSchema } from "./project";
-import { annotationSchema, imageSchema, requestSchema, generatedSchema, compositionPromptSchema, clarificationSchema } from "./schema";
+import { annotationSchema, imageSchema, requestSchema, generatedSchema, compositionPromptSchema, clarificationSchema, machineRefineResultSchema } from "./schema";
 import { showWorkspaceFrame } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
 import { sceneProposalSchema, sceneSchema } from "./scene/validate";
@@ -48,6 +48,11 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
       panel.scene = sceneSchema.parse(result); panel.selectedNodeIds = [input.targetNodeId];
       const machine = panel.scene.nodes.find(node => node.id === input.targetNodeId)?.machine;
       if (machine) panel.editingStates = { ...panel.editingStates, [input.targetNodeId]: machine.initialState };
+      break;
+    }
+    case "machine-refine": {
+      const refined = machineRefineResultSchema.parse(result);
+      panel.scene = refined.scene; panel.selectedNodeIds = [input.targetNodeId]; panel.composePrompt = refined.composePrompt;
       break;
     }
     case "code":

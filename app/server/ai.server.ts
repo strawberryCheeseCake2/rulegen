@@ -33,7 +33,7 @@ export const configuration = () => ({ configured: Boolean(process.env.OPENAI_API
 
 /** Instructions = prompts/<intent>.md (+ the interaction contract when interaction marks exist). */
 export function instructionsFor(input: AIInput) {
-  const interaction = input.compositionPens.some(pen => pen.kind === "interaction") && ["compose-prompt", "extract", "compose", "state-machine", "code"].includes(input.intent);
+  const interaction = input.compositionPens.some(pen => pen.kind === "interaction") && ["compose-prompt", "extract", "compose", "state-machine", "machine-refine", "code"].includes(input.intent);
   return loadPrompt(input.intent) + (interaction ? `\n\n${loadPrompt("contracts/interaction")}` : "");
 }
 
@@ -56,6 +56,7 @@ function userContent(input: AIInput) {
   const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input)) }];
   if (input.intent === "clarification" && input.resultImage) content.push({ type: "input_text", text: "Clean generated result before annotation:" }, { type: "input_image", image_url: input.resultImage, detail: "high" }, { type: "input_text", text: "Same result with the user's coral annotation sketch:" });
   if (input.image) content.push({ type: "input_image", image_url: input.image, detail: "high" });
+  if (input.intent === "machine-refine" && input.machineImage) content.push({ type: "input_text", text: "The target node's state machine graph as the user sees it (attached item outlined in orange, the user's annotation strokes in coral):" }, { type: "input_image", image_url: input.machineImage, detail: "high" });
   if (intent.strokes && input.compositionStrokes.length) content.push({ type: "input_text", text: JSON.stringify({ compositionPens: input.compositionPens, compositionStrokes: input.compositionStrokes, canvas: { width: 900, height: 600 } }) });
   return content;
 }

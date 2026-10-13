@@ -1,6 +1,6 @@
-import { compositionPromptSchema, generatedSchema } from "../lib/schema";
+import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
 import { compositionContext } from "../lib/algorithm-pens";
-import type { SketchPanel } from "../lib/sketch-panels";
+import { emptyMachineDraft, type SketchPanel } from "../lib/sketch-panels";
 import type { AlgorithmCall, Algorithm, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
 import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
 import { sceneSchema } from "../lib/scene/validate";
@@ -225,6 +225,34 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         const machine = findNode(scene, nodeId)?.machine;
         deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), selectedNodeIds: [nodeId], ...(machine ? ops.chooseState({ ...current, scene }, nodeId, machine.initialState) : {}) }));
         deps.toast("상태 머신을 만들었습니다. 코드에 연결하려면 Generate code를 눌러주세요.");
+      }, owner);
+    },
+    /**
+     * Refine the node's machine as the user wrote/drew, focused on the attached
+     * state or transition; the frame's Compose prompt is rewritten to match.
+     */
+    async refineMachine(nodeId: string, request: { target: MachineTarget | null; instruction: string; image?: string; marks: MachineMark[] }) {
+      const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
+      const sourceId = panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : null;
+      const prompt = panel.composePrompt.trim() || (sourceId ? deps.panel(sourceId).composePrompt.trim() : "");
+      const label = request.target ? `AI가 첨부한 ${request.target.kind === "state" ? "state" : "transition"}를 다듬고 있습니다…` : "AI가 상태 머신을 다듬고 있습니다…";
+      await deps.task(label, async () => {
+        const context = await sketchContext(deps, owner);
+        const result = machineRefineResultSchema.parse(await deps.request("machine-refine", { scene: panel.scene, targetNodeId: nodeId, machineTarget: request.target, instruction: request.instruction,
+          machineImage: request.image, machineMarks: request.marks, composePrompt: prompt, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
+          previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "" }, owner));
+        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
+        const machine = findNode(result.scene, nodeId)?.machine;
+        deps.updatePanel(owner, current => {
+          const kept = (id: string | null | undefined) => id && machine?.states.some(state => state.id === id) ? id : null;
+          const target = current.machineTarget && machine && (current.machineTarget.kind === "state" ? machine.states : machine.transitions).some(item => item.id === current.machineTarget!.id) ? current.machineTarget : null;
+          const stateId = kept(request.target?.kind === "state" ? request.target.id : null) || kept(current.editingStates[nodeId]) || machine?.initialState;
+          return { ...ops.commitScene(current, result.scene, [nodeId]), selectedNodeIds: [nodeId], composePrompt: result.composePrompt, machineTarget: target, machineDraft: emptyMachineDraft(nodeId),
+            ...(stateId ? ops.chooseState({ ...current, scene: result.scene }, nodeId, stateId) : {}) };
+        });
+        // The sketch this frame was composed from keeps the same prompt, so it follows too.
+        if (sourceId && prompt && deps.panel(sourceId).composePrompt.trim() === prompt) deps.updatePanel(sourceId, { composePrompt: result.composePrompt });
+        deps.toast("상태 머신을 다듬고 Compose prompt에도 반영했습니다. 코드에 연결하려면 Update를 눌러주세요.");
       }, owner);
     },
     async compose(repair = false) {

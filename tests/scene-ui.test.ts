@@ -1,3 +1,4 @@
+import { emptyMachineDraft } from "../app/lib/sketch-panels";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
@@ -53,11 +54,12 @@ test("the inspector shows a node's stack of semantic transformations with nested
 
 test("the bottom panel shows only the selected node's machine graph; constraints live in the inspector", () => {
   const scene = sampleScene();
-  const html = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[1], editingStateId: "moving", runtimeStateId: "idle", playing: true, busy: false, hasCode: true } as never));
-  assert.match(html, /aria-label="Jump to state 이동" aria-pressed="true"/);
+  const html = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[1], editingStateId: "moving", runtimeStateId: "idle", playing: true, busy: false, hasCode: true, target: { kind: "state", id: "moving" }, draft: emptyMachineDraft() } as never));
+  assert.match(html, /class="machine-state selected-state attached-state[^"]*"[^>]*aria-label="Select state 이동" aria-pressed="true"/);
+  assert.doesNotMatch(html, /machine-refine-composer/, "the refine composer opens only on request");
   assert.match(html, /원 클릭/); assert.match(html, /정착 후 대기/);
   assert.doesNotMatch(html, /State constraints/);
-  const none = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[0], editingStateId: null, runtimeStateId: null, playing: true, busy: false, hasCode: true } as never));
+  const none = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[0], editingStateId: null, runtimeStateId: null, playing: true, busy: false, hasCode: true, target: null, draft: emptyMachineDraft() } as never));
   assert.match(none, /Tree has no state machine/);
   assert.match(none, /Generate state machine for Tree/);
 });

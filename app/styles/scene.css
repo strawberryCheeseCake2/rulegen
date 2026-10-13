@@ -199,3 +199,47 @@
 body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user-select: none !important; }
 @media (min-width: 701px) { .scene-studio .inspector.inspector-resized { width: var(--inspector-width); } }
 @media (max-width: 700px) { .panel-resizer { display: none; } }
+
+/* Interaction mode: the running result sits on top and alone takes input; strokes, layer boxes and drops are off. */
+.sketch-frame-surface.frame-interacting > .frame-render { z-index: 2; }
+.sketch-frame-surface.frame-interacting > .p5-surface { visibility: hidden; pointer-events: none; }
+.sketch-frame-surface.frame-interacting > .frame-empty, .sketch-frame-surface.frame-interacting > .frame-annotations { display: none; }
+.isolated-engine-frame.interactive-engine { left: 0; top: 0; width: 100%; height: 100%; opacity: 1; pointer-events: auto; cursor: pointer; }
+.sketch-frame-surface.frame-interacting { outline: 2px solid #c27a2c; outline-offset: -2px; }
+.frame-actions button.interaction-mode-on { background: #c27a2c; border-color: #c27a2c; color: #fff; }
+
+/* State machine graph: pan by dragging the background, pick states/transitions, annotate. */
+.machine-graph-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; cursor: grab; touch-action: none; user-select: none; background-image: radial-gradient(#dbe3de .7px, transparent .7px); background-size: 16px 16px; }
+.machine-graph-viewport.panning-graph { cursor: grabbing; }
+.machine-graph-viewport.annotating-graph, .annotating-graph .machine-state, .annotating-graph .transition-pick { cursor: crosshair; }
+.machine-graph-viewport > .machine-graph { position: absolute; left: 0; top: 0; min-width: 0; background: none; will-change: transform; }
+.machine-annotations { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.machine-annotations polyline { fill: none; stroke: #ff5a4e; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.machine-edges .transition-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
+.machine-edges .transition-label { cursor: pointer; }
+.machine-edges .selected-transition .transition-path { stroke: #e07b00; stroke-width: 2.6; }
+.machine-edges .selected-transition .transition-label rect { stroke: #e07b00; stroke-width: 2; fill: #fff6ea; }
+.machine-edges .selected-transition .transition-label text { fill: #a85a00; }
+.machine-state.attached-state { outline: 2.5px solid #e07b00; outline-offset: 2px; }
+.machine-annotate-hint { position: absolute; left: 10px; bottom: 8px; font-size: 10px; color: #c2453b; background: #fff; padding: 3px 7px; border-radius: 4px; border: 1px solid #f3c9c4; pointer-events: none; }
+.machine-toolbar > button.machine-annotating { background: #ffe9e6; color: #c2453b; }
+.machine-refine-composer { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 10px 18px; border-top: 1px solid #e3ebe5; background: #fbfdfb; min-width: 0; }
+.machine-refine-attachments { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.machine-attachment { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: 12px; background: #fff3e3; border: 1px solid #f1c48a; color: #8a4b00; font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.machine-attachment b { font-weight: 600; }
+.machine-attachment button { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 50%; }
+.machine-attachment button:hover { background: #0000000f; }
+.machine-attachment-empty { background: #f3f6f4; border-color: #dde5e0; color: #6d7f74; padding-right: 8px; white-space: normal; }
+.machine-attachment-annotation { background: #ffeceb; border-color: #f3b8b2; color: #b13a30; }
+.machine-refine-composer textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 54px; font: inherit; font-size: 12px; padding: 7px 9px; border: 1px solid #d4ddd7; border-radius: 5px; }
+.machine-refine-actions { display: flex; align-items: center; gap: 8px; }
+.machine-refine-actions > span { margin-right: auto; font-size: 10px; color: #85958b; }
+.machine-refine-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: 4px; font-size: 11px; border: 1px solid #d4ddd7; background: #fff; }
+.machine-refine-actions button.primary { background: #397461; color: #fff; border-color: #397461; }
+.machine-refine-actions button:disabled { opacity: .5; cursor: default; }
+.machine-graph-viewport .machine-state { cursor: grab; }
+.machine-graph-viewport .machine-state.dragging, .machine-graph-viewport.moving-graph-item { cursor: grabbing; }
+.machine-graph-viewport .machine-state.dragging { box-shadow: 0 6px 16px #2e4a3a26; z-index: 2; }
+.machine-edges .transition-label.dragging rect { stroke: #397461; stroke-width: 1.6; }
+.machine-edges .transition-label { cursor: grab; }
+.machine-edges, .machine-annotations { overflow: visible; }

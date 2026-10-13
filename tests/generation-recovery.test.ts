@@ -22,6 +22,7 @@ test("every AI output restores to its own sketch and leaves other sketches intac
   const outputs: Record<string, unknown> = {
     extract: scene, compose: renamed, transform: renamed, "state-machine": withMachine, code,
     "compose-prompt": { prompt: "new prompt" },
+    "machine-refine": { scene: withMachine, composePrompt: "- refined prompt" },
     clarification: { clarification: "가지를 키워줘" },
     revision: { summary: "가지를 키웁니다", scene: renamed },
   };
@@ -39,6 +40,7 @@ test("every AI output restores to its own sketch and leaves other sketches intac
     if (intent === "state-machine") { assert.equal(panel.scene.nodes[0].machine?.initialState, "a"); assert.equal(panel.editingStates.tree, "a"); }
     if (intent === "code") { assert.deepEqual(panel.generated, code); assert.equal(restored.annotationImage, ""); }
     if (intent === "compose-prompt") assert.equal(panel.composePrompt, "new prompt");
+    if (intent === "machine-refine") { assert.equal(panel.scene.nodes[0].machine?.initialState, "a"); assert.equal(panel.composePrompt, "- refined prompt"); }
     if (intent === "clarification") { assert.equal(restored.revisionInstruction, "가지를 키워줘"); assert.deepEqual(restored.annotations, annotations); }
     if (intent === "revision") { assert.equal(restored.proposal?.scene.nodes[0].name, "Grown tree"); assert.equal(panel.scene.nodes[0].name, "Tree", "proposals are not applied"); }
   }

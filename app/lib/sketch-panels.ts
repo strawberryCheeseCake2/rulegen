@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { generatedSchema, MAX_CODE_LENGTH, type GeneratedCode } from "./schema";
+import { generatedSchema, MAX_CODE_LENGTH, type GeneratedCode, type MachineTarget } from "./schema";
 import { emptyAnnotationHistory, type AnnotationHistory } from "./annotation-history";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
 import { liveSceneSource } from "./scene/live";
 import type { SceneProposal } from "./scene/revisions";
 
+const point = z.object({ x: z.number().min(-5000).max(20000), y: z.number().min(-5000).max(20000) });
 export const sketchPanelSchema = z.object({
   scene: sceneSchema.default(emptyScene), selectedNodeIds: z.array(z.string().max(80)).max(48).default([]),
   editingStates: z.record(z.string().max(80), z.string().max(80)).default({}), dirtyNodeIds: z.array(z.string().max(80)).max(48).default([]),
@@ -16,6 +17,8 @@ export const sketchPanelSchema = z.object({
   codeDraft: z.string().max(MAX_CODE_LENGTH).optional(),
   composePrompt: z.string().max(2000).default(""), generationMode: z.enum(["extract", "compose"]).default("extract"),
   instruction: z.string().max(2000).default(""),
+  /** Where the user moved each node's state boxes and transition labels in the State Machine panel. */
+  machineLayouts: z.record(z.string().max(80), z.object({ states: z.record(z.string().max(80), point), labels: z.record(z.string().max(80), point) })).default({}),
 }).transform(panel => {
   const ids = new Set(panel.scene.nodes.map(node => node.id));
   return { ...panel, codeDraft: panel.codeDraft ?? liveSceneSource(panel.generated, panel.scene),
@@ -37,7 +40,15 @@ export type SketchPanel = SavedSketchPanel & {
   stateJump: { nodeId: string; stateId: string; revision: number } | null;
   /** A result is being generated for a sketch that has none yet (e.g. after a layer drop). */
   pendingResult: boolean;
+  /** Interaction mode: pointer and keyboard input go only to the running result. */
+  interacting: boolean;
+  /** The state or transition picked in the state machine panel (attached to a refinement). */
+  machineTarget: (MachineTarget & { nodeId: string }) | null;
+  /** The open refinement of a node's machine: its text and the annotation drawn on the graph. */
+  machineDraft: MachineDraft;
 };
+export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
+export const emptyMachineDraft = (nodeId = ""): MachineDraft => ({ nodeId, open: false, instruction: "", annotating: false, strokes: [] });
 export function clearedResultAnnotations(): Partial<SketchPanel> {
   return { annotating: false, annotationImage: "", annotationSource: "", annotationHistory: emptyAnnotationHistory(), clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null };
 }
@@ -46,7 +57,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false };
+    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft() };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

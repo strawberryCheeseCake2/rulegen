@@ -78,6 +78,7 @@ test("every AI intent logs its final validated result and clarification retains 
     extract: aiScene, compose: aiScene, code,
     transform: { algorithms: [], transformation: { id: "pulse", label: "Size", description: "", properties: [{ id: "radius", label: "Radius", effect: "spatial", description: "", value: { type: "number", value: 30, min: 10, max: 140, step: 1, unit: "px" } }] } },
     "state-machine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] } },
+    "machine-refine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
     clarification: { clarification: "나무를 키워줘" },
     "compose-prompt": { prompt: "가지를 키우고 자유롭게 그린 배치와 조합해줘" },
     revision: { summary: "나무를 키웁니다", ...renamed },

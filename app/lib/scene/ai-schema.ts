@@ -45,6 +45,8 @@ export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema)
 export const aiTransformSchema = z.object({ algorithms, transformation: aiTransformationSchema });
 /** state-machine: one node's machine. */
 export const aiNodeMachineSchema = z.object({ algorithms, machine: aiMachineSchema });
+/** machine-refine: the refined machine and the Compose prompt rewritten to describe it. */
+export const aiMachineRefineSchema = aiNodeMachineSchema.extend({ composePrompt: z.string().max(2000) });
 /** revision: a complete proposed scene. */
 export const aiRevisionSchema = z.object({ summary: z.string().min(1).max(1500), algorithms, nodes: z.array(aiNodeSchema).min(1).max(MAX_SCENE_NODES) });
 export type AIScene = z.infer<typeof aiSceneSchema>;

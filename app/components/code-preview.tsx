@@ -3,7 +3,7 @@ import { readSceneValues, sceneStructureKey } from "../lib/scene/machines";
 
 export type CodePreviewHandle = { capture: () => string; emit: (nodeId: string, transitionId: string) => void };
 export type StateJump = { nodeId: string; stateId: string; revision: number } | null;
-type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean; jump?: StateJump; playing?: boolean; onStatesChange?: (states: Record<string, string>) => void };
+type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; onStatesChange?: (states: Record<string, string>) => void };
 
 /**
  * Runs a prepared sketch in an isolated iframe. The sketch is reloaded only when
@@ -89,5 +89,5 @@ p.draw=()=>{budget=0;try{
     window.addEventListener("message", receive); return () => { clearTimeout(timer); window.removeEventListener("message", receive); };
   }, [structure, machineEnabled]);
   // The last rendered image stays visible while a new program loads, so re-runs do not flash.
-  return <div className="isolated-code-render">{image ? <img src={image} alt="Generated p5.js visual output" /> : <span className="engine-loading">Rendering p5.js…</span>}<iframe ref={frame} className={`p5-code-preview isolated-engine-frame ${machineEnabled ? "live-state-engine" : ""}`} title="Generated p5.js render engine" sandbox="allow-scripts" srcDoc={document} /></div>;
+  return <div className="isolated-code-render">{image ? <img src={image} alt="Generated p5.js visual output" /> : <span className="engine-loading">Rendering p5.js…</span>}<iframe ref={frame} className={`p5-code-preview isolated-engine-frame ${machineEnabled ? "live-state-engine" : ""} ${props.interactive ? "interactive-engine" : ""}`} title="Generated p5.js render engine" sandbox="allow-scripts" srcDoc={document} /></div>;
 });

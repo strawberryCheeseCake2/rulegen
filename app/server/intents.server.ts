@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
-import { aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema } from "../lib/scene/ai-schema";
+import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema } from "../lib/scene/ai-schema";
 import { convertMachine, convertScene, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
 import { findNode, updateNode } from "../lib/scene/graph";
 import { conformMachine, validateMachine } from "../lib/scene/machines";
@@ -31,7 +31,7 @@ const targetNode = (input: AIInput) => input.scene && findNode(input.scene, inpu
 const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
@@ -64,6 +64,27 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const machine = convertMachine(output.machine, library, ids);
       validateMachine(findNode(scene, input.targetNodeId)!, machine);
       return validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, node => ({ ...node, machine })));
+    },
+  },
+  "machine-refine": {
+    schema: aiMachineRefineSchema, maxTokens: () => 32000, effort: "medium", strokes: true,
+    check: input => {
+      const node = targetNode(input), target = input.machineTarget, machine = node ? node.machine : null;
+      if (!node) return "대상 Collection 또는 Object를 찾지 못했습니다.";
+      if (!machine) return "먼저 이 노드의 상태 머신을 만들어주세요.";
+      if (target && !(target.kind === "state" ? machine.states : machine.transitions).some(item => item.id === target.id)) return "첨부한 state 또는 transition을 찾지 못했습니다.";
+      if (!input.instruction.trim() && !input.machineMarks.length) return "어떻게 바꿀지 적거나 상태 머신 위에 annotation을 그려주세요.";
+    },
+    context: input => {
+      const machine = targetNode(input)!.machine!, target = input.machineTarget;
+      const attached = target ? { kind: target.kind, ...(target.kind === "state" ? machine.states : machine.transitions).find(item => item.id === target.id) } : null;
+      return { scene: input.scene, targetNodeId: input.targetNodeId, attached, instruction: input.instruction, annotationMarks: input.machineMarks, composePrompt: input.composePrompt, previous: input.previous };
+    },
+    finalize: (input, output: z.infer<typeof aiMachineRefineSchema>) => {
+      const scene = input.scene!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
+      const machine = convertMachine(output.machine, library, ids);
+      validateMachine(findNode(scene, input.targetNodeId)!, machine);
+      return { scene: validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, node => ({ ...node, machine }))), composePrompt: output.composePrompt.trim() || input.composePrompt };
     },
   },
   code: {
