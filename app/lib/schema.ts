@@ -5,7 +5,7 @@ export const pointSchema = z.object({ x: z.number(), y: z.number() });
 export type Point = z.infer<typeof pointSchema>;
 export const MAX_CODE_LENGTH = 120000;
 export const codeSchema = z.object({ title: z.string().max(150), explanation: z.string().max(1000), code: z.string().min(1).max(MAX_CODE_LENGTH) });
-export const generatedSchema = codeSchema.extend({ sceneBindings: z.array(sceneBindingSchema).max(512).default([]), machineSignature: z.string().max(200000).default("") });
+export const generatedSchema = codeSchema.extend({ sceneBindings: z.array(sceneBindingSchema).max(4096).default([]), machineSignature: z.string().max(200000).default("") });
 /** A pen whose marks carry an algorithm (copied from a property) or the built-in interaction meaning. */
 export const semanticPenSchema = z.object({
   kind: z.enum(["algorithm", "interaction"]).default("algorithm"),

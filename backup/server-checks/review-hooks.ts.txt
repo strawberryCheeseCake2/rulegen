@@ -1,0 +1,72 @@
+// Removed server-check wiring (2026-10-13). Paste back into the files named below to restore.
+
+// ── app/server/intents.server.ts ──────────────────────────────────────────────
+// imports
+import { collapseRepeats, repeatedSiblings, repeatFeedback } from "../lib/scene/procedural";
+import { granularityFeedback, granularityIssues, MAX_FINE_PROPERTIES, transformationIssue } from "../lib/scene/granularity";
+import { settleProposal, validateSceneProposal, type SceneProposal } from "../lib/scene/revisions";
+import type { Scene } from "../lib/scene/schema";
+import { canAddTransformation, findTransformation, placeTransformation } from "../lib/scene/transformations";
+
+// in `type Intent`
+  /**
+   * Rules the finalized result must satisfy beyond its schema. A problem gets one
+   * AI repair round with `feedback`; if that still fails, `repair` fixes it deterministically.
+   */
+  review?: (input: AIInput, result: any) => { feedback: string; repair: () => unknown } | null;
+
+// before `const needsScene`
+/**
+ * Scene rules beyond the schema (see contracts/scene-model): repeated siblings must be
+ * one procedural node, transformations fine-grained operations, large masses nested.
+ * Only repetition has a deterministic repair; the others are accepted after one AI round.
+ */
+function sceneReview(scene: Scene, among?: Set<string>) {
+  const groups = repeatedSiblings(scene, among), issues = granularityIssues(scene, among);
+  if (!groups.length && !issues.length) return null;
+  return { feedback: [groups.length ? repeatFeedback(groups) : "", issues.length ? granularityFeedback(issues) : ""].filter(Boolean).join("\n\n"),
+    repair: () => groups.length ? validateScene(collapseRepeats(scene, groups)) : scene };
+}
+
+// in `extract` and `compose`, after `finalize`
+    review: (_input, scene: Scene) => sceneReview(scene),
+
+// in `transform`, after `finalize`
+    // A new or regenerated transformation must be one fine-grained operation too.
+    review: (input, scene: Scene) => {
+      if (input.targetPropertyId) return null;
+      const node = findNode(scene, input.targetNodeId)!, placed = findTransformation(node, input.targetTransformationId) || node.transformations.at(-1);
+      const issue = placed && transformationIssue(node, placed);
+      return issue ? { feedback: `GRANULARITY VIOLATION: ${issue.message}. Return ONE finely grained semantic operation named for what it does (e.g. "Outward size decay", "Wind sway"), with 1–${MAX_FINE_PROPERTIES - 1} properties; never an effect-type bucket.`, repair: () => scene } : null;
+    },
+
+// in `revision`, after `finalize`
+    // Only new nodes are checked: the user may keep repeated nodes on purpose.
+    review: (input, result: SceneProposal) => {
+      const review = sceneReview(result.scene, new Set(result.scene.nodes.filter(node => !findNode(input.scene!, node.id)).map(node => node.id)));
+      return review && { feedback: review.feedback, repair: () => ({ ...result, scene: review.repair() }) };
+    },
+
+// ── app/server/ai.server.ts · runGeneration, replacing the single `respond` call ─
+    const messages: Message[] = [{ role: "user", content: userContent(input) }];
+    const first = await respond(input, messages, signal, log, 1);
+    const review = intent.review?.(input, first.result);
+    if (!review) return first.result;
+    // One repair round with the problem explained; otherwise fix it deterministically.
+    messages.push({ role: "assistant", content: first.text }, { role: "user", content: [{ type: "input_text", text: review.feedback }] });
+    try {
+      const second = await respond(input, messages, signal, log, 2);
+      const again = intent.review?.(input, second.result);
+      return again ? again.repair() : second.result;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return review.repair();
+    }
+
+// ── prompts/contracts/scene-model.md · sentences that announced the checks ───
+// end of FINE-GRAINED TRANSFORMATIONS:
+//   Effect-bucket or overloaded transformations and long flat object lists are rejected and must be rewritten.
+// end of PROCEDURAL ECONOMY bullet "Split nodes only when …":
+//   Adjacent or overlapping sibling objects with the same primitive are one object split apart and are rejected.
+// end of PROCEDURAL ECONOMY:
+//   Repeated sibling nodes are rejected and must be rewritten.

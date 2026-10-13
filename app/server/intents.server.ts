@@ -4,9 +4,7 @@ import { aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema
 import { convertMachine, convertScene, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
 import { findNode, updateNode } from "../lib/scene/graph";
 import { conformMachine, validateMachine } from "../lib/scene/machines";
-import { collapseRepeats, repeatedSiblings, repeatFeedback } from "../lib/scene/procedural";
-import { settleProposal, validateSceneProposal, type SceneProposal } from "../lib/scene/revisions";
-import type { Scene } from "../lib/scene/schema";
+import { settleProposal, validateSceneProposal } from "../lib/scene/revisions";
 import { canAddTransformation, placeTransformation } from "../lib/scene/transformations";
 import { validateScene } from "../lib/scene/validate";
 import { sceneBindings, sceneValues } from "../lib/scene/values";
@@ -25,38 +23,26 @@ type Intent = {
   /** Attach the sketch's pen/stroke context as a separate part. */
   strokes?: boolean;
   finalize?: (input: AIInput, output: any) => unknown;
-  /**
-   * Rules the finalized result must satisfy beyond its schema. A problem gets one
-   * AI repair round with `feedback`; if that still fails, `repair` fixes it deterministically.
-   */
-  review?: (input: AIInput, result: any) => { feedback: string; repair: () => unknown } | null;
 };
 
 const canvas = { width: 900, height: 600 };
 const strokeContext = (input: AIInput) => ({ compositionPens: input.compositionPens, compositionStrokes: input.compositionStrokes, canvas });
 const targetNode = (input: AIInput) => input.scene && findNode(input.scene, input.targetNodeId);
 const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
-/** Repeated sibling nodes must become one procedural node (see contracts/scene-model). */
-function proceduralReview(scene: Scene, among?: Set<string>) {
-  const groups = repeatedSiblings(scene, among);
-  return groups.length ? { feedback: repeatFeedback(groups), repair: () => validateScene(collapseRepeats(scene, groups)) } : null;
-}
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
 export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
   extract: {
-    schema: aiSceneSchema, maxTokens: () => 20000, strokes: true,
+    schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
     context: input => ({ instruction: input.instruction }),
     finalize: (_input, output) => convertScene(output),
-    review: (_input, scene: Scene) => proceduralReview(scene),
   },
   compose: {
-    schema: aiSceneSchema, maxTokens: () => 24000, strokes: true,
+    schema: aiSceneSchema, maxTokens: () => 44000, strokes: true,
     check: input => !input.image || !input.instruction.trim() ? "스케치와 Compose prompt가 필요합니다." : undefined,
     context: input => ({ instruction: input.instruction, ...strokeContext(input) }),
     finalize: (_input, output) => convertScene(output),
-    review: (_input, scene: Scene) => proceduralReview(scene),
   },
   transform: {
     schema: aiTransformSchema, maxTokens: () => 10000,
@@ -82,7 +68,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   },
   code: {
     schema: codeSchema, strokes: true, check: needsScene,
-    maxTokens: input => input.scene?.nodes.some(node => node.machine) ? 24000 : 14000,
+    maxTokens: input => input.scene?.nodes.some(node => node.machine) ? 32000 : 24000,
     context: input => ({ scene: input.scene, parameterBindings: sceneBindings(input.scene!), parameterValues: sceneValues(input.scene!), previous: input.previous, instruction: input.instruction,
       ...(input.annotations.length ? { annotations: input.annotations, confirmedRevisionSummary: input.revisionSummary } : {}) }),
     finalize: (input, output: z.infer<typeof codeSchema>) => {
@@ -102,18 +88,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     context: input => ({ scene: input.scene, previous: input.previous, instruction: input.instruction, annotations: input.annotations }),
   },
   revision: {
-    schema: aiRevisionSchema, maxTokens: () => 20000,
+    schema: aiRevisionSchema, maxTokens: () => 40000,
     check: input => needsScene(input) || (!input.image || !input.previous || !input.annotations.length || !input.instruction.trim() ? "결과 위의 스케치와 text clarification을 입력해주세요." : undefined),
     context: input => ({ scene: input.scene, previous: input.previous, instruction: input.instruction, annotations: input.annotations }),
     finalize: (input, output: z.infer<typeof aiRevisionSchema>) => {
       const current = input.scene!, proposed = settleProposal(current, convertScene(output, current.algorithms));
       validateSceneProposal(current, proposed);
       return { summary: output.summary, scene: proposed };
-    },
-    // Only new nodes are checked: the user may keep repeated nodes on purpose.
-    review: (input, result: SceneProposal) => {
-      const review = proceduralReview(result.scene, new Set(result.scene.nodes.filter(node => !findNode(input.scene!, node.id)).map(node => node.id)));
-      return review && { feedback: review.feedback, repair: () => ({ ...result, scene: review.repair() }) };
     },
   },
 };

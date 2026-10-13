@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { MAX_NODE_PROPERTIES, sceneShapeSchema, type Scene } from "./schema";
+import { MAX_NESTING_DEPTH, MAX_NODE_PROPERTIES, sceneShapeSchema, type Scene } from "./schema";
 import { nodeProperties } from "./transformations";
 import { validateAlgorithms, validateCall } from "./algorithms";
-import { ancestorIds, findNode } from "./graph";
+import { ancestorIds, findNode, sceneDepth } from "./graph";
 import { validateMachine } from "./machines";
 import { scalarProblem, valueLeaves } from "./values";
 
@@ -11,6 +11,7 @@ export function validateScene(scene: Scene) {
   const ids = scene.nodes.map(node => node.id);
   if (new Set(ids).size !== ids.length) throw new Error("Collection/Object ID가 중복되었습니다.");
   validateAlgorithms(scene.algorithms);
+  if (sceneDepth(scene) > MAX_NESTING_DEPTH) throw new Error(`Collection은 ${MAX_NESTING_DEPTH}단계까지만 중첩할 수 있습니다.`);
   for (const node of scene.nodes) {
     if (node.parentId) {
       const parent = findNode(scene, node.parentId);

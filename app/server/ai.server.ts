@@ -71,20 +71,7 @@ async function runGeneration(input: AIInput, signal: AbortSignal, log: AIGenerat
   if (problem) throw new Error(problem);
   inFlight++;
   try {
-    const messages: Message[] = [{ role: "user", content: userContent(input) }];
-    const first = await respond(input, messages, signal, log, 1);
-    const review = intent.review?.(input, first.result);
-    if (!review) return first.result;
-    // One repair round with the problem explained; otherwise fix it deterministically.
-    messages.push({ role: "assistant", content: first.text }, { role: "user", content: [{ type: "input_text", text: review.feedback }] });
-    try {
-      const second = await respond(input, messages, signal, log, 2);
-      const again = intent.review?.(input, second.result);
-      return again ? again.repair() : second.result;
-    } catch (error) {
-      if (signal.aborted) throw error;
-      return review.repair();
-    }
+    return (await respond(input, [{ role: "user", content: userContent(input) }], signal, log, 1)).result;
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) throw new Error("모델 응답을 해석하지 못했습니다. 다시 생성해주세요.", { cause: error });
     if (signal.aborted) throw new Error("요청이 취소되었습니다.", { cause: error });

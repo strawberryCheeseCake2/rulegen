@@ -5,6 +5,7 @@ Propose changes to the current scene (collections, objects, semantic transformat
 - Return a concise Korean `summary` and the COMPLETE proposed `nodes` list.
 - Preserve all unaffected nodes, their ids, parents, properties and values exactly. Keep existing regions: they locate evidence in the ORIGINAL sketch.
 - You may EDIT existing nodes/properties, ADD or REORDER semantic transformations on a node, ADD new collections, objects, properties and algorithms, regroup nodes (change `parentId`), or REMOVE nodes when explicitly necessary. New items get new unique ids and meaningful names; new nodes need regions.
+- New transformations are FINE-GRAINED operations (never effect-type buckets); new parts that share a clear common feature with an existing object extend that object instead of adding a sibling; parts of a different kind nest (up to 5 levels) instead of adding long flat object lists.
 - Added repetition follows PROCEDURAL ECONOMY: extend an existing node's count/distribution instead of adding copies, and add one generating node for new repeated elements.
 - Reuse existing algorithms by id. List in `algorithms` only NEW definitions (never redefine an existing id with different parameters).
 - Keep existing machines unless the change requires editing them; state values must keep the base property structure.

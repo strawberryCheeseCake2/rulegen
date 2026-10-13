@@ -22,6 +22,18 @@ export function layerTree(scene: Scene) {
   visit(null, 0); return rows;
 }
 
+/** Layer level of a node: 1 at the root. */
+export const nodeLevel = (scene: Scene, id: string) => ancestorIds(scene, id).length + 1;
+/** Deepest layer level in the scene (0 when empty). */
+export const sceneDepth = (scene: Scene) => Math.max(0, ...layerTree(scene).map(row => row.depth + 1));
+/** Re-attach nodes nested deeper than `max` levels to their ancestor at level max-1. */
+export function clampNesting(scene: Scene, max: number): Scene {
+  return { ...scene, nodes: scene.nodes.map(node => {
+    const ancestors = ancestorIds(scene, node.id);
+    return ancestors.length + 1 > max ? { ...node, parentId: ancestors[ancestors.length - (max - 1)] } : node;
+  }) };
+}
+
 export function unionRegion(regions: Region[]): Region | null {
   if (!regions.length) return null;
   const x = Math.min(...regions.map(r => r.x)), y = Math.min(...regions.map(r => r.y));

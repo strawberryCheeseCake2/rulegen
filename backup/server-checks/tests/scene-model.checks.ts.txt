@@ -1,0 +1,49 @@
+// Removed from tests/scene-model.test.ts (server checks). Restore together with the modules.
+
+test("procedural economy: repeated siblings are found by structure, laid out by observed geometry, and machines stay separate", async () => {
+  const { collapseRepeats, inferLayout, nameStem, repeatedSiblings } = await import("../app/lib/scene/procedural");
+  const dot = (i: number, x: number, y: number) => ({ id: `dot-${i}`, kind: "object" as const, parentId: null, name: `Dot ${i}`, description: "", primitive: "Dot", region: { x, y, w: .04, h: .06 }, visible: true, machine: null,
+    transformations: [{ id: "main", label: "", description: "", properties: [{ id: `r${i}`, label: "R", effect: "spatial" as const, description: "", value: { type: "number" as const, value: i, min: 0, max: 10, step: 1, unit: "" } }] }] });
+  const row = { nodes: [dot(1, .1, .5), dot(2, .3, .5), dot(3, .5, .52)], algorithms: [] };
+  assert.equal(nameStem("Petal #3"), "petal");
+  assert.deepEqual(repeatedSiblings(row).map(group => group.ids), [["dot-1", "dot-2", "dot-3"]]);
+  assert.equal(inferLayout(row.nodes.map(node => node.region)).arrangement, "row");
+  assert.equal(inferLayout(row.nodes.map(node => node.region)).spacing, 180);
+  const collapsed = collapseRepeats(row);
+  assert.equal(collapsed.nodes.length, 1); assert.equal(collapsed.nodes[0].name, "Dot ×3");
+  assert.ok(Math.abs(collapsed.nodes[0].region.w - .44) < 1e-6, "the node covers every instance");
+  assert.equal(collapsed.algorithms[0].id, "repeat-layout");
+  assert.deepEqual(sceneBindings(collapsed).map(binding => binding.key).filter(key => key.includes("repeat")), ["dot-1/repeat/count", "dot-1/repeat/arrangement", "dot-1/repeat/spacing", "dot-1/repeat/size", "dot-1/repeat/jitter"]);
+  // Two eyes are not a repetition; two numbered copies are. Interactive nodes keep their own machines.
+  const pair = { nodes: [{ ...dot(1, .1, .1), name: "Left eye" }, { ...dot(2, .3, .1), name: "Right eye" }], algorithms: [] };
+  assert.equal(repeatedSiblings(pair).length, 0);
+  assert.equal(repeatedSiblings({ nodes: [dot(1, .1, .1), dot(2, .3, .1)], algorithms: [] }).length, 1);
+  const machine = { initialState: "a", states: [{ id: "a", label: "A", description: "", values: [] }], transitions: [] };
+  assert.equal(repeatedSiblings({ nodes: row.nodes.map(node => ({ ...node, machine })), algorithms: [] }).length, 0);
+});
+
+test("granularity: effect-type buckets, overloaded transformations and long flat object lists are flagged", async () => {
+  const { granularityIssues } = await import("../app/lib/scene/granularity");
+  assert.deepEqual(granularityIssues(sampleScene()), [], "fine-grained, nested scenes pass");
+  const prop = (id: string, effect: "spatial" | "stylistic" | "temporal" = "spatial") => ({ id, label: id, effect, description: "", value: num(1, 0, 2) });
+  const bucketed = updateNode(sampleScene(), "orb", node => ({ ...node, transformations: [{ id: "a", label: "Spatial", description: "", properties: [prop("radius")] }, { id: "b", label: "Style properties", description: "", properties: [prop("tint", "stylistic")] }, { id: "c", label: "Motion", description: "", properties: [prop("speed", "temporal")] }] }));
+  assert.deepEqual(granularityIssues(bucketed).map(issue => issue.kind), ["bucket", "bucket", "bucket"]);
+  const coarse = updateNode(sampleScene(), "orb", node => ({ ...node, transformations: [{ id: "pulse", label: "Pulse", description: "", properties: ["a", "b", "c", "d", "e"].map(id => prop(id)) }] }));
+  assert.match(granularityIssues(coarse)[0].message, /bundles 5 properties/);
+  const flat = { algorithms: [], nodes: Array.from({ length: 6 }, (_, i) => ({ id: `kind-${i}`, kind: "object" as const, parentId: null, name: `Kind ${i}`, description: "", primitive: `p${i}`, region: { x: .1, y: .1, w: .1, h: .1 }, visible: true, machine: null, transformations: [] })) };
+  assert.deepEqual(granularityIssues(flat).map(issue => issue.kind), ["flat"]);
+  assert.deepEqual(granularityIssues(flat, new Set(["other"])), [], "revisions only check what they touch");
+});
+
+test("coherent objects stay whole: touching same-primitive siblings are flagged as one object split apart", async () => {
+  const { granularityIssues, splitObjects } = await import("../app/lib/scene/granularity");
+  const part = (id: string, primitive: string, x: number, extra: object = {}) => ({ id, kind: "object" as const, parentId: null, name: id, description: "", primitive, region: { x, y: .3, w: .1, h: .1 }, visible: true, machine: null, transformations: [], ...extra });
+  // Two eyes side by side: one "eyes" object with a mirror transformation.
+  const eyes = { algorithms: [], nodes: [part("left-eye", "Ellipse", .3), part("right-eye", "ellipse", .42), part("sun", "ellipse", .85)] };
+  assert.deepEqual(splitObjects(eyes).map(cluster => cluster.map(node => node.id)), [["left-eye", "right-eye"]], "the distant sun is a separate object");
+  assert.match(granularityIssues(eyes)[0].message, /one coherent object split into pieces/);
+  // Different kinds, or an object with its own machine, stay separate.
+  assert.deepEqual(splitObjects({ algorithms: [], nodes: [part("trunk", "stroke", .3), part("crown", "blob", .35)] }), []);
+  const machine = { initialState: "a", states: [{ id: "a", label: "A", description: "", values: [] }], transitions: [] };
+  assert.deepEqual(splitObjects({ algorithms: [], nodes: [part("button", "ellipse", .3, { machine }), part("ring", "ellipse", .35)] }), []);
+});

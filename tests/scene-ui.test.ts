@@ -28,7 +28,7 @@ test("the inspector shows a node's stack of semantic transformations with nested
   const scene = sampleScene(), tree = scene.nodes[0], orb = scene.nodes[1];
   const props = (node: typeof tree, stateId?: string) => ({ ...handlers, node, transformations: stateTransformations(node, stateId), library: scene.algorithms, state: node.machine?.states.find(state => state.id === stateId), busy: false, clip: null } as unknown as PropertyInspectorProps);
   const base = renderToStaticMarkup(createElement(PropertyInspector, props(tree)));
-  assert.match(base, /SEMANTIC TRANSFORMATIONS · 2\/6/);
+  assert.match(base, /SEMANTIC TRANSFORMATIONS · 2\/12/);
   assert.match(base, /aria-label="Semantic transformation Branching growth"[\s\S]*Branching[\s\S]*aria-label="Semantic transformation Ink wash"[\s\S]*Ink/, "each transformation holds its own properties, in order");
   assert.match(base, /aria-label="Move Branching growth up" title="Apply earlier" disabled/);
   assert.match(base, /aria-label="Regenerate Ink wash"/);

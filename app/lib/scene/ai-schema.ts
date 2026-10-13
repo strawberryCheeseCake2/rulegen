@@ -21,7 +21,7 @@ export const aiAlgorithmSchema = z.object({
 export const aiPropertySchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: aiValueSchema });
 export const aiTransformationSchema = z.object({ id: idSchema, label: z.string().max(100), description: z.string().max(1000), properties: z.array(aiPropertySchema).max(MAX_PROPERTIES) });
 /** Semantic transformations a model may stack on one node. */
-export const MAX_AI_TRANSFORMATIONS = 4;
+export const MAX_AI_TRANSFORMATIONS = 10;
 export const aiMachineSchema = z.object({
   initialState: idSchema,
   states: z.array(z.object({ id: idSchema, label: z.string().min(1).max(100), description: z.string().max(1000), values: z.array(z.object({ propertyId: idSchema, value: aiValueSchema })).max(MAX_PROPERTIES) })).min(1).max(MAX_NODE_STATES),
@@ -38,7 +38,7 @@ export type AITransformation = z.infer<typeof aiTransformationSchema>;
 
 const algorithms = z.array(aiAlgorithmSchema).max(24);
 /** Extracted/composed scenes generate repetition procedurally, so they stay small. */
-export const MAX_AI_SCENE_NODES = 16;
+export const MAX_AI_SCENE_NODES = 24;
 /** extract / compose: the scene found in (or composed from) a sketch. */
 export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema).min(1).max(MAX_AI_SCENE_NODES) });
 /** transform: one new or regenerated semantic transformation for one node. */

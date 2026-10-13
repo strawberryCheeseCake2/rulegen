@@ -266,7 +266,7 @@
             "additionalProperties": false
           },
           "transformations": {
-            "maxItems": 4,
+            "maxItems": 10,
             "type": "array",
             "items": {
               "type": "object",

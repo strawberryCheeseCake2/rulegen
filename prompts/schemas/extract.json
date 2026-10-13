@@ -186,7 +186,7 @@
     },
     "nodes": {
       "minItems": 1,
-      "maxItems": 16,
+      "maxItems": 24,
       "type": "array",
       "items": {
         "type": "object",
@@ -261,7 +261,7 @@
             "additionalProperties": false
           },
           "transformations": {
-            "maxItems": 4,
+            "maxItems": 10,
             "type": "array",
             "items": {
               "type": "object",

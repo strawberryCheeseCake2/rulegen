@@ -7,12 +7,14 @@ import { z } from "zod";
 // arguments can themselves be scalars or other algorithm calls.
 
 export const MAX_SCENE_NODES = 48;
+/** Layer levels, root = 1 (e.g. scene → tree → crown → branch cluster → leaves). */
+export const MAX_NESTING_DEPTH = 5;
 export const MAX_ALGORITHMS = 96;
 /** Per semantic transformation. */
 export const MAX_PROPERTIES = 8;
-export const MAX_TRANSFORMATIONS = 6;
+export const MAX_TRANSFORMATIONS = 12;
 /** Across all of a node's transformations (property ids are unique per node). */
-export const MAX_NODE_PROPERTIES = 16;
+export const MAX_NODE_PROPERTIES = 32;
 export const MAX_ALGORITHM_PARAMS = 8;
 export const MAX_VALUE_DEPTH = 4;
 export const MAX_NODE_STATES = 32;

@@ -87,7 +87,7 @@ test("AI adds a new stacked transformation or replaces one in place, keeping pro
   assert.match(loadPrompt("transform"), /"add"[\s\S]*"replace"[\s\S]*"property"/);
   assert.match(loadPrompt("extract"), /STACK of semantic transformations/);
   assert.match(loadPrompt("code"), /apply IN ORDER/);
-  const full = { ...scene, nodes: scene.nodes.map(node => node.id === "tree" ? { ...node, transformations: Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, label: "", description: "", properties: [] })) } : node) };
+  const full = { ...scene, nodes: scene.nodes.map(node => node.id === "tree" ? { ...node, transformations: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, label: "", description: "", properties: [] })) } : node) };
   await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene: full, targetNodeId: "tree" }), signal()), /더 이상/);
 });
 
@@ -174,57 +174,5 @@ test("feature/rule-era intents are no longer accepted", () => {
   for (const intent of ["analyze", "rules", "subfeature", "brush"]) assert.equal(requestSchema.safeParse({ intent }).success, false);
 });
 
-// Seven petals listed one by one, plus a distinct center.
-const petal = (i: number) => ({ id: `petal-${i}`, kind: "object" as const, parentId: "flower", name: `Petal ${i}`, description: "꽃잎", primitive: "petal",
-  region: { x: .45 + .1 * Math.cos(i * Math.PI * 2 / 7), y: .45 + .15 * Math.sin(i * Math.PI * 2 / 7), w: .06, h: .09 },
-  transformations: [{ id: "petal", label: "Petal", description: "", properties: [{ id: `color-${i}`, label: "Color", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#d4708a" } }, { id: "size", label: "Size", effect: "spatial" as const, description: "", value: num(30 + i, 10, 80) }] }], machine: null });
-const enumerated = { algorithms: [], nodes: [
-  { id: "flower", kind: "collection" as const, parentId: null, name: "Flower", description: "꽃", primitive: "group", region: { x: .3, y: .2, w: .4, h: .6 }, transformations: [{ id: "radial-bloom", label: "Radial bloom", description: "", properties: [] }], machine: null },
-  ...[1, 2, 3, 4, 5, 6, 7].map(petal),
-  { id: "center", kind: "object" as const, parentId: "flower", name: "Center", description: "꽃술", primitive: "dot", region: { x: .47, y: .47, w: .06, h: .06 }, transformations: [{ id: "dot", label: "Dot", description: "", properties: [{ id: "color", label: "Color", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#e0b030" } }] }], machine: null },
-] };
-const procedural = { algorithms: [{ id: "radial-repeat", name: "Radial repeat", description: "count개를 radius 원 위에 균등 각도로 배치", params: [{ id: "radius", label: "Radius", description: "", value: num(90, 0, 300) }] }], nodes: [
-  enumerated.nodes[0], enumerated.nodes[8],
-  { ...petal(1), id: "petals", name: "Petals", region: { x: .33, y: .25, w: .34, h: .5 }, transformations: [{ id: "radial-petals", label: "Radial petals", description: "", properties: [
-    { id: "count", label: "Count", effect: "spatial" as const, description: "", value: num(7, 1, 24) },
-    { id: "layout", label: "Layout", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "radial-repeat", args: [] } },
-  ] }] },
-] };
 
-test("extraction must generate repeated elements procedurally: the model is asked to rewrite enumerated instances", async () => {
-  await withMockedAI(body => body.input.length === 1 ? enumerated : procedural, async calls => {
-    const scene = sceneSchema.parse(await runAI(requestSchema.parse({ intent: "extract", image }), signal()));
-    assert.equal(calls.length, 2, "one repair round");
-    assert.match(calls[1].input.at(-1).content[0].text, /PROCEDURAL ECONOMY VIOLATION[\s\S]*Petal 1, Petal 2/);
-    assert.equal(calls[1].input[1].role, "assistant");
-    assert.deepEqual(scene.nodes.map(node => node.id).sort(), ["center", "flower", "petals"]);
-  });
-  assert.match(loadPrompt("extract"), /PROCEDURAL ECONOMY/); assert.match(loadPrompt("compose"), /PROCEDURAL ECONOMY/);
-  assert.match(loadPrompt("code"), /stands for MANY instances/);
-});
 
-test("if the repair round still enumerates, the instances collapse into one node with a repeat-layout property", async () => {
-  await withMockedAI(() => enumerated, async calls => {
-    const scene = sceneSchema.parse(await runAI(requestSchema.parse({ intent: "compose", image, instruction: "꽃" }), signal()));
-    assert.equal(calls.length, 2);
-    const petals = scene.nodes.filter(node => node.primitive === "petal");
-    assert.equal(petals.length, 1); assert.equal(petals[0].name, "Petal ×7");
-    const repetition = petals[0].transformations.at(-1)!;
-    assert.equal(repetition.label, "Repetition", "repetition is stacked as its own semantic transformation");
-    const repeat = repetition.properties.find(property => property.id === "repeat")!.value as AlgorithmCall;
-    assert.equal(repeat.algorithmId, "repeat-layout");
-    assert.deepEqual(repeat.args.slice(0, 2).map(arg => (arg.value as { value: unknown }).value), [7, "radial"]);
-    assert.ok(scene.nodes.some(node => node.id === "center"), "distinct elements stay");
-  });
-});
-
-test("revisions are checked only for newly added repetition", async () => {
-  const scene = sceneSchema.parse(await withMockedAI(() => procedural, () => runAI(requestSchema.parse({ intent: "extract", image }), signal())));
-  const input = requestSchema.parse({ intent: "revision", scene, image, previous: sceneProgram, annotations: [{ id: "a", points: [{ x: .1, y: .1 }, { x: .2, y: .2 }] }], instruction: "잎 추가" });
-  const leaf = (i: number) => ({ id: `leaf-${i}`, kind: "object" as const, parentId: null, name: `Leaf ${i}`, description: "", primitive: "leaf", region: { x: .1 * i, y: .8, w: .05, h: .05 }, transformations: [{ id: "leaf", label: "Leaf", description: "", properties: [] }], machine: null });
-  await withMockedAI(() => ({ summary: "잎 추가", algorithms: [], nodes: [...procedural.nodes, leaf(1), leaf(2), leaf(3)] }), async calls => {
-    const proposal = sceneProposalSchema.parse(await runAI(input, signal()));
-    assert.equal(calls.length, 2);
-    assert.deepEqual(proposal.scene.nodes.filter(node => node.primitive === "leaf").map(node => node.name), ["Leaf ×3"]);
-  });
-});

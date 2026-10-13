@@ -2,8 +2,9 @@ import { compositionPromptSchema, generatedSchema } from "../lib/schema";
 import { compositionContext } from "../lib/algorithm-pens";
 import type { SketchPanel } from "../lib/sketch-panels";
 import type { AlgorithmCall, Algorithm, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
+import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
 import { sceneSchema } from "../lib/scene/validate";
-import { findNode, groupNodes, moveNodes, removeNodes, reorderNode, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
+import { findNode, groupNodes, moveNodes, removeNodes, reorderNode, sceneDepth, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
 import * as ops from "../lib/scene/panel-ops";
 import { importAlgorithmCall, makeAlgorithmPen } from "../lib/scene/pens";
 import { addBlockProperty, copyAlgorithm, moveNodeTo, pasteAlgorithm, transplantNodes, type AlgorithmClip } from "../lib/scene/transfer";
@@ -18,7 +19,9 @@ export const compositionPromptLabel = "AI가 스케치와 펜의 의미를 읽�
 /** Local scene edits (no AI) for one sketch panel. */
 export function sceneEdits(deps: StudioDeps, owner: string) {
   const apply = (op: (panel: SketchPanel) => Partial<SketchPanel>) => deps.updatePanel(owner, panel => panel.loading ? {} : op(panel));
-  const structural = (edit: (scene: Scene, panel: SketchPanel) => Scene, dirty?: (panel: SketchPanel) => string[]) => apply(panel => ops.commitScene(panel, edit(panel.scene, panel), dirty?.(panel)));
+  /** Layer edits that would nest deeper than MAX_NESTING_DEPTH are refused. */
+  const tooDeep = (scene: Scene) => sceneDepth(scene) > MAX_NESTING_DEPTH ? { error: `Collection은 ${MAX_NESTING_DEPTH}단계까지만 중첩할 수 있습니다.` } : null;
+  const structural = (edit: (scene: Scene, panel: SketchPanel) => Scene, dirty?: (panel: SketchPanel) => string[]) => apply(panel => { const next = edit(panel.scene, panel); return tooDeep(next) || ops.commitScene(panel, next, dirty?.(panel)); });
   return {
     select: (id: string | null, additive = false) => deps.updatePanel(owner, panel => ops.selectNodes(panel, id, additive)),
     hover: (id: string | null) => deps.updatePanel(owner, { hovered: id }),
@@ -31,7 +34,9 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
     group: () => apply(panel => {
       const id = uniqueNodeId(panel.scene, "collection");
       const roots = selectionRoots(panel.scene, panel.selectedNodeIds);
-      return roots.length ? { ...ops.commitScene(panel, groupNodes(panel.scene, roots, id, `Collection ${panel.scene.nodes.filter(node => node.kind === "collection").length + 1}`), roots), selectedNodeIds: [id] } : {};
+      if (!roots.length) return {};
+      const next = groupNodes(panel.scene, roots, id, `Collection ${panel.scene.nodes.filter(node => node.kind === "collection").length + 1}`);
+      return tooDeep(next) || { ...ops.commitScene(panel, next, roots), selectedNodeIds: [id] };
     }),
     ungroup: (id: string) => structural(scene => ungroupNode(scene, id)),
     remove: () => structural((scene, panel) => removeNodes(scene, panel.selectedNodeIds)),

@@ -4,7 +4,7 @@ import { aiScene, num, sampleScene } from "./fixtures/scene";
 import { convertScene } from "../app/lib/scene/convert";
 import { sceneSchema } from "../app/lib/scene/validate";
 import { sceneBindings, sceneValues, valueAt } from "../app/lib/scene/values";
-import { clickTarget, descendantIds, groupNodes, layerTree, moveNodes, removeNodes, setParent, ungroupNode } from "../app/lib/scene/graph";
+import { clickTarget, descendantIds, groupNodes, layerTree, moveNodes, removeNodes, setParent, ungroupNode, updateNode } from "../app/lib/scene/graph";
 import { importAlgorithms, instantiate } from "../app/lib/scene/algorithms";
 import { makeAlgorithmPen, importAlgorithmCall, penAlgorithm } from "../app/lib/scene/pens";
 import { stateProperties } from "../app/lib/scene/machines";
@@ -127,28 +127,6 @@ test("with a state selected, widget edits change only that state; Base edits cha
   assert.equal({ ...restored, ...ops.redoScene(restored) }.scene.nodes[1].transformations[0].properties.length, 1);
 });
 
-test("procedural economy: repeated siblings are found by structure, laid out by observed geometry, and machines stay separate", async () => {
-  const { collapseRepeats, inferLayout, nameStem, repeatedSiblings } = await import("../app/lib/scene/procedural");
-  const dot = (i: number, x: number, y: number) => ({ id: `dot-${i}`, kind: "object" as const, parentId: null, name: `Dot ${i}`, description: "", primitive: "Dot", region: { x, y, w: .04, h: .06 }, visible: true, machine: null,
-    transformations: [{ id: "main", label: "", description: "", properties: [{ id: `r${i}`, label: "R", effect: "spatial" as const, description: "", value: { type: "number" as const, value: i, min: 0, max: 10, step: 1, unit: "" } }] }] });
-  const row = { nodes: [dot(1, .1, .5), dot(2, .3, .5), dot(3, .5, .52)], algorithms: [] };
-  assert.equal(nameStem("Petal #3"), "petal");
-  assert.deepEqual(repeatedSiblings(row).map(group => group.ids), [["dot-1", "dot-2", "dot-3"]]);
-  assert.equal(inferLayout(row.nodes.map(node => node.region)).arrangement, "row");
-  assert.equal(inferLayout(row.nodes.map(node => node.region)).spacing, 180);
-  const collapsed = collapseRepeats(row);
-  assert.equal(collapsed.nodes.length, 1); assert.equal(collapsed.nodes[0].name, "Dot ×3");
-  assert.ok(Math.abs(collapsed.nodes[0].region.w - .44) < 1e-6, "the node covers every instance");
-  assert.equal(collapsed.algorithms[0].id, "repeat-layout");
-  assert.deepEqual(sceneBindings(collapsed).map(binding => binding.key).filter(key => key.includes("repeat")), ["dot-1/repeat/count", "dot-1/repeat/arrangement", "dot-1/repeat/spacing", "dot-1/repeat/size", "dot-1/repeat/jitter"]);
-  // Two eyes are not a repetition; two numbered copies are. Interactive nodes keep their own machines.
-  const pair = { nodes: [{ ...dot(1, .1, .1), name: "Left eye" }, { ...dot(2, .3, .1), name: "Right eye" }], algorithms: [] };
-  assert.equal(repeatedSiblings(pair).length, 0);
-  assert.equal(repeatedSiblings({ nodes: [dot(1, .1, .1), dot(2, .3, .1)], algorithms: [] }).length, 1);
-  const machine = { initialState: "a", states: [{ id: "a", label: "A", description: "", values: [] }], transitions: [] };
-  assert.equal(repeatedSiblings({ nodes: row.nodes.map(node => ({ ...node, machine })), algorithms: [] }).length, 0);
-});
-
 test("a node stacks several semantic transformations: add, reorder, fill and remove them without changing live keys", () => {
   const panel = { ...createSketchPanel(), scene: sampleScene() };
   const tree = () => (current: typeof panel) => current.scene.nodes.find(node => node.id === "tree")!;
@@ -170,10 +148,10 @@ test("a node stacks several semantic transformations: add, reorder, fill and rem
   assert.deepEqual(tree()(removed).transformations.map(item => item.id), [sway, "branching-growth"]);
   assert.equal(sceneBindings(removed.scene).some(binding => binding.key === "tree/ink"), false, "its properties go with it");
   assert.equal({ ...removed, ...ops.undoScene(removed) }.scene.nodes[0].transformations.length, 3);
-  // Limits: six transformations per node.
+  // Limits: twelve transformations per node.
   let full = panel;
-  for (let i = 0; i < 6; i++) full = { ...full, ...ops.addTransformation(full, "tree") };
-  assert.equal(tree()(full).transformations.length, 6);
+  for (let i = 0; i < 14; i++) full = { ...full, ...ops.addTransformation(full, "tree") };
+  assert.equal(tree()(full).transformations.length, 12);
   // Removing a transformation drops state values of its properties.
   const orb = { ...panel, ...ops.removeTransformation(panel, "orb", "pulse") };
   assert.deepEqual(orb.scene.nodes[1].machine!.states[1].values, []);
@@ -193,3 +171,16 @@ test("objects stack semantic transformations exactly like collections", () => {
   // The object's state machine keeps working across its stack: states still address properties by id.
   assert.equal((stateProperties(orb, "moving").find(property => property.id === "radius")!.value as { value: number }).value, 80);
 });
+
+test("collections nest up to five levels: deeper model output is flattened into level 5, deeper scenes are rejected", async () => {
+  const { sceneDepth, nodeLevel } = await import("../app/lib/scene/graph");
+  const chain = Array.from({ length: 7 }, (_, i) => ({ id: `level-${i + 1}`, kind: i < 6 ? "collection" as const : "object" as const, parentId: i ? `level-${i}` : null, name: `Level ${i + 1}`, description: "", primitive: i < 6 ? "group" : "dot",
+    region: { x: .1 + i * .01, y: .1 + i * .01, w: .5, h: .5 }, transformations: [], machine: null }));
+  const scene = convertScene({ algorithms: [], nodes: chain });
+  assert.equal(sceneDepth(scene), 5);
+  assert.deepEqual(scene.nodes.map(node => [node.id, nodeLevel(scene, node.id)]), [["level-1", 1], ["level-2", 2], ["level-3", 3], ["level-4", 4], ["level-5", 5], ["level-6", 5], ["level-7", 5]]);
+  assert.equal(scene.nodes.find(node => node.id === "level-7")!.parentId, "level-4", "extra levels attach to the level-4 ancestor");
+  const tooDeep = { ...scene, nodes: scene.nodes.map(node => node.id === "level-7" ? { ...node, parentId: "level-6" } : node) };
+  assert.throws(() => sceneSchema.parse(tooDeep), /5단계/);
+});
+

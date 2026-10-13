@@ -1,7 +1,8 @@
 import type { AIAlgorithm, AIArgValue, AIMachine, AINode, AITransformation, AIValue } from "./ai-schema";
 import type { Algorithm, NodeMachine, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
 import { importAlgorithms, instantiate, normalizeCall } from "./algorithms";
-import { clampRegion, fitCollections } from "./graph";
+import { clampNesting, clampRegion, fitCollections } from "./graph";
+import { MAX_NESTING_DEPTH } from "./schema";
 import { conformMachine } from "./machines";
 import { validateScene } from "./validate";
 
@@ -61,7 +62,8 @@ export function convertNodes(nodes: AINode[], library: Algorithm[], ids: Ids): S
 /** A complete scene from an extraction, composition or revision response. */
 export function convertScene(output: { algorithms: AIAlgorithm[]; nodes: AINode[] }, library: Algorithm[] = []): Scene {
   const { library: algorithms, ids } = mergeAIAlgorithms(library, output.algorithms);
-  const scene = fitCollections({ algorithms, nodes: breakCycles(convertNodes(output.nodes, algorithms, ids)) });
+  // Deeper than allowed: the extra levels are flattened into their level-4 ancestor.
+  const scene = fitCollections(clampNesting({ algorithms, nodes: breakCycles(convertNodes(output.nodes, algorithms, ids)) }, MAX_NESTING_DEPTH));
   // Unused definitions stay: they are alternatives the user can swap in elsewhere.
   return validateScene(scene);
 }
