@@ -165,10 +165,21 @@ export default function Home() {
     return id;
   }
   /** What a frame shows: its rendered result (if any) under its strokes, as one image. */
+  /** A frame created a moment ago mounts and loads p5 first, so wait (up to ~8s) until its canvas can be captured. */
+  async function readyCanvas(owner: string, full: boolean) {
+    const notReady = /캔버스가 준비될 때까지|사진을 불러오는 중/;
+    for (let attempt = 0; ; attempt++) {
+      const handle = canvasFor(owner);
+      try { if (handle) return { handle, plain: handle.capture(full) }; }
+      catch (error) { if (!(error instanceof Error && notReady.test(error.message)) || attempt >= 80) throw error; }
+      if (!handle && attempt >= 80) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+  }
   async function captureFrame(owner: string, full = false) {
-    const handle = canvasFor(owner); if (!handle) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
+    const { handle, plain } = await readyCanvas(owner, full);
     const render = panelsRef.current[owner]?.generated ? resultPreviews.current.get(owner)?.capture() : "";
-    if (!render) return handle.capture(full);
+    if (!render) return plain;
     const sketch = handle.capture(full, true), region = sketch.region;
     const load = async (src: string) => { const image = new Image(); image.src = src; await image.decode(); return image; };
     const [under, over] = await Promise.all([load(render), load(sketch.image)]);
@@ -493,6 +504,7 @@ export default function Home() {
       onScalar={(propertyId, path, value) => edits.scalar(node.id, propertyId, path, value)} onSwap={(propertyId, path, choice) => edits.swap(node.id, propertyId, path, choice)}
       onProperty={(propertyId, patch) => edits.editProperty(node.id, propertyId, patch)} onRemoveProperty={propertyId => edits.removeProperty(node.id, propertyId)}
       onAddProperty={(algorithmId, transformationId) => edits.addProperty(node.id, algorithmId, transformationId)} onRegenerate={target => { void ai.regenerate(node.id, target); }}
+      onMinimalExample={transformationId => { void ai.minimalExample(node.id, transformationId); }}
       onMakePen={(propertyId, path) => edits.makePen({ nodeId: node.id, propertyId, path })}
       onCopy={(propertyId, path) => edits.copySlot(node.id, propertyId, path)} onPaste={(propertyId, path, dropped) => edits.pasteSlot(node.id, propertyId, path, dropped)}
       clipFor={(propertyId, path) => edits.clipFor(node.id, propertyId, path)} onAddBlock={(block, transformationId) => edits.addBlock(node.id, block, transformationId)} onGenerateMachine={() => { void ai.generateMachine(node.id); }} onRemoveMachine={() => edits.removeMachine(node.id)} />

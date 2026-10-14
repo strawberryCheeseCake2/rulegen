@@ -243,3 +243,6 @@ body.panel-resizing, body.panel-resizing * { cursor: col-resize !important; user
 .machine-edges .transition-label.dragging rect { stroke: #397461; stroke-width: 1.6; }
 .machine-edges .transition-label { cursor: grab; }
 .machine-edges, .machine-annotations { overflow: visible; }
+.transformation-card .minimal-example-button { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; margin: 2px 0 4px; border: 1px solid #cfdcd3; border-radius: 4px; background: #f6faf7; color: #3d6b55; font-size: 10.5px; }
+.transformation-card .minimal-example-button:hover:not(:disabled) { background: #e9f3ec; border-color: #9fbfad; }
+.transformation-card .minimal-example-button:disabled { opacity: .5; }

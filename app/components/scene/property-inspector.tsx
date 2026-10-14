@@ -26,6 +26,8 @@ export type PropertyInspectorProps = {
   onAddBlock: (clip: AlgorithmClip, transformationId: string) => void;
   /** AI: one property, one transformation, or (empty target) a new stacked transformation. */
   onRegenerate: (target: { transformationId?: string; propertyId?: string }) => void;
+  /** Open a new frame that renders only this transformation. */
+  onMinimalExample?: (transformationId: string) => void;
   onMakePen: (propertyId: string, path: string[]) => void;
   onCopy: (propertyId: string, path: string[]) => void;
   onPaste: (propertyId: string, path: string[], dropped?: AlgorithmClip) => void;
@@ -103,6 +105,8 @@ function TransformationCard({ transformation, index, count, roomInNode, props, o
         <button aria-label={`Delete ${name} transformation`} title="Delete transformation and its properties" disabled={busy} onClick={() => props.onRemoveTransformation(transformation.id)}><Icon name="close" size={13} /></button>
       </span>}
     </div>
+    {!state && props.onMinimalExample && <button className="minimal-example-button" disabled={busy || !transformation.properties.length} title="Open a new sketch frame that renders only this transformation, to try it in isolation"
+      onClick={() => props.onMinimalExample!(transformation.id)}><Icon name="play" size={11} />Create Minimal Example</button>}
     <textarea aria-label={`${name} transformation description`} maxLength={1000} rows={2} value={transformation.description} disabled={Boolean(state)} onChange={e => props.onTransformation(transformation.id, { description: e.target.value })} />
     <fieldset disabled={busy} className="property-list">
       {transformation.properties.map(property => <PropertyCard key={property.id} property={property} props={props} openMenu={openMenu} />)}

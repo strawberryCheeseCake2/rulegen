@@ -11,6 +11,8 @@ import { addBlockProperty, copyAlgorithm, moveNodeTo, pasteAlgorithm, transplant
 import { instantiate } from "../lib/scene/algorithms";
 import { isAlgorithm, valueAt } from "../lib/scene/values";
 import { liveSceneSource } from "../lib/scene/live";
+import { minimalExampleInstruction, minimalExampleScene } from "../lib/scene/minimal-example";
+import { findTransformation } from "../lib/scene/transformations";
 import type { FrameId } from "../lib/workspace";
 import type { StudioDeps } from "./deps";
 
@@ -203,6 +205,23 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         deps.toast(`${scene.nodes.filter(node => node.kind === "collection").length}개의 collection과 ${scene.nodes.filter(node => node.kind === "object").length}개의 object를 새 프레임으로 추출했습니다.`);
       }, owner);
       if (out.frame) await renderDerived(out.frame);
+    },
+    /**
+     * A new frame beside this one with only `transformationId` of the node (plus a
+     * plain member for a collection), rendered so that transformation can be tried alone.
+     */
+    async minimalExample(nodeId: string, transformationId: string) {
+      const panel = deps.panel(owner), node = findNode(panel.scene, nodeId), transformation = node && findTransformation(node, transformationId);
+      if (!node || !transformation) return;
+      let scene: Scene;
+      try { scene = sceneSchema.parse(minimalExampleScene(panel.scene, nodeId, transformationId)); }
+      catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "최소 예제를 만들지 못했습니다." }); return; }
+      const instruction = minimalExampleInstruction(node, transformationId);
+      // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
+      // instead of the original, so only this transformation shows; after that it is edited like any frame.
+      const id = derive(scene, `${node.name} · ${transformation.label || "Transformation"} example`, deps.artwork(owner)?.revision ?? 0,
+        { sourceFrameId: null, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] });
+      if (id) { deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다. 결과를 생성하는 중입니다…`); await renderDerived(id, instruction); }
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. */
     async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}) {
