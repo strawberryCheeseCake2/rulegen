@@ -1,7 +1,7 @@
 import type { Algorithm, Effect, NodeState, NodeTransition, Property, ScalarValue, SceneNode, SemanticTransformation } from "../../lib/scene/schema";
 import { MAX_NODE_PROPERTIES, MAX_PROPERTIES, MAX_TRANSFORMATIONS } from "../../lib/scene/schema";
 import type { SlotChoice } from "../../lib/scene/panel-ops";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ALGORITHM_DRAG_TYPE, readAlgorithmDrag, type AlgorithmClip } from "../../lib/scene/transfer";
 import { Icon } from "../icons";
 import { ValueSocket } from "./value-editor";
@@ -28,6 +28,8 @@ export type PropertyInspectorProps = {
   onRegenerate: (target: { transformationId?: string; propertyId?: string }) => void;
   /** Open a new frame that renders only this transformation. */
   onMinimalExample?: (transformationId: string) => void;
+  /** A constraint picked in inspection: its card is highlighted and scrolled into view. */
+  highlightPropertyId?: string | null;
   onMakePen: (propertyId: string, path: string[]) => void;
   onCopy: (propertyId: string, path: string[]) => void;
   onPaste: (propertyId: string, path: string[], dropped?: AlgorithmClip) => void;
@@ -77,7 +79,7 @@ function NewSocket({ library, busy, onAdd, onDrop }: { library: Algorithm[]; bus
 
 function PropertyCard({ property, props, openMenu }: { property: Property; props: PropertyInspectorProps; openMenu: ReturnType<typeof useContextMenu>[1] }) {
   const { state, library } = props;
-  return <article className={`property-card effect-${property.effect}`}>
+  return <article className={`property-card effect-${property.effect} ${props.highlightPropertyId === property.id ? "inspection-highlight" : ""}`} data-property-id={property.id}>
     <div className="property-card-title">
       <input aria-label={`${property.label} property name`} maxLength={80} value={property.label} disabled={Boolean(state)} onChange={e => { if (e.target.value.trim()) props.onProperty(property.id, { label: e.target.value }); }} />
       <select className="effect-select" aria-label={`${property.label} effect`} value={property.effect} disabled={Boolean(state)} onChange={e => props.onProperty(property.id, { effect: e.target.value as Effect })}>{effects.map(effect => <option key={effect} value={effect}>{effect}</option>)}</select>
@@ -119,10 +121,11 @@ function TransformationCard({ transformation, index, count, roomInNode, props, o
 export function PropertyInspector(props: PropertyInspectorProps) {
   const { node, transformations, state, busy } = props;
   const [menu, openMenu] = useContextMenu();
+  useEffect(() => { if (props.highlightPropertyId) document.querySelector(`[data-property-id="${CSS.escape(props.highlightPropertyId)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [props.highlightPropertyId]);
   const roomInNode = transformations.flatMap(item => item.properties).length < MAX_NODE_PROPERTIES;
   const canStack = !state && transformations.length < MAX_TRANSFORMATIONS;
   return <div className="property-inspector">{menu}
-    <div className="node-heading"><span className={`node-kind kind-${node.kind}`}><Icon name={node.kind === "collection" ? "collection" : "object"} size={13} />{node.kind === "collection" ? "Collection" : "Object"}{node.primitive && ` · ${node.primitive}`}</span>
+    <div className="node-heading"><span className={`node-kind kind-${node.kind}`}><Icon name={node.kind === "collection" ? "collection" : "object"} size={13} />{node.kind === "collection" ? "Brush Stamp" : "Object"}{node.primitive && ` · ${node.primitive}`}</span>
       <input className="node-name-input" aria-label="Node name" maxLength={100} value={node.name} onChange={e => { if (e.target.value.trim()) props.onNode({ name: e.target.value }); }} />
       <textarea aria-label="Node description" maxLength={600} rows={2} value={node.description} onChange={e => props.onNode({ description: e.target.value })} /></div>
     <StateBar {...props} />

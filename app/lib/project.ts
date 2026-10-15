@@ -1,3 +1,4 @@
+import { brushSchema, MAX_BRUSHES } from "./brushes";
 import { z } from "zod";
 import { pointSchema, imageSchema, semanticPenSchema, type Stroke } from "./schema";
 import { createInteractionPen } from "./algorithm-pens";
@@ -7,7 +8,7 @@ const strokeSchema = z.object({ points: z.array(pointSchema).max(6000), color: z
 const artworkSchema = z.object({ strokes: z.array(strokeSchema).max(500), photo: imageSchema.nullable(), name: z.string(), revision: z.number() });
 export const sketchFrameSchema = z.object({ id: z.string().regex(/^sketch-[a-zA-Z0-9-]+$/).max(80), artwork: artworkSchema });
 export type SketchFrame = z.infer<typeof sketchFrameSchema>;
-export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(24).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
+export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(24).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
   const ids = project.sketchFrames.map(f => f.id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "스케치 프레임 ID와 위치를 확인해주세요." });
   if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Interaction pen을 확인해주세요." });

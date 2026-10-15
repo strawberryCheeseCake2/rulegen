@@ -2,13 +2,14 @@ import { z } from "zod";
 import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
 import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema } from "../lib/scene/ai-schema";
 import { convertMachine, convertScene, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
-import { findNode, updateNode } from "../lib/scene/graph";
+import { descendantIds, findNode, updateNode } from "../lib/scene/graph";
 import { conformMachine, validateMachine } from "../lib/scene/machines";
 import { settleProposal, validateSceneProposal } from "../lib/scene/revisions";
 import { canAddTransformation, placeTransformation } from "../lib/scene/transformations";
 import { validateScene } from "../lib/scene/validate";
 import { sceneBindings, sceneValues } from "../lib/scene/values";
 import { connectScene } from "./scene-code.server";
+import { inspectResultSchema, type InspectResult } from "../lib/inspection";
 import { prepareCode } from "./code.server";
 
 // One entry per AI intent: its structured output schema, prompt file, budget,
@@ -29,9 +30,11 @@ const canvas = { width: 900, height: 600 };
 const strokeContext = (input: AIInput) => ({ compositionPens: input.compositionPens, compositionStrokes: input.compositionStrokes, canvas });
 const targetNode = (input: AIInput) => input.scene && findNode(input.scene, input.targetNodeId);
 const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
+/** The modules the code must define: one per root node, with the node ids it draws. */
+const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
@@ -87,10 +90,30 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       return { scene: validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, node => ({ ...node, machine }))), composePrompt: output.composePrompt.trim() || input.composePrompt };
     },
   },
+  inspect: {
+    schema: inspectResultSchema, maxTokens: () => 16000, effort: "medium",
+    check: input => !input.scene || !input.inspection ? "검사할 brush와 기록이 필요합니다." : !input.instruction.trim() && !input.inspection.marks.length ? "알고 싶은 점을 적거나 Inspection annotation으로 표시해주세요." : undefined,
+    context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
+      algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, canvas }),
+    /** Drop anything that points outside the brush, so overlays and fixes stay applicable. */
+    finalize: (input, output: InspectResult) => {
+      const nodes = new Map(input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)).map(node => [node.id, node]));
+      const keys = new Set(input.inspection!.constraints.map(row => row.key));
+      const linked = (kind: string, nodeId: string, id: string) => {
+        const node = nodes.get(nodeId); if (!node) return false;
+        if (kind === "constraint") return input.inspection!.constraints.some(row => row.nodeId === nodeId && row.propertyId === id);
+        if (kind === "transformation") return node.transformations.some(item => item.id === id);
+        return Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
+      };
+      const change = (item: { key: string; stateId: string; nodeId?: string }) => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(node => node.machine?.states.some(state => state.id === item.stateId)));
+      return { ...output, overlays: output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)), valueFixes: output.valueFixes.filter(change),
+        recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change) })) };
+    },
+  },
   code: {
     schema: codeSchema, strokes: true, check: needsScene,
     maxTokens: input => input.scene?.nodes.some(node => node.machine) ? 32000 : 24000,
-    context: input => ({ scene: input.scene, parameterBindings: sceneBindings(input.scene!), parameterValues: sceneValues(input.scene!), previous: input.previous, instruction: input.instruction,
+    context: input => ({ scene: input.scene, modules: codeModules(input.scene!), parameterBindings: sceneBindings(input.scene!), parameterValues: sceneValues(input.scene!), previous: input.previous, instruction: input.instruction,
       ...(input.annotations.length ? { annotations: input.annotations, confirmedRevisionSummary: input.revisionSummary } : {}) }),
     finalize: (input, output: z.infer<typeof codeSchema>) => {
       const generated = generatedSchema.parse(connectScene(output, input.scene!));

@@ -20,9 +20,9 @@ test("the layer panel shows the collection/object tree with machine badges and g
   assert.match(html, /aria-level="1"[^>]*>.*Tree/);
   assert.match(html, /aria-selected="true" aria-level="2"[^>]*>.*Orb/);
   assert.match(html, /2S/, "machine badge");
-  for (const label of ["New collection", "New object", "Group selection", "Ungroup collection", "Delete selected layers", "Undo layer change"]) assert.match(html, new RegExp(`aria-label="${label}"`));
+  for (const label of ["New brush stamp", "New object", "Group selection", "Ungroup brush stamp", "Delete selected layers", "Undo layer change"]) assert.match(html, new RegExp(`aria-label="${label}"`));
   const empty = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene: { nodes: [], algorithms: [] }, selected: [], hovered: null, busy: false, canUndo: false, canRedo: false, title: "Sketch", canExtract: true } as unknown as LayerPanelProps));
-  assert.match(empty, /Extract collections/);
+  assert.match(empty, /Extract brush stamps/);
 });
 
 test("the inspector shows a node's stack of semantic transformations with nested algorithm sliders and state-linked values", () => {

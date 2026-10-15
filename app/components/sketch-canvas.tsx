@@ -2,13 +2,18 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 import type P5 from "p5";
 import { ART_WIDTH as W, ART_HEIGHT as H, type Artwork, type Point, type Stroke, type SemanticPen, type Viewport } from "../lib/schema";
 export type CanvasHandle = { capture: (full?: boolean, transparentBackground?: boolean) => { image: string; region: { x: number; y: number; w: number; h: number } }; clearSelection: () => void };
-type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; semanticPen?: SemanticPen; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode };
+type Props = { artwork: Artwork; tool: string; color: string; width: number; opacity: number; viewport: Viewport; semanticPen?: SemanticPen; onStroke: (stroke: Stroke) => void; onViewport: (viewport: Viewport) => void; onSelection: (selected: boolean) => void; onError: (message: string) => void; transparent?: boolean; children?: React.ReactNode;
+  /** Brush-group tools ("kind:brushId") record a gesture instead of a stroke: canvas pixels, ms since it started. Tools that only inspect get null. */
+  onGesture?: (tool: string, points: { x: number; y: number; t: number }[]) => void; gestureTool?: (tool: string) => boolean;
+  /** Live progress of a gesture (canvas pixels), before onGesture reports the whole path. */
+  onGestureStep?: (tool: string, point: { x: number; y: number }, phase: "start" | "move") => void };
 export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null), instance = useRef<P5 | null>(null);
   const current = useRef(props); current.current = props;
   const draft = useRef<Stroke | null>(null), lasso = useRef<Point[]>([]), pointer = useRef<{ mode: string; last: Point } | null>(null);
   const photo = useRef<HTMLImageElement | null>(null), render = useRef<(applyView?: boolean, transparentBackground?: boolean) => void>(() => {});
   const [ready, setReady] = useState(false), [selection, setSelection] = useState<Point[]>([]);
+  const gesture = useRef<{ x: number; y: number; t: number }[] | null>(null), gestureStart = useRef(0), [gesturePath, setGesturePath] = useState<Point[]>([]);
   useEffect(() => {
     let disposed = false;
     let layer: P5.Graphics;
@@ -80,13 +85,17 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
   const coordinate = (event: React.PointerEvent) => { const bounds = surface.current!.getBoundingClientRect(); return { x: (event.clientX - bounds.left) * W / bounds.width, y: (event.clientY - bounds.top) * H / bounds.height }; };
   const world = (point: Point) => ({ x: Math.max(0, Math.min(W, (point.x - current.current.viewport.x) / current.current.viewport.zoom)), y: Math.max(0, Math.min(H, (point.y - current.current.viewport.y) / current.current.viewport.zoom)) });
   const finish = () => {
+    if (pointer.current?.mode === "gesture" && gesture.current) { current.current.onGesture?.(current.current.tool, gesture.current); gesture.current = null; setGesturePath([]); pointer.current = null; return; }
     if (draft.current) current.current.onStroke(draft.current);
     if (pointer.current?.mode === "lasso") { if (lasso.current.length < 3) lasso.current = []; setSelection([...lasso.current]); current.current.onSelection(lasso.current.length >= 3); }
     draft.current = null; pointer.current = null; instance.current?.redraw();
   };
   return <div ref={surface} className={`p5-surface tool-${props.tool}`} onContextMenu={e => e.preventDefault()} onPointerDown={e => {
     if (!ready || (e.target as Element).closest("button")) return;
-    e.currentTarget.setPointerCapture(e.pointerId); const point = coordinate(e); const mode = e.button === 1 || e.altKey ? "hand" : props.tool;
+    const brushTool = props.gestureTool?.(props.tool) ?? false;
+    if (props.tool.includes(":") && !brushTool && !(e.button === 1 || e.altKey)) return;
+    e.currentTarget.setPointerCapture(e.pointerId); const point = coordinate(e); const mode = e.button === 1 || e.altKey ? "hand" : brushTool ? "gesture" : props.tool;
+    if (mode === "gesture") { const at = world(point); gestureStart.current = performance.now(); gesture.current = [{ ...at, t: 0 }]; setGesturePath([at]); pointer.current = { mode, last: point }; props.onGestureStep?.(props.tool, at, "start"); return; }
     pointer.current = { mode, last: point };
     if (mode === "lasso") { lasso.current = [world(point)]; setSelection([...lasso.current]); }
     else if (mode !== "hand" && mode !== "select") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
@@ -94,12 +103,13 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
   }} onPointerMove={e => {
     const active = pointer.current; if (!active) return; const point = coordinate(e);
     if (active.mode === "hand") props.onViewport({ ...current.current.viewport, x: current.current.viewport.x + point.x - active.last.x, y: current.current.viewport.y + point.y - active.last.y });
+    else if (active.mode === "gesture") { if (gesture.current && gesture.current.length < 2000) { const at = world(point); gesture.current.push({ ...at, t: performance.now() - gestureStart.current }); setGesturePath(path => [...path, at]); current.current.onGestureStep?.(current.current.tool, at, "move"); } }
     else if (active.mode === "lasso") { if (lasso.current.length < 2000) lasso.current.push(world(point)); setSelection([...lasso.current]); }
     else if (draft.current && draft.current.points.length < 6000) draft.current.points.push(world(point));
     active.last = point; instance.current?.redraw();
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div ref={host} className="p5-host" />
-    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{props.children}</g></svg>
+    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{gesturePath.length > 0 && <polyline className="gesture-path" points={gesturePath.map(p => `${p.x},${p.y}`).join(" ")} />}{props.children}</g></svg>
     {!ready && <div className="engine-loading">Loading p5.js…</div>}
   </div>;
 });

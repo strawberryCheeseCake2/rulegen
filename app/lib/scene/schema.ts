@@ -79,6 +79,12 @@ export const sceneNodeSchema = z.object({
   primitive: z.string().max(40).default(""), region: regionSchema,
   transformations: z.array(transformationSchema).max(MAX_TRANSFORMATIONS).default([]),
   visible: z.boolean().default(true), machine: nodeMachineSchema.nullable().default(null),
+  /** The brush (reusable collection) this node is, or was stamped from. */
+  brushId: z.string().max(80).optional(),
+  /** The node id its code module uses (a copy stamped from a brush keeps the brush's id). Absent = its own id. */
+  codeId: z.string().max(80).optional(),
+  /** Root nodes: the code module that draws it. Absent = the module named after its own id. */
+  codeModule: z.string().max(120).optional(),
 });
 export type SceneNode = z.infer<typeof sceneNodeSchema>;
 

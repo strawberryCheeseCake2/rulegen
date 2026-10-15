@@ -26,14 +26,26 @@ export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(
 /** machine-refine result: the scene with the refined machine plus the updated Compose prompt. */
 export const machineRefineResultSchema = z.object({ scene: sceneSchema, composePrompt: z.string().max(2000) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
-export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision"] as const;
+export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect"] as const;
+const inspectScalar = z.union([z.number(), z.string().max(200), z.boolean()]);
+/** Targeted inspection input: the brush's nodes, its constraint rows and the recorded steps. */
+export const inspectionInputSchema = z.object({
+  brushName: z.string().max(100), nodeIds: z.array(idSchema).min(1).max(48),
+  constraints: z.array(z.object({ key: z.string().max(1200), nodeId: idSchema, transformationId: z.string().max(80), transformation: z.string().max(100), propertyId: idSchema, property: z.string().max(100), path: z.string().max(400), type: z.string().max(20) })).max(400),
+  steps: z.array(z.object({ id: z.number().int(), nodeId: z.string().max(80).nullable(), from: z.string().max(80).nullable(), to: z.string().max(80).nullable(), transitionId: z.string().max(80).nullable(), values: z.record(z.string().max(1200), inspectScalar),
+    /** Machine states and the brush roots' m.store at that step. */
+    runtime: z.object({ states: z.record(z.string().max(80), z.object({ id: z.string().max(80), elapsed: z.number() })), stores: z.record(z.string().max(80), z.unknown()) }).nullable().default(null) })).max(20),
+  cursor: z.number().int().nullable(),
+  marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(64),
+});
+export type InspectionInput = z.infer<typeof inspectionInputSchema>;
 /** The state or transition a machine refinement is focused on (none = the whole machine). */
 export const machineTargetSchema = z.object({ kind: z.enum(["state", "transition"]), id: idSchema });
 export type MachineTarget = z.infer<typeof machineTargetSchema>;
 /** An annotation stroke drawn on the state machine graph, with the graph items it touches. */
 export const machineMarkSchema = z.object({ points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64), targets: z.array(z.string().max(200)).max(16) });
 export type MachineMark = z.infer<typeof machineMarkSchema>;
-export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: sceneSchema.nullable().default(null), targetNodeId: idSchema.or(z.literal("")).default(""), targetTransformationId: idSchema.or(z.literal("")).default(""), targetPropertyId: idSchema.or(z.literal("")).default(""), image: imageSchema.optional(), resultImage: imageSchema.optional(), annotations: z.array(annotationSchema).max(MAX_RESULT_STROKES).default([]), revisionSummary: z.string().max(1500).default(""), alternative: z.boolean().default(false), previous: z.string().max(MAX_CODE_LENGTH).default(""), instruction: z.string().max(2000).default(""), compositionPens: z.array(semanticPenSchema).max(500).default([]), compositionStrokes: z.array(compositionStrokeSchema).max(500).default([]), machineTarget: machineTargetSchema.nullable().default(null), machineImage: imageSchema.optional(), machineMarks: z.array(machineMarkSchema).max(64).default([]), composePrompt: z.string().max(2000).default("") }).superRefine((input, ctx) => {
+export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: sceneSchema.nullable().default(null), targetNodeId: idSchema.or(z.literal("")).default(""), targetTransformationId: idSchema.or(z.literal("")).default(""), targetPropertyId: idSchema.or(z.literal("")).default(""), image: imageSchema.optional(), resultImage: imageSchema.optional(), annotations: z.array(annotationSchema).max(MAX_RESULT_STROKES).default([]), revisionSummary: z.string().max(1500).default(""), alternative: z.boolean().default(false), previous: z.string().max(MAX_CODE_LENGTH).default(""), instruction: z.string().max(2000).default(""), compositionPens: z.array(semanticPenSchema).max(500).default([]), compositionStrokes: z.array(compositionStrokeSchema).max(500).default([]), machineTarget: machineTargetSchema.nullable().default(null), machineImage: imageSchema.optional(), machineMarks: z.array(machineMarkSchema).max(64).default([]), composePrompt: z.string().max(2000).default(""), inspection: inspectionInputSchema.nullable().default(null) }).superRefine((input, ctx) => {
   const ids = input.compositionPens.map(p => p.id);
   if (new Set(ids).size !== ids.length || input.compositionStrokes.some(s => (s.tool === "semantic" || s.tool === "interaction") && (!s.semanticPenId || !ids.includes(s.semanticPenId)))) ctx.addIssue({ code: "custom", message: "펜 의미와 획을 연결하지 못했습니다." });
   if (input.compositionStrokes.some(s => s.tool === "interaction" && input.compositionPens.find(p => p.id === s.semanticPenId)?.kind !== "interaction")) ctx.addIssue({ code: "custom", message: "Interaction annotation과 펜 의미를 확인해주세요." });

@@ -3,6 +3,9 @@ import type { SketchPanel } from "../lib/sketch-panels";
 import type { Region } from "../lib/scene/schema";
 import type { AlgorithmClip } from "../lib/scene/transfer";
 import type { FrameId } from "../lib/workspace";
+import type { Brush } from "../lib/brushes";
+import type { Scene } from "../lib/scene/schema";
+import type { CodePreviewHandle } from "../components/code-preview";
 
 export type PanelPatch = Partial<SketchPanel> | ((panel: SketchPanel) => Partial<SketchPanel>);
 
@@ -28,4 +31,10 @@ export type StudioDeps = {
   activate: (owner: string) => void;
   /** Add a sketch frame beside `fromId` and return its id (no AI involved). */
   createFrame: (fromId: string, name: string) => string | null;
+  /** Register a brush tool group for each root collection of an AI-generated scene. */
+  addBrushes: (frameId: string, scene: Scene) => Brush[];
+  /** The running result of a frame, if it is mounted. */
+  preview: (owner: string) => CodePreviewHandle | undefined;
+  /** Save the code module of each brush that comes from this frame. */
+  refreshBrushCode?: (frameId: string, code: string) => void;
 };

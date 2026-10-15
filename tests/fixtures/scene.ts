@@ -45,23 +45,26 @@ export const aiScene: AIScene = {
 export const sampleScene = () => convertScene(structuredClone(aiScene));
 
 /** A model-written program honoring the scene code contract. */
-export const sceneProgram = `function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }
-p.setup = () => { p.createCanvas(900, 600); };
-p.draw = () => {
-  p.background(250);
-  const depth = rulegenParams["tree/structure/depth"];
-  const base = rulegenParams["tree/structure/length/base"], ratio = rulegenParams["tree/structure/length/ratio"];
-  p.stroke(rulegenParams["tree/ink"]);
-  for (let i = 0; i < depth; i++) p.line(450, 600 - i * 10, 450, 600 - i * 10 - algo_power_decay(base, ratio, i));
-  const speed = rulegenParams["orb/speed"];
-  p.circle(rulegenParams["orb/@x"] + speed * rulegenState["orb"].elapsed / 1000, 300, rulegenParams["orb/radius"] * 2);
-};
-p.mousePressed = () => { if (rulegenState["orb"].id === "idle") rulegenEmit("orb", "press"); };`;
+export const sceneProgram = `rulegenModule("tree", function (m) {
+  function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }
+  return {
+    draw() {
+      const box = m.box("tree"), x = box.x + box.w / 2, bottom = box.y + box.h;
+      const depth = m.v("tree/structure/depth");
+      const base = m.v("tree/structure/length/base"), ratio = m.v("tree/structure/length/ratio");
+      p.stroke(m.v("tree/ink"));
+      for (let i = 0; i < depth; i++) p.line(x, bottom - i * 10, x, bottom - i * 10 - algo_power_decay(base, ratio, i));
+      const speed = m.v("orb/speed");
+      p.circle(m.box("orb").x + speed * m.state("orb").elapsed / 1000, 300, m.v("orb/radius") * 2);
+    },
+    mousePressed() { if (m.state("orb").id === "idle") m.emit("orb", "press"); },
+  };
+});`;
 
 /** Execute prepared code against a fake p5 and record drawing calls. */
 export function run(source: string) {
   const circles: number[][] = [], lines: number[][] = [], strokes: unknown[] = [];
-  const p: Record<string, unknown> = { setup() {}, draw() {}, deltaTime: 100, createCanvas() {}, background() {}, noLoop() {}, stroke: (c: unknown) => strokes.push(c), line: (...a: number[]) => lines.push(a), circle: (...a: number[]) => circles.push(a) };
+  const p: Record<string, unknown> = { setup() {}, draw() {}, deltaTime: 100, createCanvas() {}, background() {}, clear() {}, push() {}, pop() {}, noLoop() {}, stroke: (c: unknown) => strokes.push(c), line: (...a: number[]) => lines.push(a), circle: (...a: number[]) => circles.push(a) };
   const context = vm.createContext({ p, __rulegenGuard() {} });
   vm.runInContext(prepareCode(source), context);
   (p.setup as () => void)();

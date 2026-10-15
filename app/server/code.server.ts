@@ -20,6 +20,10 @@ export function prepareCode(source: string) {
       // Plain object keys (`{ top: 5 }`) are data too.
       const parent = path.parent;
       if (!reserved.has(name) && (t.isObjectProperty(parent) || t.isObjectMethod(parent)) && parent.key === path.node && !parent.computed) return;
+      // `rect.top` is a number; only the global window (`top`, `self.top`, `frames.top`, …) is blocked.
+      const globals = ["self", "frames", "window", "globalThis", "parent", "top", "opener"];
+      if (name === "top" && (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.property === path.node && !parent.computed
+        && !(t.isIdentifier(parent.object) && globals.includes(parent.object.name)) && !t.isThisExpression(parent.object)) return;
       throw new Error(`코드에서 지원하지 않는 API: ${name}`);
     },
     // Strings are data (`alignment === "top"`), except as a computed key (`p["top"]`) or a reflection name anywhere.

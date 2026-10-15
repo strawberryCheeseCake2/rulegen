@@ -44,6 +44,51 @@ export function validateMachine(node: SceneNode, machine: NodeMachine) {
 export const SCENE_START = "// @rulegen-scene:start";
 export const SCENE_END = "// @rulegen-scene:end";
 export const SCENE_DRIVER_MARK = "// @rulegen-scene-driver";
+export const MODULES_START = "// @rulegen-modules:start";
+export const MODULES_END = "// @rulegen-modules:end";
+const MODULE_END = "// @rulegen-module-end";
+
+/**
+ * One instance per root node: which code module draws it and how the node ids
+ * written in that module map to this scene's node ids (a stamped copy keeps the
+ * ids of the brush it came from in its code, so `codeId` differs from `id`).
+ */
+export function sceneInstances(scene: Scene) {
+  const children = new Map<string, SceneNode[]>();
+  for (const node of scene.nodes) if (node.parentId) children.set(node.parentId, [...(children.get(node.parentId) || []), node]);
+  const subtree = (node: SceneNode): SceneNode[] => [node, ...(children.get(node.id) || []).flatMap(subtree)];
+  return scene.nodes.filter(node => !node.parentId).map(root => ({ root: root.id, module: root.codeModule ?? root.id,
+    map: Object.fromEntries(subtree(root).map(node => [node.codeId ?? node.id, node.id])) as Record<string, string> }));
+}
+export type SceneInstance = ReturnType<typeof sceneInstances>[number];
+
+/** Code written by AI addresses every node by its own id: forget the ids copies borrowed from their brush. */
+export function ownCodeIds(scene: Scene): Scene {
+  return scene.nodes.some(node => node.codeId !== undefined || node.codeModule !== undefined)
+    ? { ...scene, nodes: scene.nodes.map(({ codeId: _codeId, codeModule: _codeModule, ...node }) => node) } : scene;
+}
+
+/** A module as stored in a program: marked so it can be lifted out without parsing. */
+export const moduleSource = (key: string, factory: string) => `// @rulegen-module ${JSON.stringify(key)}\nrulegenModule(${JSON.stringify(key)}, ${factory});\n${MODULE_END}`;
+/** Every module of a program, by key (empty for code without module markers). */
+export function programModules(code: string) {
+  const start = code.indexOf(MODULES_START), end = code.indexOf(MODULES_END, start);
+  const modules = new Map<string, string>();
+  if (start < 0 || end < 0) return modules;
+  for (const match of code.slice(start, end).matchAll(/\/\/ @rulegen-module ("(?:[^"\\\n]|\\.)*")\n[\s\S]*?\n\/\/ @rulegen-module-end/g)) modules.set(JSON.parse(match[1]) as string, match[0]);
+  return modules;
+}
+export const hasModules = (code: string) => code.includes(MODULES_START) && code.includes(MODULES_END);
+/** The same module under another key. */
+export function renameModule(text: string, from: string, to: string) {
+  return text.replace(`// @rulegen-module ${JSON.stringify(from)}`, `// @rulegen-module ${JSON.stringify(to)}`).replace(`rulegenModule(${JSON.stringify(from)},`, `rulegenModule(${JSON.stringify(to)},`);
+}
+/** A complete program: host values, runtime, the modules and the host driver. */
+export function assembleProgram(scene: Scene, modules: string[], previous?: string) {
+  return [sceneBlock(scene, previous ? readBlock(previous)?.block : undefined), SCENE_RUNTIME, MODULES_START, ...modules, MODULES_END, SCENE_DRIVER].join("\n");
+}
+/** The key a stored module registers under. */
+export const moduleKey = (text: string) => { const match = /^\/\/ @rulegen-module ("(?:[^"\\\n]|\\.)*")/.exec(text); return match ? JSON.parse(match[1]) as string : null; };
 
 export function machineValues(scene: Scene) {
   return Object.fromEntries(scene.nodes.filter(node => node.machine).map(node => [node.id, {
@@ -52,22 +97,22 @@ export function machineValues(scene: Scene) {
   }]));
 }
 
-type Block = { params: Record<string, unknown>; machines: ReturnType<typeof machineValues> };
+type Block = { params: Record<string, unknown>; machines: ReturnType<typeof machineValues>; instances: SceneInstance[] };
 export function sceneBlock(scene: Scene, previous?: Block) {
   // Old keys stay until code is regenerated, so a structural edit cannot break a running sketch.
   const params = { ...previous?.params, ...sceneValues(scene) };
   const machines = machineValues(scene);
   for (const [id, machine] of Object.entries(machines)) for (const state of machine.states) state.params = { ...previous?.machines[id]?.states.find(item => item.id === state.id)?.params, ...state.params };
-  return `${SCENE_START}\nconst rulegenParams = ${JSON.stringify(params, null, 2)};\nconst rulegenMachines = ${JSON.stringify(machines, null, 2)};\n${SCENE_END}`;
+  return `${SCENE_START}\nconst rulegenParams = ${JSON.stringify(params, null, 2)};\nconst rulegenMachines = ${JSON.stringify(machines, null, 2)};\nconst rulegenInstances = ${JSON.stringify(sceneInstances(scene), null, 2)};\n${SCENE_END}`;
 }
 
 function readBlock(source: string) {
   const start = source.indexOf(SCENE_START), endMarker = source.indexOf(`\n${SCENE_END}`, start);
   if (start < 0 || endMarker < 0) return null;
   const body = source.slice(start + SCENE_START.length, endMarker + 1).trim();
-  const match = /^const rulegenParams\s*=\s*(\{[\s\S]*?\});\nconst rulegenMachines\s*=\s*(\{[\s\S]*\});$/.exec(body);
+  const match = /^const rulegenParams\s*=\s*(\{[\s\S]*?\});\nconst rulegenMachines\s*=\s*(\{[\s\S]*?\});\nconst rulegenInstances\s*=\s*(\[[\s\S]*\]);$/.exec(body);
   if (!match) return null;
-  try { return { start, end: endMarker + 1 + SCENE_END.length, block: { params: JSON.parse(match[1]), machines: JSON.parse(match[2]) } as Block }; } catch { return null; }
+  try { return { start, end: endMarker + 1 + SCENE_END.length, block: { params: JSON.parse(match[1]), machines: JSON.parse(match[2]), instances: JSON.parse(match[3]) } as Block }; } catch { return null; }
 }
 /** Patch only the host block: drawing code and hand edits stay intact. */
 export function syncScene(source: string, scene: Scene) {
@@ -86,6 +131,8 @@ export function sceneStructureKey(source: string) {
 
 // Portable per-node controller, shipped in downloads as well as in the sandbox.
 export const SCENE_RUNTIME = `
+const rulegenModules = {};
+function rulegenModule(key, factory) { rulegenModules[key] = factory; }
 const rulegenBase = Object.assign({}, rulegenParams);
 const rulegenState = {};
 let rulegenPlaying = true;
@@ -124,9 +171,111 @@ for (const nodeId of Object.keys(rulegenMachines)) rulegenState[nodeId] = { id: 
 rulegenApply();
 `;
 
+// The host owns the canvas, the loop and input; each root node is an instance of
+// a code module that only draws and reacts for its own nodes.
 export const SCENE_DRIVER = `
 ${SCENE_DRIVER_MARK}
-const rulegenSetup = p.setup, rulegenDraw = p.draw;
-p.setup = () => { rulegenSetup(); rulegenResetStates(); };
-p.draw = () => { rulegenTickState(p.deltaTime); if (rulegenDraw) rulegenDraw(); };
+let rulegenLive = [], rulegenStarted = false;
+function rulegenKey(inst, key) {
+  const cut = key.indexOf('/'), actual = cut > 0 ? inst.entry.map[decodeURIComponent(key.slice(0, cut))] : undefined;
+  if (actual === undefined) throw new Error('Unknown value key: ' + key);
+  return encodeURIComponent(actual) + key.slice(cut);
+}
+function rulegenInstance(entry) {
+  const inst = { entry, handlers: {}, store: {} };
+  const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
+  const m = {
+    p,
+    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); return rulegenParams[k]; },
+    box(id) { const a = encodeURIComponent(node(id)); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
+    state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
+    emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
+    store: inst.store,
+  };
+  inst.handlers = rulegenModules[entry.module](m) || {};
+  return inst;
+}
+/** Create instances for new root nodes, keep running ones, drop removed ones. */
+function rulegenSync() {
+  const next = [];
+  for (const entry of rulegenInstances) {
+    if (!rulegenModules[entry.module]) continue;
+    const found = rulegenLive.find(inst => inst.entry.root === entry.root && inst.entry.module === entry.module);
+    if (found) { found.entry = entry; next.push(found); continue; }
+    const inst = rulegenInstance(entry); next.push(inst);
+    if (rulegenStarted && inst.handlers.setup) inst.handlers.setup();
+  }
+  rulegenLive = next;
+}
+/** Plain data (numbers, strings, booleans, arrays, plain objects), deep-copied; anything else is left out. */
+function rulegenPlain(value, depth) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'object' || depth > 12) return undefined;
+  if (Array.isArray(value)) return value.map(item => { const copy = rulegenPlain(item, depth + 1); return copy === undefined ? null : copy; });
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && proto !== Object.getPrototypeOf({})) return undefined;
+  const out = {};
+  for (const key of Object.keys(value)) { const copy = rulegenPlain(value[key], depth + 1); if (copy !== undefined) out[key] = copy; }
+  return out;
+}
+/** Everything a step needs to come back: each instance's store, the machine states and the random seed. */
+function rulegenSnapshot() {
+  const seed = Math.floor(Math.random() * 2147483647);
+  if (typeof p.randomSeed === 'function') p.randomSeed(seed);
+  if (typeof p.noiseSeed === 'function') p.noiseSeed(seed);
+  const states = {}, stores = {};
+  for (const nodeId of Object.keys(rulegenState)) states[nodeId] = { id: rulegenState[nodeId].id, elapsed: rulegenState[nodeId].elapsed };
+  for (const inst of rulegenLive) stores[inst.entry.root] = rulegenPlain(inst.store, 0);
+  return { seed, states, stores };
+}
+/** Put a snapshot back (with the current values): stores are refilled in place, objects that are not plain data are kept. */
+function rulegenRestore(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  for (const nodeId of Object.keys(snapshot.states || {})) {
+    const saved = snapshot.states[nodeId], machine = rulegenMachines[nodeId];
+    if (machine && saved && machine.states.some(state => state.id === saved.id)) rulegenState[nodeId] = { id: saved.id, elapsed: Number(saved.elapsed) || 0 };
+  }
+  rulegenApply();
+  for (const inst of rulegenLive) {
+    const saved = (snapshot.stores || {})[inst.entry.root];
+    if (!saved || typeof saved !== 'object') continue;
+    for (const key of Object.keys(inst.store)) if (rulegenPlain(inst.store[key], 0) !== undefined) delete inst.store[key];
+    Object.assign(inst.store, rulegenPlain(saved, 0));
+  }
+  if (typeof p.randomSeed === 'function') p.randomSeed(snapshot.seed);
+  if (typeof p.noiseSeed === 'function') p.noiseSeed(snapshot.seed);
+}
+function rulegenSetup() { for (const inst of rulegenLive) if (inst.handlers.setup) inst.handlers.setup(); }
+p.setup = () => { p.createCanvas(900, 600); rulegenResetStates(); rulegenSync(); rulegenSetup(); rulegenStarted = true; };
+p.draw = () => {
+  rulegenTickState(p.deltaTime);
+  p.clear();
+  for (const inst of rulegenLive) {
+    if (!inst.handlers.draw || rulegenParams[encodeURIComponent(inst.entry.root) + '/@visible'] === false) continue;
+    p.push(); try { inst.handlers.draw(); } finally { p.pop(); }
+  }
+};
+function rulegenDispatch(name, fallback, touch) {
+  return event => {
+    let handled = false, result;
+    for (const inst of rulegenLive) {
+      const handler = inst.handlers[name] || (fallback && inst.handlers[fallback]);
+      if (!handler) continue;
+      handled = true; if (handler(event) === false) result = false;
+    }
+    return touch && handled ? false : result;
+  };
+}
+for (const name of ['mousePressed', 'mouseReleased', 'mouseDragged', 'mouseMoved', 'mouseClicked', 'doubleClicked', 'mouseWheel', 'keyPressed', 'keyReleased', 'keyTyped']) p[name] = rulegenDispatch(name);
+p.touchStarted = rulegenDispatch('touchStarted', 'mousePressed', true);
+p.touchMoved = rulegenDispatch('touchMoved', 'mouseDragged', true);
+p.touchEnded = rulegenDispatch('touchEnded', 'mouseReleased', true);
+p.stateEntered = (nodeId, stateId) => {
+  for (const inst of rulegenLive) {
+    if (!inst.handlers.stateEntered) continue;
+    const local = Object.keys(inst.entry.map).find(id => inst.entry.map[id] === nodeId);
+    if (local !== undefined) inst.handlers.stateEntered(local, stateId);
+  }
+};
 `;

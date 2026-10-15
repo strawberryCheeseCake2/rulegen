@@ -41,7 +41,12 @@ export function pasteAlgorithm(scene: Scene, nodeId: string, propertyId: string,
  * Copy a collection/object with all its members, algorithms and machines into
  * another scene, centred on `at` (normalized). Ids that already exist are renamed.
  */
-export function transplantNodes(source: Scene, nodeId: string, target: Scene, at?: { x: number; y: number }): { scene: Scene; rootId: string } {
+/**
+ * Copy a node with its members into another scene. Copies remember the node ids
+ * their code module uses (`codeId`, `codeModule`), so they can run the source's
+ * module without new code.
+ */
+export function transplantNodes(source: Scene, nodeId: string, target: Scene, at?: { x: number; y: number }): { scene: Scene; rootId: string; ids: Map<string, string> } {
   const root = findNode(source, nodeId);
   if (!root) throw new Error("옮길 collection 또는 object를 찾지 못했습니다.");
   const subtree = [nodeId, ...descendantIds(source, nodeId)].map(id => findNode(source, id)!);
@@ -55,7 +60,8 @@ export function transplantNodes(source: Scene, nodeId: string, target: Scene, at
     nodeIds.set(node.id, id);
     scratch = { ...scratch, nodes: [...scratch.nodes, { ...node, id }] };
   }
-  const copies = subtree.map(node => remapNode({ ...node, id: nodeIds.get(node.id)!, parentId: node.id === nodeId ? null : nodeIds.get(node.parentId!)! }, ids));
+  const copies = subtree.map(node => remapNode({ ...node, id: nodeIds.get(node.id)!, parentId: node.id === nodeId ? null : nodeIds.get(node.parentId!)!, codeId: node.codeId ?? node.id,
+    ...(node.id === nodeId ? { codeModule: node.codeModule ?? node.id } : { codeModule: undefined }) }, ids));
   let scene: Scene = { algorithms: library, nodes: [...target.nodes, ...copies] };
   const rootId = nodeIds.get(nodeId)!;
   if (at) {
@@ -63,7 +69,7 @@ export function transplantNodes(source: Scene, nodeId: string, target: Scene, at
     scene = moveNodes(scene, [rootId], at.x - (bounds.x + bounds.w / 2), at.y - (bounds.y + bounds.h / 2));
   }
   scene = fitCollections({ ...scene, nodes: scene.nodes.map(node => ({ ...node, region: clampRegion(node.region) })) });
-  return { scene: validateScene(scene), rootId };
+  return { scene: validateScene(scene), rootId, ids: nodeIds };
 }
 
 /** Move a node (with its members) so its bounds are centred on `at`. */

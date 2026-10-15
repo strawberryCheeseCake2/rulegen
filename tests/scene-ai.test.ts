@@ -128,9 +128,10 @@ test("code receives every nested binding and returns a connected, executable ske
     assert.match(calls[0].instructions, /SCENE CODE CONTRACT/);
     assert.equal(generated.sceneBindings.length, 6);
     assert.match(generated.code, /@rulegen-scene-driver/);
+    assert.deepEqual(context.modules, [{ key: "tree", nodes: ["tree", "orb"] }], "one module per root node");
   });
   await withMockedAI(() => ({ title: "Tree", explanation: "나무", code: "p.setup=()=>{p.createCanvas(900,600);}" }), async () => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene }), signal()), /연결하지 못했습니다/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene }), signal()), /rulegenModule/);
   });
   await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene: { nodes: [], algorithms: [] } }), signal()), /추출/);
 });

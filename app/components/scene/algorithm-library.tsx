@@ -26,7 +26,7 @@ export function AlgorithmLibrary({ scene, busy, targetName, imports, onEdit, onU
   return <section className="block-palette" aria-label="Algorithm blocks">{menu}
     <header className="block-palette-header"><Icon name="function" size={14} /><strong>Algorithm blocks</strong><span>{scene.algorithms.length}</span></header>
     <p className="algorithm-library-help">블록을 끌어 아무 property 소켓에나 끼우세요. 우클릭으로 복사해 다른 property·스케치에 붙여넣을 수도 있습니다. 블록 정의를 고치면 끼워진 모든 곳에 반영됩니다.</p>
-    {!scene.algorithms.length && <p className="empty-panel">No blocks yet. Extract collections first.</p>}
+    {!scene.algorithms.length && <p className="empty-panel">No blocks yet. Extract brush stamps first.</p>}
     <div className="block-palette-list">{scene.algorithms.map(algorithm => {
       const uses = [...new Set((usage.get(algorithm.id) || []).map(use => nodeName(use.nodeId)))];
       return <details key={algorithm.id} className="palette-block" style={blockStyle(algorithm.id)} onContextMenu={event => openMenu(event, [

@@ -116,7 +116,10 @@ test("Extract puts the scene into a NEW sketch frame beside the source and rende
     artwork: (id: string) => id === "source" ? { name: "Tree sketch", photo: null, strokes: [], revision: 3 } : created.includes(id) ? { name: "Tree sketch · extracted", photo: null, strokes: [], revision: 0 } : undefined,
     createFrame: (from: string, name: string) => { assert.equal(from, "source"); assert.match(name, /extracted/); const id = "sketch-derived"; created.push(id); panels[id] = createSketchPanel(); return id; },
     documentId: () => 1, requestId: () => 1, addPen: () => {}, clip: () => null, setClip: () => {},
+    addBrushes: (frameId: string, scene: any) => { const made = brushesFor(scene, frameId, brushes, () => `brush-${brushes.length + 1}`); brushes.push(...made); return made; }, preview: () => undefined,
   } as any;
+  const { brushesFor } = await import("../app/lib/brushes");
+  const brushes: any[] = [];
   await sceneAI(deps, "source").extract();
   assert.deepEqual(panels.source.scene.nodes, [], "the source sketch stays a plain sketch");
   const derived = panels["sketch-derived"];
@@ -125,4 +128,6 @@ test("Extract puts the scene into a NEW sketch frame beside the source and rende
   assert.deepEqual(requests.map(r => [r.intent, r.owner]), [["extract", "source"], ["code", "sketch-derived"]]);
   assert.deepEqual(captured, ["source", "source"], "code for the derived frame is generated against the source sketch");
   assert.equal(derived.generated?.title, "Tree"); assert.equal(derived.pendingResult, false);
+  assert.deepEqual(brushes.map(brush => [brush.name, brush.nodeId, brush.sourceFrameId]), [["Tree", "tree", "sketch-derived"]], "the AI-made root collection became a brush");
+  assert.equal(derived.scene.nodes.find(node => node.id === "tree")?.brushId, "brush-1");
 });

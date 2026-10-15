@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { generatedSchema, MAX_CODE_LENGTH, type GeneratedCode, type MachineTarget } from "./schema";
+import type { InspectionState } from "./inspection";
 import { emptyAnnotationHistory, type AnnotationHistory } from "./annotation-history";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
@@ -46,6 +47,9 @@ export type SketchPanel = SavedSketchPanel & {
   machineTarget: (MachineTarget & { nodeId: string }) | null;
   /** The open refinement of a node's machine: its text and the annotation drawn on the graph. */
   machineDraft: MachineDraft;
+  /** Inspection of one brush in this frame: recorded steps, cursor, annotation, AI result. */
+  /** Inspection per brush (recorded steps, annotation draft, focus). */
+  inspections: Record<string, InspectionState>;
 };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
 export const emptyMachineDraft = (nodeId = ""): MachineDraft => ({ nodeId, open: false, instruction: "", annotating: false, strokes: [] });
@@ -57,7 +61,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft() };
+    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {} };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

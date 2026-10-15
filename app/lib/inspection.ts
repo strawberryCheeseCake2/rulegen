@@ -1,0 +1,319 @@
+import { z } from "zod";
+import { findNode } from "./scene/graph";
+import type { Scene, SceneBinding } from "./scene/schema";
+import { findProperty, propertyOwner } from "./scene/transformations";
+import { sceneBindings, layoutKey } from "./scene/values";
+
+// Inspection of one brush in one frame: the running result records a step at
+// every state change (up to MAX_STEPS), with the brush's live values and the
+// runtime state, so the user can step through states, transitions and constraint
+// (semantic transformation) values. Targeted inspection adds AI overlays.
+
+export const MAX_STEPS = 20;
+export type Scalar = number | string | boolean;
+export type InspectionStep = {
+  id: number; at: number;
+  /** null for the start of recording. */
+  nodeId: string | null; from: string | null; to: string | null; transitionId: string | null;
+  values: Record<string, Scalar>;
+  /** The running sketch's state at that moment (module stores, machine states, random seed); selecting the step restores it. */
+  runtime: unknown;
+};
+export type InspectionFocus = { kind: "constraint" | "state" | "transition"; nodeId: string; id: string };
+export type InspectionState = {
+  brushId: string; steps: InspectionStep[]; cursor: number | null;
+  /** The inspection annotation being drawn (normalized 0..1) and its concern; they become a targeted tool. */
+  marks: { x: number; y: number }[][]; concern: string;
+  focus: InspectionFocus | null;
+};
+export const emptyInspection = (brushId = ""): InspectionState => ({ brushId, steps: [], cursor: null, marks: [], concern: "", focus: null });
+
+/** Keep the newest MAX_STEPS steps. */
+export function addStep(state: InspectionState, step: Omit<InspectionStep, "id">): InspectionState {
+  const id = (state.steps.at(-1)?.id ?? 0) + 1;
+  const steps = [...state.steps, { ...step, id }].slice(-MAX_STEPS);
+  const cursor = state.cursor === null ? null : Math.min(state.cursor, steps.length - 1);
+  return { ...state, steps, cursor };
+}
+
+const prefixOf = (nodeId: string) => `${encodeURIComponent(nodeId)}/`;
+/** Values of the given nodes only: their constraint keys and layout boxes. */
+export function filterValues(values: Record<string, unknown>, nodeIds: string[]) {
+  const prefixes = nodeIds.map(prefixOf);
+  return Object.fromEntries(Object.entries(values).filter(([key, value]) => prefixes.some(prefix => key.startsWith(prefix)) && ["number", "string", "boolean"].includes(typeof value))) as Record<string, Scalar>;
+}
+
+export type ConstraintRow = { key: string; binding: SceneBinding; node: string; transformation: string; transformationId: string; property: string; path: string };
+/** Constraint (semantic transformation) rows of the brush, in node/transformation order. */
+export function constraintRows(scene: Scene, nodeIds: string[]): ConstraintRow[] {
+  const ids = new Set(nodeIds);
+  return sceneBindings(scene).filter(binding => ids.has(binding.nodeId)).map(binding => {
+    const node = findNode(scene, binding.nodeId)!, property = findProperty(node, binding.path[0]), owner = propertyOwner(node, binding.path[0]);
+    return { key: binding.key, binding, node: node.name, transformation: owner?.label || "", transformationId: owner?.id || "",
+      property: property?.label || binding.path[0], path: binding.path.slice(1).join(" › ") };
+  });
+}
+export const layoutKeys = (nodeIds: string[]) => nodeIds.flatMap(id => (["x", "y", "w", "h"] as const).map(field => layoutKey(id, field)));
+
+export function changedKeys(steps: InspectionStep[], index: number) {
+  const step = steps[index], previous = steps[index - 1];
+  if (!step || !previous) return new Set<string>();
+  return new Set(Object.keys(step.values).filter(key => step.values[key] !== previous.values[key]));
+}
+export const formatScalar = (value: Scalar | undefined) => value === undefined ? "—" : typeof value === "number" ? String(Math.round(value * 100) / 100) : String(value);
+
+// ── Targeted inspection result (AI) ─────────────────────────────────────────
+
+const link = z.object({ kind: z.enum(["constraint", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
+const scalar = z.union([z.number(), z.string().max(200), z.boolean()]);
+export const overlaySchema = z.object({
+  id: z.string().min(1).max(80), kind: z.enum(["rect", "ellipse", "line", "label"]),
+  /** What this color shows, in plain words (the legend). */
+  name: z.string().max(60).default(""),
+  /** Expressions in canvas pixels; may read values with p("key"). For a line, w/h are the end offset. */
+  x: z.string().max(400), y: z.string().max(400), w: z.string().max(400), h: z.string().max(400),
+  /** Text with ${expression} parts, e.g. "w=${p(\"star/size\")}". */
+  label: z.string().max(300), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), link,
+  /** Shown only at steps where this expression is non-zero (empty: every step). */
+  when: z.string().max(400).default(""),
+  /** "<root id>:<store path>": draw once per item of that array in the module's m.store (item("…"), i). Empty: once. */
+  each: z.string().max(200).default(""),
+});
+const change = z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: scalar });
+export const inspectResultSchema = z.object({
+  summary: z.string().min(1).max(1500),
+  overlays: z.array(overlaySchema).max(12),
+  /** Value-only fixes for the concern, applied with one click. */
+  valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
+  /** Other ways to resolve it: values, or changing a transformation, state or transition. */
+  recommendations: z.array(z.object({ kind: z.enum(["value", "transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
+    title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) })).max(6),
+});
+export type InspectResult = z.infer<typeof inspectResultSchema>;
+/** Overlays written before when/each existed lack them. */
+export type Overlay = z.input<typeof overlaySchema>;
+
+// ── Overlay expressions, evaluated per step ─────────────────────────────────
+// Numbers, + - * / %, comparisons, && || !, parentheses, a few functions, and
+// readers for the step: p("key") values, s("root", "path") the module's m.store,
+// prev/delta against the previous step, in/elapsed for machine states, item("path")
+// and i inside `each`, step/steps for the position in the history.
+
+/** What an overlay reads at one step. */
+export type OverlayContext = {
+  values: Record<string, Scalar>; previous?: Record<string, Scalar>;
+  stores: Record<string, unknown>; states: Record<string, { id: string; elapsed: number }>;
+  step: number; steps: number; item?: unknown; itemIndex?: number;
+};
+type Runtime = { stores?: Record<string, unknown>; states?: Record<string, { id: string; elapsed: number }> };
+const runtimeOf = (step: InspectionStep | undefined): Runtime => step?.runtime && typeof step.runtime === "object" ? step.runtime as Runtime : {};
+
+type Token = { type: "num"; value: number } | { type: "str"; value: string } | { type: "id"; value: string } | { type: "op"; value: string };
+function tokenize(source: string): Token[] {
+  const tokens: Token[] = [];
+  for (let i = 0; i < source.length;) {
+    const char = source[i];
+    if (/\s/.test(char)) { i++; continue; }
+    const number = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(source.slice(i));
+    if (number) { tokens.push({ type: "num", value: Number(number[0]) }); i += number[0].length; continue; }
+    if (char === "\"" || char === "'") {
+      const end = source.indexOf(char, i + 1); if (end < 0) throw new Error("문자열이 닫히지 않았습니다.");
+      tokens.push({ type: "str", value: source.slice(i + 1, end) }); i = end + 1; continue;
+    }
+    const word = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i));
+    if (word) { tokens.push({ type: "id", value: word[0] }); i += word[0].length; continue; }
+    const pair = source.slice(i, i + 2);
+    if (["<=", ">=", "==", "!=", "&&", "||"].includes(pair)) { tokens.push({ type: "op", value: pair }); i += 2; continue; }
+    if ("+-*/%(),<>!".includes(char)) { tokens.push({ type: "op", value: char }); i++; continue; }
+    throw new Error(`수식에 쓸 수 없는 문자: ${char}`);
+  }
+  return tokens;
+}
+const FUNCTIONS: Record<string, (...args: number[]) => number> = { min: Math.min, max: Math.max, abs: Math.abs, sqrt: Math.sqrt, round: Math.round, floor: Math.floor, ceil: Math.ceil, sin: Math.sin, cos: Math.cos, atan2: Math.atan2, pow: Math.pow,
+  if: (condition, a, b) => condition ? a : b };
+const numeric = (value: unknown) => typeof value === "number" ? value : typeof value === "boolean" ? Number(value) : Array.isArray(value) ? value.length : NaN;
+/** Follow "a.b.0.c" into plain data ("" is the value itself). */
+export function pathValue(value: unknown, path: string): unknown {
+  for (const part of path.split(".").filter(Boolean)) {
+    if (value === null || typeof value !== "object") return undefined;
+    value = (value as Record<string, unknown>)[part];
+  }
+  return value;
+}
+
+/** Evaluate an overlay expression at one step; NaN when a value is missing or not a number. */
+export function evaluate(source: string, input: Record<string, Scalar> | OverlayContext): number {
+  const context: OverlayContext = "values" in input && "stores" in input ? input as OverlayContext : { values: input as Record<string, Scalar>, stores: {}, states: {}, step: 0, steps: 1 };
+  const tokens = tokenize(source); let index = 0;
+  const peek = () => tokens[index], take = () => tokens[index++];
+  const isOp = (...values: string[]) => peek()?.type === "op" && values.includes(peek()!.value as string);
+  const expect = (value: string) => { const token = take(); if (token?.type !== "op" || token.value !== value) throw new Error(`'${value}'가 필요합니다.`); };
+  const text = (what: string) => { const token = take(); if (token?.type !== "str") throw new Error(`${what}에는 문자열이 필요합니다.`); return token.value; };
+  const read = (values: Record<string, Scalar> | undefined, key: string) => values ? numeric(values[key]) : NaN;
+  function call(name: string): number {
+    expect("(");
+    let value: number;
+    if (name === "p" || name === "prev" || name === "delta") {
+      const key = text(`${name}()`);
+      value = name === "p" ? read(context.values, key) : name === "prev" ? read(context.previous, key) : read(context.values, key) - read(context.previous, key);
+    } else if (name === "s" || name === "len") {
+      const root = text(`${name}()`); expect(","); const path = text(`${name}()`);
+      const found = pathValue(context.stores[root], path);
+      value = name === "len" ? (Array.isArray(found) ? found.length : NaN) : numeric(found);
+    } else if (name === "item") value = numeric(pathValue(context.item, text("item()")));
+    else if (name === "in") { const node = text("in()"); expect(","); value = Number(context.states[node]?.id === text("in()")); }
+    else if (name === "elapsed") value = context.states[text("elapsed()")]?.elapsed ?? NaN;
+    else {
+      const fn = FUNCTIONS[name]; if (!fn) throw new Error(`알 수 없는 함수: ${name}`);
+      const args = [or()];
+      while (isOp(",")) { take(); args.push(or()); }
+      expect(")"); return fn(...args);
+    }
+    expect(")"); return value;
+  }
+  function primary(): number {
+    const token = take();
+    if (!token) throw new Error("수식이 끝났습니다.");
+    if (token.type === "num") return token.value;
+    if (token.type === "op" && token.value === "(") { const value = or(); expect(")"); return value; }
+    if (token.type === "op" && token.value === "-") return -primary();
+    if (token.type === "op" && token.value === "+") return primary();
+    if (token.type === "op" && token.value === "!") return Number(!primary());
+    if (token.type === "id") {
+      if (token.value === "PI") return Math.PI;
+      if (token.value === "i") return context.itemIndex ?? 0;
+      if (token.value === "step") return context.step;
+      if (token.value === "steps") return context.steps;
+      return call(token.value);
+    }
+    throw new Error("수식을 읽지 못했습니다.");
+  }
+  function product(): number {
+    let value = primary();
+    while (isOp("*", "/", "%")) { const op = take()!.value, right = primary(); value = op === "*" ? value * right : op === "/" ? value / right : value % right; }
+    return value;
+  }
+  function sum(): number {
+    let value = product();
+    while (isOp("+", "-")) { const op = take()!.value, right = product(); value = op === "+" ? value + right : value - right; }
+    return value;
+  }
+  function compare(): number {
+    let value = sum();
+    while (isOp("<", ">", "<=", ">=", "==", "!=")) {
+      const op = take()!.value, right = sum();
+      value = Number(op === "<" ? value < right : op === ">" ? value > right : op === "<=" ? value <= right : op === ">=" ? value >= right : op === "==" ? value === right : value !== right);
+    }
+    return value;
+  }
+  function and(): number { let value = compare(); while (isOp("&&")) { take(); const right = compare(); value = Number(Boolean(value) && Boolean(right)); } return value; }
+  function or(): number { let value = and(); while (isOp("||")) { take(); const right = and(); value = Number(Boolean(value) || Boolean(right)); } return value; }
+  const value = or();
+  if (index < tokens.length) throw new Error("수식 뒤에 남은 내용이 있습니다.");
+  return value;
+}
+
+/** Fill ${expression} parts of a label. */
+export function fillLabel(template: string, input: Record<string, Scalar> | OverlayContext) {
+  return template.replace(/\$\{([^}]*)\}/g, (_, source: string) => {
+    try { const value = evaluate(source, input); return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : "?"; } catch { return "?"; }
+  });
+}
+
+/** The context of step `index` (live values when there is no step yet). */
+export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}): OverlayContext {
+  const step = steps[index], runtime = runtimeOf(step);
+  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: runtime.stores ?? {}, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
+}
+
+/** Shorten plain data for AI: arrays keep their first items (and say how long they were). */
+function trimData(value: unknown, items: number, depth = 0): unknown {
+  if (value === null || typeof value !== "object") return typeof value === "string" ? value.slice(0, 120) : value;
+  if (depth > 6) return "…";
+  if (Array.isArray(value)) { const head = value.slice(0, items).map(item => trimData(item, items, depth + 1)); return value.length > items ? [...head, `…(${value.length} items)`] : head; }
+  return Object.fromEntries(Object.entries(value).slice(0, 40).map(([key, item]) => [key, trimData(item, items, depth + 1)]));
+}
+/** A step's runtime for AI: machine states and the m.store of the brush's own roots, kept small. */
+export function runtimeForAI(step: InspectionStep, nodeIds: string[]) {
+  const runtime = runtimeOf(step), ids = new Set(nodeIds);
+  const states = Object.fromEntries(Object.entries(runtime.states ?? {}).filter(([id]) => ids.has(id)).map(([id, state]) => [id, { id: String(state.id), elapsed: Math.round(Number(state.elapsed) || 0) }]));
+  const own = Object.fromEntries(Object.entries(runtime.stores ?? {}).filter(([id]) => ids.has(id)));
+  for (const items of [6, 2, 0]) { const stores = trimData(own, items) as Record<string, unknown>; if (JSON.stringify(stores).length < 4000 || !items) return { states, stores }; }
+  return { states, stores: {} };
+}
+
+export const MAX_EACH = 200;
+export type PlacedOverlay = { overlay: Overlay; key: string; x: number; y: number; w: number; h: number; label: string;
+  /** The step it was computed from, and its offset from the step being looked at (0: that step; ±n: a faint ghost n steps earlier/later). */
+  step: number; ghost: number };
+/** Overlays placed for one step context; ones whose condition fails or geometry cannot be computed are left out. */
+export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar> | OverlayContext, ghost = 0, maxItems = MAX_EACH): PlacedOverlay[] {
+  const context: OverlayContext = "values" in input && "stores" in input ? input as OverlayContext : { values: input as Record<string, Scalar>, stores: {}, states: {}, step: 0, steps: 1 };
+  return overlays.flatMap(overlay => {
+    try {
+      if (overlay.when?.trim() && !evaluate(overlay.when, context)) return [];
+      const cut = overlay.each?.indexOf(":") ?? -1;
+      const each = overlay.each ?? "", list = cut > 0 ? pathValue(context.stores[each.slice(0, cut)], each.slice(cut + 1)) : undefined;
+      const items: (OverlayContext | null)[] = cut > 0 ? (Array.isArray(list) ? list.slice(0, maxItems).map((item, itemIndex) => ({ ...context, item, itemIndex })) : []) : [null];
+      return items.flatMap((itemContext, n) => {
+        const scope = itemContext ?? context;
+        const [x, y, w, h] = [overlay.x, overlay.y, overlay.w, overlay.h].map(source => evaluate(source || "0", scope));
+        if (![x, y, w, h].every(Number.isFinite)) return [];
+        return [{ overlay, key: `${overlay.id}:${ghost}:${n}`, x, y, w, h, label: ghost ? "" : fillLabel(overlay.label, scope), step: context.step, ghost }];
+      });
+    } catch { return []; }
+  });
+}
+
+const GHOST_ITEMS = 40;
+const where = (item: PlacedOverlay) => `${item.overlay.id}|${item.key.split(":").at(-1)}|${[item.x, item.y, item.w, item.h].map(value => Math.round(value)).join(",")}`;
+/**
+ * Every overlay at the step being looked at, plus faint ghosts of the same overlay
+ * at every other recorded step, earlier and later, each computed from that step's
+ * values and stores. A ghost that would sit exactly where a nearer step already
+ * draws is left out. Ghosts come first, farthest first, so nearer ones are on top.
+ */
+export function historyOverlays(overlays: Overlay[], steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}): PlacedOverlay[] {
+  const current = placeOverlays(overlays, stepContext(steps, index, live));
+  const taken = new Set(current.map(where)), ghosts: PlacedOverlay[] = [];
+  const order = steps.map((_, j) => j).filter(j => j !== index).sort((a, b) => Math.abs(a - index) - Math.abs(b - index) || a - b);
+  for (const j of order) for (const item of placeOverlays(overlays, stepContext(steps, j, live), j - index, GHOST_ITEMS)) {
+    const spot = where(item); if (taken.has(spot)) continue;
+    taken.add(spot); ghosts.push(item);
+  }
+  return [...ghosts.reverse(), ...current];
+}
+
+// ── Label placement: labels of the step being looked at never overlap ────────
+
+export type LabelRequest = { key: string; text: string; anchor: { x: number; y: number }; shape: { x: number; y: number; w: number; h: number } };
+export type PlacedLabel = { key: string; text: string; x: number; y: number; width: number; height: number; leader: boolean };
+/** Rough text width: CJK and other wide glyphs take about a full em, Latin about 0.6. */
+export const textWidth = (text: string, size: number) => Array.from(text).reduce((sum, char) => sum + (/[\u0000-ɏ]/.test(char) ? .6 : 1) * size, 0);
+const overlaps = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+  a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+/**
+ * Place labels (text baseline at x, y) so none overlap each other or leave the
+ * canvas or cover an obstacle (step badges): first beside their shape (above, below, right, left), then farther away
+ * with a leader line to the shape. A label with no free spot is left out.
+ */
+export function layoutLabels(requests: LabelRequest[], size: number, bounds = { width: 900, height: 600 }, obstacles: { x: number; y: number; width: number; height: number }[] = []): PlacedLabel[] {
+  const placed: PlacedLabel[] = [], height = size * 1.25, gap = size * .35;
+  for (const request of requests) {
+    const width = textWidth(request.text, size), { shape } = request;
+    const left = Math.min(shape.x, shape.x + shape.w), top = Math.min(shape.y, shape.y + shape.h), right = Math.max(shape.x, shape.x + shape.w), bottom = Math.max(shape.y, shape.y + shape.h);
+    const near = [
+      { x: request.anchor.x, y: request.anchor.y }, { x: left, y: top - gap }, { x: left, y: bottom + height }, { x: right + gap, y: (top + bottom) / 2 + height / 3 },
+      { x: left - gap - width, y: (top + bottom) / 2 + height / 3 }, { x: right - width, y: top - gap }, { x: right - width, y: bottom + height },
+    ];
+    const far = Array.from({ length: 10 }, (_, n) => n + 1).flatMap(n => [{ x: left, y: top - gap - n * height }, { x: left, y: bottom + height + n * height }]);
+    const fits = (spot: { x: number; y: number }) => {
+      const box = { x: spot.x, y: spot.y - height * .8, width, height };
+      return box.x >= 0 && box.y >= 0 && box.x + width <= bounds.width && box.y + height <= bounds.height && !placed.some(other => overlaps(box, { x: other.x, y: other.y - height * .8, width: other.width, height })) && !obstacles.some(other => overlaps(box, other));
+    };
+    const spot = near.find(fits) ?? far.find(fits);
+    if (spot) placed.push({ key: request.key, text: request.text, x: spot.x, y: spot.y, width, height, leader: !near.includes(spot) });
+  }
+  return placed;
+}

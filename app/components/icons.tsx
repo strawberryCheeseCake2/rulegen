@@ -1,4 +1,4 @@
-export type IconName = "select" | "collection" | "object" | "eye" | "eye-off" | "layers" | "function" | "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush";
+export type IconName = "select" | "collection" | "object" | "eye" | "eye-off" | "layers" | "function" | "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush" | "inspect" | "target" | "inspect-pen";
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     select: <path d="M5 3l14 8-6 2-2 6L5 3Z" />,
@@ -14,6 +14,9 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     upload: <><path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6" /></>,
     download: <><path d="M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4" /></>,
     brush: <><path d="m9 15 10-12 3 3-12 10M9 15c-5-2-3 4-7 6 6 1 10-1 8-5" /></>,
+    inspect: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5M8 10.5h5M10.5 8v5" /></>,
+    target: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3.5" /><path d="M12 1v4M12 19v4M1 12h4M19 12h4" /></>,
+    "inspect-pen": <><path d="m4 20 3.5-1 11-11-2.5-2.5-11 11L4 20Z" /><path d="M14 4h6M17 1v6" strokeDasharray="0" /><circle cx="17" cy="17" r="3" strokeDasharray="2 2" /></>,
     arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
     pen: <><path d="m4 20 4-1L20 7l-3-3L5 16l-1 4ZM14 7l3 3" /></>,
     eraser: <><path d="m4 13 9-9 7 7-9 9H7l-3-3v-4ZM9 8l7 7M11 20h9" /></>,

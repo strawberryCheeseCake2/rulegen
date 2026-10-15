@@ -62,28 +62,53 @@ test("each node's machine runs independently: jumps, input events from the sourc
   assert.equal(timed.read('rulegenState["orb"].id'), "idle");
 });
 
-test("the code contract rejects missing or unknown keys, dynamic access, writes, shadowing, bad events and stopped loops", () => {
+test("the module contract: one self-contained module per root, reading only its own nodes through m", () => {
+  const close = sceneProgram.lastIndexOf("});");
+  const inside = (extra: string) => sceneProgram.replace("    mousePressed()", `    keyPressed() { ${extra} },\n    mousePressed()`);
   const variants: [string, RegExp][] = [
-    [sceneProgram.replace('rulegenParams["tree/ink"]', '"#000000"'), /연결하지 못했습니다/],
-    [sceneProgram.replace('rulegenParams["orb/speed"]', 'rulegenParams["orb/unknown"]'), /연결이 올바르지/],
-    [sceneProgram.replace('rulegenParams["orb/speed"]', 'rulegenParams["orb/" + "speed"]'), /연결이 올바르지/],
-    [`${sceneProgram}\nObject.keys(rulegenParams);`, /리터럴 키/],
-    [`${sceneProgram}\np.keyPressed = () => { rulegenParams["orb/radius"] = 3; };`, /직접 변경/],
-    [`${sceneProgram}\np.keyPressed = () => { rulegenState["orb"].id = "moving"; };`, /직접 변경/],
-    [`const rulegenState = {};\n${sceneProgram}`, /덮어썼습니다/],
-    [`${sceneProgram}\np.keyPressed = () => rulegenEmit("orb", "settle-now");`, /rulegenEmit/],
-    [`${sceneProgram}\np.keyPressed = () => rulegenEmit("tree", "press");`, /rulegenEmit/],
-    [`${sceneProgram}\np.keyPressed = () => rulegenJumpState("orb", "moving");`, /접근할 수 없습니다/],
-    [sceneProgram.replace("p.createCanvas(900, 600);", "p.createCanvas(900, 600); p.noLoop();"), /p\.draw/],
+    [sceneProgram.replace('m.v("tree/ink")', '"#000000"'), /연결하지 못했습니다/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/unknown")'), /연결이 올바르지/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/" + "speed")'), /연결이 올바르지/],
+    [inside("const read = m.v;"), /직접 호출/],
+    [inside("helper(m);"), /m\.v \/ m\.box/],
+    [inside("rulegenParams[\"orb/radius\"] = 3;"), /접근할 수 없습니다/],
+    [inside("rulegenEmit(\"orb\", \"press\");"), /접근할 수 없습니다/],
+    [inside('m.emit("orb", "settle-now");'), /m\.emit/],
+    [inside('m.emit("tree", "press");'), /m\.emit/],
+    [inside('m.state("tree");'), /m\.state/],
+    [inside("p.draw = () => {};"), /p의 속성/],
+    [inside("p.background(0);"), /p\.background/],
+    [inside("m.p.noLoop();"), /p\.noLoop/],
+    [inside("shared = 1;"), /전역 변수/],
+    [`${sceneProgram}\nlet shared = 0;`, /rulegenModule/],
+    [sceneProgram.replace('rulegenModule("tree"', 'rulegenModule("orb"'), /루트 노드 ID/],
+    [sceneProgram.replace("function (m)", "function (ctx)"), /형태/],
+    [`const rulegenState = {};\n${sceneProgram}`, /rulegenModule/],
     [`// @rulegen-scene:start\n${sceneProgram}`, /호스트/],
   ];
-  for (const [code, error] of variants) assert.throws(() => connect(code), error, code.slice(-80));
-  // Static scenes (no machines) may draw once and stop.
-  const scene = sampleScene(), staticScene = updateNode(scene, "orb", node => ({ ...node, machine: null }));
-  const program = sceneProgram.replace('rulegenState["orb"].elapsed', "0").replace('p.mousePressed = () => { if (rulegenState["orb"].id === "idle") rulegenEmit("orb", "press"); };', "").replace("p.createCanvas(900, 600);", "p.createCanvas(900, 600); p.noLoop();");
-  const generated = connect(program, staticScene);
-  assert.equal(generated.machineSignature, "[]");
-  assert.doesNotMatch(generated.code, /@rulegen-scene-driver/);
+  assert.ok(close > 0);
+  for (const [code, error] of variants) assert.throws(() => connect(code), error, code.slice(-120));
+  // A second root node needs its own module.
+  const scene = sampleScene(), split = updateNode(scene, "orb", node => ({ ...node, parentId: null }));
+  assert.throws(() => connect(sceneProgram, split), /연결이 올바르지|모듈이 필요/);
+});
+
+test("modules are stored separately and run as instances: a copy with other node ids draws from the same module", async () => {
+  const { programModules, assembleProgram, sceneInstances } = await import("../app/lib/scene/machines");
+  const { transplantNodes } = await import("../app/lib/scene/transfer");
+  const scene = sampleScene(), generated = connect(sceneProgram, scene);
+  const modules = programModules(generated.code);
+  assert.deepEqual([...modules.keys()], ["tree"]);
+  const copy = transplantNodes(scene, "tree", scene, { x: .2, y: .5 });
+  const stamped = copy.scene;
+  assert.deepEqual(sceneInstances(stamped).map(item => [item.root, item.module, item.map]), [["tree", "tree", { tree: "tree", orb: "orb" }], [copy.rootId, "tree", { tree: copy.rootId, orb: copy.ids.get("orb") }]]);
+  const sketch = run(assembleProgram(stamped, [...modules.values()]));
+  sketch.draw();
+  assert.equal(sketch.circles.length, 2, "both instances draw");
+  assert.equal(sketch.lines.length, 10);
+  assert.notEqual(sketch.lines[0][0], sketch.lines[5][0], "each instance draws in its own box");
+  sketch.read("p.mousePressed()");
+  assert.equal(sketch.read(`rulegenState[${JSON.stringify(copy.ids.get("orb"))}].id`), "moving", "input reaches the copy's own machine");
 });
 
 test("value-only changes keep the program identical, so the running result updates in place instead of reloading", () => {
@@ -92,11 +117,40 @@ test("value-only changes keep the program identical, so the running result updat
   const moved = syncScene(prepared, moveNodes(scene, ["tree"], .1, .05));
   assert.equal(sceneStructureKey(moved), sceneStructureKey(prepared));
   assert.notEqual(readSceneValues(moved)!.params["orb/@x"], readSceneValues(prepared)!.params["orb/@x"]);
-  assert.notEqual(sceneStructureKey(prepareCode(connect(sceneProgram.replace("p.background(250);", "p.background(240);"), scene).code)), sceneStructureKey(prepared));
+  assert.notEqual(sceneStructureKey(prepareCode(connect(sceneProgram.replace("p.stroke(", "p.strokeWeight(2); p.stroke("), scene).code)), sceneStructureKey(prepared));
   // Applying pushed values in a running sketch re-renders with the new layout.
   const sketch = run(generated.code); sketch.draw();
   const before = sketch.circles.at(-1)![0];
   const values = readSceneValues(syncScene(generated.code, moveNodes(scene, ["orb"], .1, 0)))!;
   sketch.read(`Object.assign(rulegenBase, ${JSON.stringify(values.params)}); rulegenApply();`); sketch.draw();
   assert.ok(Math.abs(sketch.circles.at(-1)![0] - before - 90) < 1e-6);
+});
+
+test("module state lives in m.store: the factory scope holds only functions and constants", () => {
+  const body = (inside: string, draw = "") => sceneProgram.replace("  function algo_power_decay", `  ${inside}\n  function algo_power_decay`).replace("    draw() {\n", `    draw() {\n${draw}`);
+  assert.throws(() => connect(body("let x = 0;")), /m\.store/);
+  assert.throws(() => connect(body("const trail = [];")), /m\.store/);
+  assert.throws(() => connect(body("const v = p.createVector(1, 2);")), /m\.store/);
+  assert.throws(() => connect(body("", "      m.store = {};\n")), /m\.store는 바꿔/);
+  assert.doesNotThrow(() => connect(body("const TAU = Math.PI * 2, R = 3; const step = () => 1;", "      m.store.t = (m.store.t || 0) + TAU;\n")));
+});
+
+test("a runtime snapshot restores module stores, machine states and the seed; new values redraw from the restored moment", () => {
+  const moving = sceneProgram.replace("p.circle(m.box(\"orb\").x + speed * m.state(\"orb\").elapsed / 1000, 300, m.v(\"orb/radius\") * 2);",
+    "m.store.x = (m.store.x || 0) + 10; m.store.trail = [...(m.store.trail || []), m.store.x].slice(-3);\n      p.circle(m.store.x, 300, m.v(\"orb/radius\") * 2);");
+  const sketch = run(connect(moving).code);
+  sketch.draw(); sketch.draw(); sketch.read("rulegenEmit('orb', 'press')");
+  const snapshot = sketch.read("rulegenSnapshot()");
+  assert.equal(JSON.stringify(snapshot.stores.tree), JSON.stringify({ x: 20, trail: [10, 20] }));
+  assert.equal(snapshot.states.orb.id, "moving");
+  sketch.draw(); sketch.draw(); sketch.read("rulegenJumpState('orb', 'idle')");
+  sketch.read(`rulegenRestore(${JSON.stringify(snapshot)})`);
+  assert.equal(sketch.read("rulegenState.orb.id"), "moving");
+  assert.deepEqual(sketch.read("JSON.stringify(rulegenLive[0].store)"), JSON.stringify({ x: 20, trail: [10, 20] }));
+  // A value edit at the restored step: the module continues from the restored store with the new value.
+  sketch.read("rulegenBase['orb/radius'] = 5; rulegenApply()");
+  sketch.circles.length = 0; sketch.draw();
+  assert.deepEqual(sketch.circles[0], [30, 300, sketch.read("rulegenParams['orb/radius']") * 2]);
+  sketch.read(`rulegenRestore(${JSON.stringify(snapshot)})`);
+  assert.equal(sketch.read("rulegenLive[0].store.x"), 20, "a snapshot can be restored again");
 });

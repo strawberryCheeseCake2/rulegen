@@ -31,7 +31,7 @@ export function NodeMachinePanel(props: Props) {
   const [sending, setSending] = useState(false);
   const owners = scene.nodes.filter(item => item.machine);
   const picker = <select className="machine-node-picker" aria-label="State machine node" value={node?.id || ""} onChange={e => props.onSelectNode(e.target.value)}>
-    {!node && <option value="">Choose a collection or object…</option>}
+    {!node && <option value="">Choose a brush stamp or object…</option>}
     {scene.nodes.map(item => <option key={item.id} value={item.id}>{item.kind === "collection" ? "▣" : "●"} {item.name}{item.machine ? ` · ${item.machine.states.length} states` : ""}</option>)}
   </select>;
   if (!node?.machine) return <div className="machine-empty"><Icon name="grid" size={24} /><strong>{node ? `${node.name} has no state machine` : "No node selected"}</strong>

@@ -62,6 +62,7 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
     case "compose-prompt": panel.composePrompt = compositionPromptSchema.parse(result).prompt; break;
     case "clarification": recovery.revisionInstruction = clarificationSchema.parse(result).clarification; break;
     case "revision": recovery.proposal = sceneProposalSchema.parse(result); break;
+    case "inspect": break; // An inspection does not change the project.
   }
   project.activeSketchId = owner;
   if (owner === "source") project.workspace = showWorkspaceFrame(project.workspace, "source");

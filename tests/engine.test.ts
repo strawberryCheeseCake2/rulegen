@@ -31,11 +31,12 @@ test("local coordinates and function parameters can share browser-global names",
   assert.deepEqual(marks, [[0, 28, 20, 40], [0, 56, 20, 40]]);
 });
 test("a local top binding does not permit browser globals or unsafe member access", () => {
-  for (const extra of ["top.postMessage('x','*')", "parent.postMessage('x','*')", "window.top", "globalThis.top", "p.top", "p['top']", "p.constructor", "p['constructor']", "eval('1')", "Function('return 1')"]) {
+  for (const extra of ["top.postMessage('x','*')", "parent.postMessage('x','*')", "window.top", "globalThis.top", "self.top", "this.top", "p['top']", "p.constructor", "p['constructor']", "eval('1')", "Function('return 1')"]) {
     assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`), /지원하지 않는/);
   }
   assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /API: top/);
-  assert.throws(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const top=28;p.top;};"), /API: top/);
+  // A .top property of an ordinary object (a rect, a box) is data.
+  assert.doesNotThrow(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const rect={top:3};p.rect(0,rect.top,1,rect?.top);};"));
 });
 test("remote image URLs are rejected", () => { assert.equal(requestSchema.safeParse({ intent: "extract", image: "https://example.com/private" }).success, false); });
 test("projects serialize actual strokes and editable results without secrets", () => { const artwork = { strokes: exampleStrokes(), photo: null, name: "Branch studies", revision: 1 }; const saved = projectSchema.parse({ version: 2, name: artwork.name, artwork }); const restored = projectSchema.parse(JSON.parse(JSON.stringify(saved))); assert.equal(restored.artwork.strokes.length, 63); assert.equal(JSON.stringify(saved).includes("OPENAI_API_KEY"), false); });
@@ -60,8 +61,8 @@ test("new projects gain frames and camera positions survive export", () => {
 test("strings named like browser APIs are plain data unless used as a computed key or a reflection name", () => {
   const wrap = (body: string) => `p.setup=()=>{p.createCanvas(900,600);${body}};`;
   // A select value compared in generated code (the reported failure), object keys and labels.
-  for (const ok of ["const alignment = 'top'; p.translate(0, alignment === 'top' ? -30 : 0);", "const box = { top: 4, parent: null }; p.rect(0, box['y'] || 0, 2, 2);", "const labels = ['window', 'location']; p.text(labels[0], 0, 0);", "const align = `top`;"])
+  for (const ok of ["const alignment = 'top'; p.translate(0, alignment === 'top' ? -30 : 0);", "const box = { top: 4, parent: null }; p.rect(0, box['y'] || 0, 2, 2);", "const labels = ['window', 'location']; p.text(labels[0], 0, 0);", "const align = `top`;", "const r = { top: 1 }; p.rect(0, r.top, 1, 1);"])
     assert.doesNotThrow(() => prepareCode(wrap(ok)), ok);
-  for (const bad of ["p['top']", "p[`window`]", "p?.['parent']", "const k = 'constructor';", "Reflect.get(p, '__proto__')", "({ constructor: 1 })", "box.top"])
+  for (const bad of ["p['top']", "p[`window`]", "p?.['parent']", "const k = 'constructor';", "Reflect.get(p, '__proto__')", "({ constructor: 1 })", "box.parent"])
     assert.throws(() => prepareCode(wrap(`const box = {}; ${bad}`)), bad);
 });

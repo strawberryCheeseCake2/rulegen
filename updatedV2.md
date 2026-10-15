@@ -1,12 +1,14 @@
 # Rulegen 요구사항 V2 (최신본)
 
-최종 갱신: 2026-10-13
+최종 갱신: 2026-10-15 (Collection별 코드 모듈, 즉시 brush, concern별 targeted inspection)
 
 `init.md` 원문과 이후 대화에서 요청한 내용을 현재 동작 기준으로 하나로 정리한 문서입니다. 예전 요청 중 지금의 동작과 맞지 않는 내용(visual feature 태그, subfeature·rule widget, Features/Rules/Code/Brush 탭, 프레임 단위 state machine, procedural brush 생성, 스케치와 분리된 generated result 프레임)은 지우고 최신 요구사항으로 덮어썼습니다. 이전 형식 호환은 지원하지 않습니다(19절).
 
 # Overview
 
 Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 수 있도록 돕는 툴이다. 스케치에서 **Collection과 Object**를 추출하고, 그 안의 semantic transformation과 **알고리즘 블록**을 조절·재조합해 p5.js 결과를 만든다.
+
+**Collection은 Brush 메타포를 따른다(22절).** 기능은 같지만 화면에서는 **Brush Stamp**라고 부르고, AI가 만든 Collection은 툴바의 **Brush tool group**이 되어 다른 스케치 프레임에 다시 찍을 수 있다. 각 Brush tool group에는 그 brush만 디버깅하는 **Inspection Tool**, **Inspection Annotation Tool**, **Targeted Inspection Tool**이 들어 있다(23절).
 
 ---
 
@@ -25,6 +27,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 작업 도구와 캔버스 조작 도구는 왼쪽 툴바에 모은다: 스케치 프레임 추가, 사진 첨부, **Select(V)**, 연필(P), 지우개(E), 라쏘(L), 이동(H), 알고리즘 펜·Interaction pen, Undo/Redo/지우기, 확대·축소.
 - 연필의 색상·굵기·투명도 메뉴는 연필을 눌렀을 때만 연필 버튼 옆 팝오버로 나타난다.
 - Select 도구로 스케치 위의 Collection·Object를 선택하고 움직인다(6절).
+- 펜 아래에는 **Brush tool group**이 brush마다 하나씩 놓인다(22절). 그룹 버튼은 그 그룹에서 마지막으로 고른 도구의 아이콘을 보여준다.
 
 ## 3. Collection · Object 모델
 
@@ -96,7 +99,12 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 8. 코드 생성과 라이브 연결
 
 - Generate code는 장면 전체(노드, transformation 스택, 블록, 머신)를 p5.js 코드로 만든다. 노드의 transformation은 순서대로 적용한다.
-- 모든 scalar(중첩 블록의 인자 포함)는 `rulegenParams["nodeId/propertyId/argId…"]` 리터럴로 코드에 연결되어, 슬라이더를 움직이면 AI 호출 없이 결과가 바로 바뀐다. 노드 위치·크기·표시 여부(`nodeId/@x|@y|@w|@h|@visible`)도 연결되어 레이어를 옮기거나 숨기면 결과도 바뀐다.
+- **코드는 처음부터 루트 노드(대부분 Collection)마다 독립된 모듈로 생성된다.** AI는 `rulegenModule("루트 id", function (m) { … return { setup, draw, mousePressed, … } })`만 루트마다 하나씩 쓴다. 알고리즘 함수·도우미·상태는 모두 그 모듈 안에 두고, 모듈끼리는 아무것도 공유하지 않는다(같은 알고리즘도 모듈마다 따로 정의).
+  - 모듈은 `m`으로만 장면과 연결된다: `m.v("nodeId/propertyId…")` 값, `m.box("nodeId")` 위치·크기·표시 여부, `m.state("nodeId")` 현재 상태, `m.emit("nodeId", "transitionId")` 이벤트 전이, `m.p` p5. `m.store`는 인스턴스의 상태 객체로, 프레임 사이에 바뀌는 값(위치, 속도, 입자 배열, 잔상 기록 등)은 모두 여기에 일반 데이터로 둔다. 모듈 함수 바로 안에는 함수와 상수만 둘 수 있어서(`let`·배열·객체 금지), 호스트가 단계마다 상태를 저장·복원할 수 있다. 인자는 모두 문자열 리터럴이고 자기 모듈의 노드만 가리킬 수 있다.
+  - 캔버스·루프·입력은 호스트가 맡는다: 900×600 캔버스를 만들고 매 프레임 지운 뒤 모듈마다 `draw`를 `push/pop` 안에서 부르고, 마우스·키·터치 입력을 모든 모듈에 나눠 준다. 모듈은 `p.setup`·`p.draw` 등 p의 속성을 바꾸거나 `background`·`createCanvas`·`noLoop` 등을 부를 수 없다.
+  - 서버는 코드를 구문 분석해 이 계약을 검사한다(최상위에는 rulegenModule 호출만, 루트마다 정확히 하나, `m` 사용법, 자기 노드의 키·전이만, 모든 property 연결, 선언 안 한 전역 변수 금지). 어기면 거부하고 다시 생성한다.
+  - 장면의 루트 노드 하나하나가 모듈의 **인스턴스**다. 인스턴스는 모듈 안의 노드 id를 실제 노드 id로 매핑하므로, 같은 모듈을 다른 노드 id로 여러 번 실행할 수 있다(brush stamp 복사본).
+- 모든 scalar(중첩 블록의 인자 포함)는 `m.v("nodeId/propertyId/argId…")` 리터럴로 코드에 연결되어, 슬라이더를 움직이면 AI 호출 없이 결과가 바로 바뀐다. 노드 위치·크기·표시 여부(`m.box`)도 연결되어 레이어를 옮기거나 숨기면 결과도 바뀐다.
 - 값만 바뀐 경우(슬라이더, 레이어 이동·숨김, 상태 값, 전이 시간)는 실행 중인 결과에 새 값을 보내 제자리에서 다시 그린다. 프로그램 자체가 바뀔 때만 다시 불러오며, 다시 불러오는 동안에도 이전 그림을 유지해 깜빡이지 않는다.
 - 구조가 바뀌면(블록 교체, property 추가·삭제, 머신 변경) 상태가 *Structure changed*로 바뀌고 Update code로 다시 연결한다. 설명만 바뀐 경우도 알려준다.
 - 생성 코드는 서버에서 AST로 검사한다: 모든 바인딩 사용, 리터럴 키만 허용, 값·상태 쓰기와 호스트 이름 재선언 금지, 잘못된 이벤트 금지, 머신이 있으면 `p.draw` 유지.
@@ -108,7 +116,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - State machine은 프레임 전체가 아니라 **Collection 또는 Object마다** 따로 생긴다. 각 상태는 그 노드의 property 값만 바꾸고, 상태 값의 구조는 Base property와 같다(숫자는 숫자, 같은 블록의 같은 인자).
 - 머신이 없는 노드는 **Generate state machine**으로 AI가 상태를 세밀하게 계획한다. 복잡한 interaction은 보통 8~20개 상태, 노드당 최대 32개 상태·128개 전이. 대기·접근·누름·드래그·놓기·정착·완료·취소·복귀처럼 입력이나 동작이 달라지는 경계를 나누고, 같은 동작의 프레임만 늘리지 않는다. 정적인 노드는 머신이 없다.
 - 모든 전이는 이유를 말하는 semantic label을 가진다(예: **원 위에 포인터 진입**, **드래그 시작**, **유효한 영역에 놓기**, **성장 완료**). 입력을 기다리는 상태는 실제 입력 이벤트로, 시간이 흐르는 단계만 timed 전이로 넘어간다.
-- 여러 노드의 머신은 동시에 독립적으로 동작한다. 코드는 `rulegenState["nodeId"]`로 노드별 상태를 읽고 `rulegenEmit("nodeId", "transitionId")`로 이벤트를 보낸다. 프롬프트는 `rulegenEmit`을 보조 함수로 감싸거나 변수 ID를 넘기지 말고, 두 ID 모두 문자열 리터럴로 직접 호출하라고 지시한다(서버가 호출마다 장면의 노드·전이 ID와 대조하기 때문).
+- 여러 노드의 머신은 동시에 독립적으로 동작한다. 코드는 모듈 안에서 `m.state("nodeId")`로 노드별 상태를 읽고 `m.emit("nodeId", "transitionId")`로 이벤트를 보낸다. 두 ID 모두 문자열 리터럴로 직접 호출해야 한다(서버가 호출마다 그 모듈의 노드·전이 ID와 대조하기 때문).
 - 하단 **State Machine** 패널은 선택한 노드의 그래프만 보여준다(노드 선택기, 재생·일시정지·재시작, 현재 상태에서 가능한 이벤트 버튼, 그래프 위 전이 라벨과 툴팁).
 - 그래프는 패널 안에서 **pan**한다: 빈 곳을 드래그하거나 스크롤하고, 더블클릭하면 원위치로 돌아간다(노드를 바꾸면 초기화).
 - 그래프에서 **state 또는 transition을 눌러 선택**한다(주황 테두리). 배경을 누르면 선택이 풀린다(state 선택 시 열린 상태 편집도 Base로 돌아감).
@@ -198,6 +206,60 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - `app/studio/`: 라우트와 분리한 액션 레이어(장면 편집·블록 복사/붙여넣기/드롭, AI 생성, 결과 revision)
 - `app/components/scene/`: Layers, Property 패널, 소켓·블록 편집기, 블록 팔레트, 우클릭 메뉴, 장면 오버레이, 노드 상태 그래프 · `frame-render.tsx`: 프레임 안의 결과 층과 annotation 층 · `code-preview.tsx`: sandbox 실행과 값 실시간 반영 · `tool-rail.tsx`: 왼쪽 툴바 · `raw-code-panel.tsx`: 하단 코드 보기·편집
 - `app/lib/workspace.ts`: 프레임 배치(새 프레임은 원본 옆 빈 자리)
+- `app/lib/brushes.ts`: brush 모델·툴 id·자동 생성·찍을 원본 · `app/studio/brush-actions.ts`: 찍기·stroke·드래그 재생 · `app/lib/inspection.ts`: 단계 기록, constraint 행, 오버레이 수식 계산 · `app/studio/inspection-actions.ts`: targeted inspection 요청, 값 적용, 추천 적용 · `app/components/inspection-panel.tsx`, `inspection-overlay.tsx`: 하단 Inspection 패널과 프레임 오버레이
+
+## 22. Brush: Collection → Brush Stamp
+
+- **이름**: 화면에서는 Collection을 **Brush Stamp**라고 부른다(레이어 패널, 우측 패널, 새로 만들기·그룹·해제, 안내 문구). 데이터와 AI 프롬프트 안에서는 여전히 `collection`이고 기능은 같다.
+- **Brush 자동 생성**: AI가 Collection을 만들 때마다(**Extract**, **Compose**) 그 장면의 **루트 Collection 하나당 brush 하나**가 툴바에 Brush tool group으로 생긴다. 중첩된 Collection은 그 brush의 부분이라 따로 만들지 않는다. 최대 32개이며 프로젝트에 저장된다. 원본 Collection에는 brush 표시(`brushId`)가 붙는다.
+- **Brush tool group 동작**
+  - 그룹 버튼을 처음 누르면 그 그룹의 도구(기본은 Brush)가 선택된다.
+  - 이미 선택된 그룹을 다시 누르면 도구 패널이 열리고, 한 번 더 누르면 닫힌다(Esc로도 닫힘).
+  - 패널에는 **Brush**, **Inspection**, **Inspection annotation** 도구와, 그 brush에 지금까지 만든 **Targeted inspection 도구들**(concern마다 하나, ×로 삭제), brush 설정(동작 방식, 이름, 삭제)이 있다. Targeted inspection 도구는 처음에는 없다(23절).
+  - 패널에서 다른 도구를 고르면 그룹 버튼 아이콘이 그 도구 아이콘으로 바뀐다.
+- **찍기(Brush 도구)**: 스케치 프레임 위에서 쓰면 그 Collection이 멤버·블록·상태 머신과 함께 **그 프레임의 장면에 생성**되고, **AI를 거치지 않고 바로 그려진다.** brush의 코드 모듈(원본 프레임 프로그램에서 꺼낸 것, 원본이 없으면 brush가 보관한 사본)을 그 프레임 프로그램에 넣고 새 노드를 그 모듈의 인스턴스로 추가하기 때문이다.
+  - 같은 brush를 그 프레임에 이미 찍었다면 모듈은 그대로 두고 인스턴스만 늘어서, 실행 중인 결과에 값으로 전달되어 다시 불러오지 않고 바로 나타난다. 처음 찍을 때만 프로그램을 다시 준비한다(서버의 실행 안전 처리만, AI 없음).
+  - 이름이 같은데 내용이 다른 모듈이 이미 있으면 `tree~2`처럼 새 이름으로 넣는다. 찍은 복사본도 brush 표시를 가져서 나중에 검사할 수 있다.
+  - **드래그와 무관한 brush**("Click stamp · drag stroke"): 한 번 클릭하면 그 자리에 **single brush stamp** 하나. 드래그하면 획을 따라 Collection 크기 간격으로 여러 개를 찍는 **brush stroke**(최대 8개).
+  - **드래그와 관련된 brush**("Drag drives interaction"): 드래그를 시작하는 순간 그 자리에 Collection이 생기고, **드래그하는 동안의 마우스 움직임이 그대로 그 Collection에 입력으로 전달**된다. 그래서 Collection의 상태 머신이 드래그에 반응하며 stroke가 그려진다. 그 프레임에 처음 찍는 brush라면 프로그램이 준비되는 짧은 동안 입력을 모아 두었다가 이어서 보낸다. 드래그를 놓으면 프레임이 **Interaction 모드**가 되어 계속 직접 다룰 수 있다(Done 또는 Esc로 나감).
+  - 동작 방식은 brush를 만들 때 자동으로 정한다(하위 노드 상태 머신에 드래그·stroke·경로 같은 이벤트 전이가 있으면 drag). 패널에서 바꿀 수 있다.
+  - Layers에서 루트 노드를 다른 프레임으로 끌어 놓는 것도 같은 방식으로 AI 없이 복사된다(루트가 아닌 노드는 모듈이 따로 없어서 예전처럼 그 프레임 코드를 AI로 다시 만든다).
+- brush가 찍히려면 원본 프레임의 결과 코드가 한 번은 생성되어 있어야 한다(그때 brush가 모듈 사본도 보관한다). 이전 형식(모듈이 아닌) 코드를 가진 프레임에는 찍을 수 없고, 그 프레임을 Update로 다시 생성하라고 안내한다. 그 프레임 코드를 AI로 다시 생성하면 복사본도 자기 id로 쓰인 모듈을 새로 받는다.
+
+## 23. Inspection Tool과 Targeted Inspection Tool
+
+두 도구 모두 **inspection 대상 brush의 tool group 안에** 있고, **활성 프레임 안의 그 brush 노드에만** 작동한다(원본 프레임의 원본 Collection, 다른 프레임에 찍은 복사본 모두). 활성 프레임에 그 brush가 없으면 안내만 보인다. 도구를 고르면 하단 패널이 **Inspection** 탭으로 열린다.
+
+### Inspection Tool
+- **Stepping 기록(항상 자동)**: Recording 버튼은 없다. 실행 중인 결과가 그 brush 노드의 **상태를 바꿀 때마다 한 단계**를 자동으로 기록한다. Inspection 도구를 열어 둔 brush는 늘, **Interaction 모드에서는 도구를 열지 않아도 그 프레임의 모든 brush가 각자** 기록한다(기록은 brush별로 프레임에 저장). 단계에는 노드, 이전 → 다음 state, 발생한 transition(이벤트 또는 시간 전이), 그 순간 brush의 모든 constraint 값과 노드 박스 값, 그리고 **실행 상태**(모듈마다의 `m.store`, 모든 상태 머신의 state·경과 시간, random/noise seed)가 들어간다. 이미지는 저장하지 않는다. **최대 20단계**까지 저장하고 넘치면 오래된 것부터 버린다. 기록 시작 단계도 남긴다(직접 기록하는 버튼은 없다).
+- **Reset history**: Inspection 패널 툴바의 **Reset history**로 이 프레임에 저장된 그 brush의 기록을 지운다. 누르면 "n개 단계를 지울까요?"가 그 자리에 떠서 한 번 더 확인하고, 지우면 Live로 돌아간다(다른 brush의 기록은 그대로).
+- **Timeline**: 단계는 시간 순 타임라인의 점으로 보인다(가까운 단계도 겹치지 않게 간격을 둔다). 점에 마우스를 올리면 그 이벤트(transition 이름, 노드: 이전 → 다음 state, 시작 후 경과 시간)가 뜬다. 점을 누르거나 타임라인을 따라 드래그해 이동하고, ←/→·Home/End 키와 ◀ ▶로 한 단계씩 움직인다. **Live**(또는 Esc, 마지막 단계에서 →)로 실행 중인 결과를 다시 따라간다.
+- **상태 복원**: 단계를 고르면 실행 중인 결과 자체가 그 순간의 실행 상태로 돌아가 멈춘다(스냅샷 이미지가 아님). 그 상태에서 semantic transformation 값을 바꾸면 그 순간의 상태에서 새 값으로 다시 그린다. Live로 돌아가면 그 상태에서 이어서 실행된다. `m.store`에 일반 데이터(숫자·문자열·배열·일반 객체)로 둔 상태만 복원되며, 그래픽 버퍼 같은 객체는 복원하지 않는다.
+- **값의 변화 tracking**: 오른쪽 표에 brush의 모든 constraint가 노드 · transformation · property(· 인자) 순으로 나온다. 고른 단계의 값, 이전 단계와의 차이(Δ), 20단계에 걸친 값의 변화(막대)를 보여주고, 바뀐 값은 강조한다.
+- 왼쪽에는 그 단계의 state와 transition이 나온다. state, transition, constraint 행을 누르면 **강조된다**: state·transition은 State Machine 그래프에서 첨부·강조되고, constraint는 우측 패널에서 그 property 카드가 강조되고 스크롤된다.
+
+### Inspection Annotation Tool
+- 툴바 brush 그룹 안의 별도 도구다. 프레임 위에 보라색으로 inspection용 annotation을 그린다(동그라미, 화살표, 손글씨 메모). 일반 결과 annotation과 따로 저장되며, 하단 패널에 "Inspection annotation n획 첨부됨"으로 보이고 ×로 지운다. concern을 텍스트로 함께 적을 수 있다.
+- **Create targeted inspection**을 누를 때마다 그 annotation과 concern으로 **Targeted Inspection Tool이 하나씩 새로 생긴다.** 새 도구는 brush 그룹의 도구 목록과 하단 패널 탭에 concern 이름으로 추가되고 바로 선택된다(brush당 최대 12개, 프로젝트에 저장). 만든 뒤에는 annotation 초안이 비워진다.
+
+### Targeted Inspection Tool
+- **처음부터 있는 도구가 아니다.** Inspection annotation으로 만들 때마다 concern 하나에 도구 하나가 생기고, 다시 고르면 그 concern의 오버레이가 프레임에 다시 보인다. 도구를 만들면 프레임의 보라색 inspection annotation 흔적은 사라진다(annotation은 도구에 저장되어 Inspect again 때 AI에 다시 보낸다). **Inspect again**은 지금까지 기록된 단계로 같은 concern의 시각화를 다시 만든다. 툴바 패널에서 ×로 지운다.
+- Inspection과 같은 stepping에 더해 그 concern에 맞춘 시각화를 보여준다.
+- 도구를 만들 때(그리고 Inspect again 때) AI(`inspect` intent, `prompts/inspect.md`)가 brush의 노드·transformation·상태 머신, constraint 키, **기록된 history 전체**(단계별 값, 상태 머신 상태, 각 모듈의 `m.store` 실행 상태), 현재 단계 이미지와 annotation을 보고 다음을 만든다.
+  - **오버레이 = history를 따라가는 규칙**: AI는 한 순간의 그림이 아니라 규칙을 만든다. 타임라인에서 단계를 옮길 때마다 **그 단계의 값과 실행 상태로 다시 계산해** 그 단계에 맞는 오버레이가 보이고, 나중에 새로 기록된 단계에도 AI를 다시 부르지 않고 그대로 적용된다. 예: "별 크기 알고 싶어" + 별에 동그라미 → 단계마다 별 크기에 맞는 width·height 사각형과 "w=… (+15)" 숫자.
+    - 수식은 `p("key")`(그 단계의 값), `prev`/`delta`(이전 단계와 비교), `s("루트", "경로")`·`len`(그 단계의 `m.store`, 예: 공의 위치·입자 수), `in("노드", "상태")`·`elapsed`(상태 머신), `step`/`steps`를 읽는다.
+    - `when`: 조건이 맞는 단계에서만 보인다(예: 드래그 상태일 때만, 값이 바뀐 단계에서만).
+    - **잔상**: 보고 있는 단계의 오버레이는 진하게, **다른 모든 기록 단계(이전·다음 모두)의 같은 오버레이는 흐리게** 함께 그린다. 가까운 단계일수록 진하고, 이전 단계는 실선, 다음 단계는 점선이다. 같은 자리에 겹치는 잔상은 가장 가까운 단계 하나만 남긴다. 잔상에 마우스를 올리면 "Step n · transition · 이전 → 다음 상태"가 뜨고, **누르면 프로그램 상태가 그 단계로 이동한다**(타임라인에서 고른 것과 같다). 작은 잔상(80px 이하)은 안쪽 어디를 눌러도, 큰 잔상은 테두리 근처(약 12px)를 누르면 된다. 진한 현재 오버레이를 누르면 지금처럼 연결된 constraint·state·transition이 강조된다.
+    - `each`: `m.store`의 배열 항목마다 그린다(예: 입자마다 점).
+  - **오버레이를 누르면** 연결된 constraint·state·transition이 강조된다(위와 같은 강조).
+  - **순서 표시**: 각 단계의 오버레이(현재·잔상 모두)에 **단계 번호 배지**가 붙고(현재 단계는 채운 배지), 같은 오버레이의 단계별 위치를 단계 순서대로 잇는 흐린 점선과 진행 방향 화살표를 그린다. 항목마다 그리는 오버레이는 첫 항목에만 번호를 붙이고 경로는 그리지 않는다. 잔상의 번호 배지를 눌러도 그 단계로 이동한다.
+  - 오버레이마다 AI가 쉬운 말로 붙인 **이름**(예: "지금 별의 크기")이 범례에 보여 각 색이 무엇인지 알 수 있다.
+  - **라벨은 서로 겹치지 않게 자동 배치된다**: 도형 위·아래·오른쪽·왼쪽 중 빈 곳에 먼저 놓고, 자리가 없으면 더 떨어진 곳에 가는 연결선과 함께 놓으며, 그래도 없으면 생략한다. 항목마다 그리는 오버레이(`each`)는 처음 3개 항목에만 라벨을 붙인다. 라벨 문구는 사용자가 보는 이름(property·state 라벨이나 크기·위치·속도 같은 일상어)과 숫자·단위로 약 20자 이내이며, AI가 내부 id·코드 변수명·스케치 고유 개념을 용어처럼 쓰지 않도록 프롬프트에서 막는다.
+  - **요약**: 단계별로 무엇이 보이는지와 concern의 원인.
+  - **Value fix**: 값만 조절해서 해결되면 구체적인 값 변경(base 값 또는 특정 state의 값)을 **Apply**로 바로 적용한다(한 번에 Undo 가능).
+  - **추천**: constraint 자체를 바꿔야 하면 semantic transformation, state, transition을 어떻게 바꿀지 제안하고 **Apply with AI**로 적용한다(transformation은 그 transformation 재생성, state·transition은 machine refine에 제안 내용을 지시로 전달). 다른 값 조합이나 다른 constraint 변경으로도 해결되면 대안으로 함께 제안한다.
+- 오버레이 수식은 숫자, 사칙연산·비교·논리 연산, 몇 가지 함수와 위 읽기 함수만 허용하는 작은 계산기로 계산한다(코드 실행 없음). `m.store`에서 읽는 위치는 모듈이 실제로 쓰는 값이지만, property만으로 위치를 추정한 수식은 실제로 그린 픽셀과 다를 수 있다.
+- AI 결과 중 brush 밖을 가리키는 오버레이·값·추천은 서버에서 걸러낸다.
 
 ## 주요 사용 흐름
 
@@ -211,6 +273,8 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 8. 블록을 Make pen으로 펜으로 만들어 Pencil·Interaction pen과 함께 스케치하고, **Compose**로 새 프레임에 장면과 결과를 만든다.
 9. 결과 위에 annotation을 그리고 AI clarification → 변경 제안 → Confirm으로 적용한다.
 10. 필요 없는 프레임은 휴지통 버튼으로 삭제하고, AI history에서 생성 기록을 확인·복원한다.
+11. Extract·Compose로 생긴 Brush tool group의 Brush로 다른 프레임에 brush stamp를 찍거나 stroke를 그린다. 드래그 brush는 드래그가 그 brush의 인터랙션을 움직인다.
+12. 같은 그룹의 Inspection으로 상태 변화를 단계별로 넘기며 constraint 값을 확인하고, Inspection annotation과 Targeted inspection으로 특정 concern의 오버레이·값 수정·추천을 받는다.
 
 ## 검증
 
@@ -219,4 +283,6 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - Semantic transformation 스택: 추가·순서 변경·이름 변경·삭제(그 property와 상태 값 정리)·Undo, 지정한 transformation에 블록 넣기, 노드 전체에서 property id 고유와 라이브 키 유지, 노드당 6개 한도, AI의 새 transformation 추가와 같은 id로 교체, 모델이 준 중복 id 정리, 패널의 스택 렌더링을 테스트했다.
 - AI 출력 변환·검증, 중첩 블록 바인딩, Group/Ungroup/중첩/이동, 상태별 property 편집, 노드별 state machine 실행(이벤트·timed 전이·일시정지), 코드 계약 위반 거부, prompts 폴더·스키마 동기화, AI 로그 저장·복원, 소켓·블록·팔레트·Layers·State Machine UI 렌더링을 테스트했다.
 - 구조·쪼개기·반복 규칙은 **프롬프트로만** 지시하고 서버에서 검사하지 않는다. 예전 서버 검사 코드와 테스트는 `backup/server-checks/`에 보관한다(복원 방법은 그 폴더의 README).
-- 타입 검사, 전체 테스트 88개, 프로덕션 빌드가 통과했다.
+- Brush: 루트 Collection마다 brush 생성, 툴 id, drag brush 판정, 찍은 복사본의 brush 표시와 검사 대상, 클릭 한 번·stroke 간격 찍기·드래그 재생 계획, 툴바 그룹 렌더링을 테스트했다. Inspection: 20단계 제한, 단계 간 변화, brush 값만 거르기, constraint 행, 오버레이 수식(허용되지 않는 식 거부), 단계별 오버레이 배치, Inspection 패널·오버레이 렌더링, `inspect` 요청 문맥과 brush 밖 결과 걸러내기를 테스트했다.
+- 모듈 코드 계약(루트마다 모듈 하나, `m` 사용 규칙, p 속성 쓰기·캔버스 호출·전역 변수 금지, 다른 모듈 노드 접근 금지), 모듈 분리 저장과 인스턴스 실행(다른 id의 복사본이 같은 모듈로 그리고 자기 머신으로 입력을 받음), AI 없이 찍기(빈 프레임, 같은 모듈 재사용, 같은 이름 다른 모듈 이름 변경, 이전 형식 거부, brush 사용 시 AI 요청 0회), concern별 targeted 도구 id와 툴바 목록을 테스트했다. 조립한 프로그램을 실제 p5.js(headless Chrome)에서 실행해 두 인스턴스가 각자 박스에 그려지고 합성 마우스 입력이 각 인스턴스의 상태 머신에 전달되는 것을 확인했다.
+- 타입 검사, 전체 테스트 107개, 프로덕션 빌드가 통과했다. 실제 AI가 새 모듈 계약대로 코드를 쓰는지, 그리고 앱에서 드래그 brush를 끝까지 써 보는 것은 확인하지 못했다.

@@ -16,6 +16,15 @@ import { PropertyInspector } from "../components/scene/property-inspector";
 import { PanelResizer } from "../components/panel-resizer";
 import { AlgorithmLibrary, type AlgorithmSource } from "../components/scene/algorithm-library";
 import { NodeMachinePanel } from "../components/scene/node-machine-panel";
+import { InspectionPanel } from "../components/inspection-panel";
+import { InspectionOverlay } from "../components/inspection-overlay";
+import { brushesFor, brushNodeIds, brushTool, isInspectionTool, MAX_TARGETED, parseBrushTool, type Brush } from "../lib/brushes";
+import { addStep, filterValues, type InspectionFocus, type InspectionState } from "../lib/inspection";
+import { sceneValues } from "../lib/scene/values";
+import { applyBrush, startBrushDrag } from "../studio/brush-actions";
+import { programModules } from "../lib/scene/machines";
+import { applyChanges, applyRecommendation, inspectConcern, inspectionFor, targetedName, withInspection } from "../studio/inspection-actions";
+import type { TraceStep } from "../components/code-preview";
 import { besideFramePosition, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
@@ -76,6 +85,15 @@ export default function Home() {
 
   // ── Tools, pens, workspace and app chrome ──────────────────────────────────
   const [tool, setTool] = useState("pen"), [pencilOpen, setPencilOpen] = useState(false);
+  // Brushes: reusable collections, each a tool group (brush + inspection tools) in the toolbar.
+  const [brushes, setBrushesState] = useState<Brush[]>([]);
+  const brushesRef = useRef(brushes);
+  const setBrushes = (next: Brush[]) => { brushesRef.current = next; setBrushesState(next); };
+  // The tool each group shows (a toolbar tool id), so a group remembers its last tool.
+  const [groupTools, setGroupTools] = useState<Record<string, string>>({}), [openGroup, setOpenGroup] = useState<string | null>(null);
+  const brushPick = parseBrushTool(tool), activeBrush = brushPick ? brushes.find(brush => brush.id === brushPick.brushId) : undefined;
+  const activeTargeted = brushPick?.kind === "targeted" ? activeBrush?.targeted.find(item => item.id === brushPick.targetedId) : undefined;
+  const inspectionKind = activeBrush && isInspectionTool(brushPick!.kind) && (brushPick!.kind !== "targeted" || activeTargeted) ? brushPick!.kind : null;
   const [color, setColor] = useState("#75664e"), [width, setWidth] = useState(3), [opacity, setOpacity] = useState(80);
   const [workspace, setWorkspace] = useState<WorkspaceLayout>(() => workspaceSchema.parse({}));
   const workspaceCanvas = useRef<WorkspaceHandle>(null);
@@ -121,7 +139,7 @@ export default function Home() {
   // ── Server requests ────────────────────────────────────────────────────────
   function projectData() {
     return { version: 2 as const, name: artwork.name, artwork: artworkRef.current, sketchFrames: sketchFramesRef.current, activeSketchId: activeSketchRef.current,
-      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, workspace };
+      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, brushes: brushesRef.current, workspace };
   }
   async function request(intent: string, body: object, owner = activeSketch) {
     updatePanel(owner, { error: "" });
@@ -192,6 +210,23 @@ export default function Home() {
   const deps: StudioDeps = {
     panel: id => panelsRef.current[id] || createSketchPanel(), updatePanel, request, task,
     capture: captureFrame, createFrame,
+    addBrushes: (frameId, scene) => {
+      const made = brushesFor(scene, frameId, brushesRef.current, () => crypto.randomUUID());
+      if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`${made.map(brush => brush.name).join(", ")} brush를 툴바에 추가했습니다.`); }
+      return made;
+    },
+    preview: owner => resultPreviews.current.get(owner),
+    refreshBrushCode: (frameId, code) => {
+      const scene = panelsRef.current[frameId]?.scene, modules = programModules(code);
+      let changed = false;
+      const next = brushesRef.current.map(brush => {
+        const root = brush.sourceFrameId === frameId && scene ? scene.nodes.find(node => node.id === brush.nodeId) : undefined;
+        const text = root && modules.get(root.codeModule ?? root.id);
+        if (!text || text === brush.code) return brush;
+        changed = true; return { ...brush, code: text };
+      });
+      if (changed) setBrushes(next);
+    },
     artwork: artworkOf, documentId: () => activeDocument.current, requestId: () => requestNumber.current,
     toast: setToast, focus: setPendingFrameFocus, addPen,
     clip: () => clipRef.current, setClip: next => { clipRef.current = next; setClip(next); }, activate: id => activateSketch(id),
@@ -212,7 +247,7 @@ export default function Home() {
     setSaveState("Saving…");
     const timer = setTimeout(() => { try { localStorage.setItem(storageKey, JSON.stringify(projectData())); setSaveState("Saved locally"); } catch { setSaveState("Storage full · export JSON"); } }, 450);
     return () => clearTimeout(timer);
-  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, workspace, restoreReady]);
+  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, brushes, workspace, restoreReady]);
   useEffect(() => { try { const saved = Number(localStorage.getItem("rulegen-inspector-width")); if (saved >= 280 && saved <= 900) setInspectorWidth(saved); } catch { /* storage unavailable */ } }, []);
   useEffect(() => { try { if (inspectorWidth) localStorage.setItem("rulegen-inspector-width", String(inspectorWidth)); else localStorage.removeItem("rulegen-inspector-width"); } catch { /* storage unavailable */ } }, [inspectorWidth]);
   // Every error a frame shows is written to error-logs/ (runtime errors with the failing program).
@@ -225,6 +260,10 @@ export default function Home() {
       if (message) reportError({ source, message, owner: id, frame: artworkOf(id)?.name || id, code: source === "runtime" ? item.generated?.code || "" : "" });
     }
   }, [panels]);
+  useEffect(() => {
+    if (brushPick && !activeBrush) setTool("pen");
+    else if (brushPick?.kind === "targeted" && activeBrush && !activeTargeted) setTool(brushTool("inspect-annotate", activeBrush.id));
+  }, [brushPick?.brushId, brushPick?.targetedId, activeBrush, activeTargeted]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 6000); return () => clearTimeout(timer); }, [toast]);
   // Widget edits only patch the host block of the code draft.
   useEffect(() => { if (generated) patchActive(previous => { const codeDraft = syncScene(previous.codeDraft || "", previous.scene); return codeDraft === previous.codeDraft ? {} : { codeDraft, runtimeError: "" }; }); }, [scene, generated]);
@@ -236,7 +275,7 @@ export default function Home() {
       const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
       // Interaction mode: the frame only takes input for its running result.
       if (panel.interacting) { if (e.key === "Escape") updatePanel(activeSketch, { interacting: false }); return; }
-      if (e.key === "Escape") { setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
+      if (e.key === "Escape") { setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
       else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
@@ -255,12 +294,13 @@ export default function Home() {
     mutatePanels(() => Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
     setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
+    setBrushes(data.brushes); setOpenGroup(null);
     setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
   function newProject() {
     cancel(); activeDocument.current++; prepareNumber.current++;
     const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
-    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source";
+    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setBrushes([]); setOpenGroup(null);
     setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({});
     setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
     setTool("pen"); setPencilOpen(false); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
@@ -358,8 +398,100 @@ export default function Home() {
   }
   function chooseTool(next: string) {
     setPenSettingsOpen(false); setTool(next);
+    if (!parseBrushTool(next)) setOpenGroup(null);
     if (annotating) { setPencilOpen(false); return; }
     setPencilOpen(next === "pen" ? !pencilOpen : false);
+  }
+  // ── Brush tool groups ─────────────────────────────────────────────────────
+  /** First click selects the group's tool; clicking the selected group opens, then closes, its tool panel. */
+  function clickBrushGroup(brushId: string) {
+    if (brushPick?.brushId === brushId) { setOpenGroup(open => open === brushId ? null : brushId); return; }
+    const remembered = groupTools[brushId], pick = remembered ? parseBrushTool(remembered) : null;
+    const exists = pick && (pick.kind !== "targeted" || brushesRef.current.find(item => item.id === brushId)?.targeted.some(item => item.id === pick.targetedId));
+    chooseTool(exists ? remembered! : brushTool("brush", brushId)); setOpenGroup(null);
+  }
+  function chooseBrushTool(brushId: string, toolId: string) {
+    chooseTool(toolId); setGroupTools(current => ({ ...current, [brushId]: toolId }));
+    if (parseBrushTool(toolId)?.kind !== "brush") patchActive({ interacting: false });
+  }
+  /** Inspection annotation → a new targeted inspection tool in the group; a targeted tool → its concern again. */
+  async function runTargeted(brush: Brush) {
+    const frame = activeSketch, state = inspectionFor(panelsRef.current[frame] || panel, brush.id);
+    const tool = activeTargeted, draft = tool ? { concern: tool.concern, marks: tool.marks } : { concern: state.concern, marks: state.marks };
+    const result = await inspectConcern(deps, frame, brush, draft);
+    if (!result) return;
+    const latest = brushesRef.current.find(item => item.id === brush.id); if (!latest) return;
+    if (tool) { setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: item.targeted.map(entry => entry.id === tool.id ? { ...entry, result } : entry) } : item)); return; }
+    const made = { id: crypto.randomUUID(), name: targetedName(draft.concern, latest.targeted.length), concern: draft.concern.trim(), marks: draft.marks, result };
+    setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: [...item.targeted, made].slice(-MAX_TARGETED) } : item));
+    updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], concern: "", focus: null }));
+    chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
+    setToast(`「${made.name}」 targeted inspection 도구를 ${brush.name} 그룹에 만들었습니다.`);
+  }
+  function removeTargeted(brushId: string, targetedId: string) {
+    setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, targeted: item.targeted.filter(entry => entry.id !== targetedId) } : item));
+  }
+  function removeBrush(brush: Brush) {
+    setBrushes(brushesRef.current.filter(item => item.id !== brush.id)); setOpenGroup(null);
+    if (brushPick?.brushId === brush.id) setTool("pen");
+  }
+  // A drag brush feeds the drag to its collection while the user moves.
+  const brushDrag = useRef<ReturnType<typeof startBrushDrag>>(null);
+  function brushGestureStep(frameId: string, toolId: string, point: { x: number; y: number }, phase: "start" | "move") {
+    const pick = parseBrushTool(toolId), brush = pick?.kind === "brush" ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
+    if (!brush || brush.gesture !== "drag") return;
+    if (phase === "start") { activateSketch(frameId); brushDrag.current = startBrushDrag(deps, brush, frameId, point); }
+    else brushDrag.current?.move(point);
+  }
+  /** A brush gesture on a frame: stamp/paint with the brush, or add an inspection annotation stroke. */
+  function brushGesture(frameId: string, toolId: string, points: { x: number; y: number; t: number }[]) {
+    const pick = parseBrushTool(toolId), brush = pick && brushesRef.current.find(item => item.id === pick.brushId);
+    if (!pick || !brush) return;
+    activateSketch(frameId);
+    if (pick.kind === "brush" && brush.gesture === "drag") { brushDrag.current?.end(points.at(-1)!); brushDrag.current = null; return; }
+    if (pick.kind === "brush") { applyBrush(deps, brush, frameId, points); return; }
+    if (pick.kind === "inspect-annotate" && points.length > 1) updatePanel(frameId, previous => { const state = inspectionFor(previous, brush.id);
+      return withInspection(previous, { ...state, marks: [...state.marks, points.map(point => ({ x: Math.min(1, Math.max(0, point.x / 900)), y: Math.min(1, Math.max(0, point.y / 600)) }))].slice(-64) }); });
+  }
+  /**
+   * A step reported by the running result, kept by the brush it concerns (always
+   * recorded, no toggle). In interaction mode every brush in the frame records on
+   * its own; otherwise only the inspected brush.
+   */
+  function recordStep(frameId: string, step: TraceStep) {
+    updatePanel(frameId, previous => {
+      const interacting = previous.interacting, inspected = inspectionKind && frameId === activeSketch ? activeBrush : undefined;
+      let inspections = previous.inspections, changed = false;
+      for (const brush of brushesRef.current) {
+        if (!interacting && brush.id !== inspected?.id) continue;
+        const nodeIds = brushNodeIds(previous.scene, brush, frameId);
+        if (!nodeIds.length || (step.nodeId ? !nodeIds.includes(step.nodeId) : interacting && inspected && brush.id !== inspected.id)) continue;
+        const state = inspectionFor(previous, brush.id);
+        inspections = { ...inspections, [brush.id]: addStep(state, { at: Date.now(), nodeId: step.nodeId, from: step.from, to: step.to, transitionId: step.transitionId, values: filterValues(step.params, nodeIds), runtime: step.runtime }) };
+        changed = true;
+      }
+      return changed ? { inspections } : {};
+    });
+  }
+  /** How a recorded step reads on hover: the transition, or the state change. */
+  function stepName(stepScene: typeof scene, step: InspectionState["steps"][number] | undefined) {
+    if (!step) return "";
+    if (!step.nodeId) return "Start";
+    const machine = findNode(stepScene, step.nodeId)?.machine, label = (id: string | null) => machine?.states.find(state => state.id === id)?.label || id || "—";
+    const via = machine?.transitions.find(item => item.id === step.transitionId);
+    return `${via ? `${via.label} · ` : ""}${label(step.from)} → ${label(step.to)}`;
+  }
+  function patchInspection(frameId: string, patch: Partial<InspectionState>) {
+    if (!activeBrush) return;
+    const brushId = activeBrush.id;
+    updatePanel(frameId, previous => withInspection(previous, { ...inspectionFor(previous, brushId), ...patch }));
+  }
+  /** Highlight what an overlay or row stands for: the constraint in the inspector, the state/transition in the machine panel. */
+  function focusInspection(frameId: string, focus: InspectionFocus | null) {
+    if (!activeBrush) return;
+    const brushId = activeBrush.id;
+    updatePanel(frameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brushId), focus }),
+      ...(focus ? { selectedNodeIds: [focus.nodeId], machineTarget: focus.kind === "constraint" ? null : { nodeId: focus.nodeId, kind: focus.kind, id: focus.id } } : {}) }));
   }
   function selectAlgorithmPen(pen: SemanticPen) {
     setActiveSemanticPenId(pen.id); setTool("semantic"); patchActive({ annotating: false }); setPencilOpen(false); setPenSettingsOpen(true);
@@ -447,13 +579,15 @@ export default function Home() {
     const owner = panels[id] || createSketchPanel(), frameEdits = sceneEdits(deps, id);
     // Interaction mode: sketch strokes, layer boxes and layer drops are switched off; only the result takes input.
     const interacting = owner.interacting && Boolean(owner.generated);
+    // Inspection tools of a brush act on the active frame, and only on that brush's nodes.
+    const inspected = inspectionKind && activeBrush && id === activeSketch && brushNodeIds(owner.scene, activeBrush, id).length > 0 ? inspectionFor(owner, activeBrush.id) : null;
     return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${interacting ? "frame-interacting" : ""} ${dropTarget === id ? "node-drop-target" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
       onPointerDown={e => { if (!interacting && tool === "select" && !(e.target as Element).closest(".scene-node")) frameEdits.select(null); }}
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} interacting={interacting} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} tracing={interacting || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={inspected && inspected.cursor !== null && inspected.steps[inspected.cursor] ? { id: `${inspected.brushId}:${inspected.steps[inspected.cursor].id}`, runtime: inspected.steps[inspected.cursor].runtime } : null} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
-      <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
+      <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} gestureTool={name => { const kind = parseBrushTool(name)?.kind; return kind === "brush" || kind === "inspect-annotate"; }} onGesture={(name, points) => brushGesture(id, name, points)} onGestureStep={(name, point, phase) => brushGestureStep(id, name, point, phase)} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
         onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "한 프레임에는 최대 500개의 획을 저장할 수 있습니다. 새 스케치 프레임을 추가해주세요." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
         onViewport={() => {}} onSelection={value => id === "source" ? setHasSelection(value) : setSketchSelections(current => current[id] === value ? current : { ...current, [id]: value })} onError={message => updatePanel(id, { error: message })}>
         {!interacting && <SceneOverlay scene={owner.scene} selected={owner.selectedNodeIds} hovered={owner.hovered} zoom={boardZoom} interactive={tool === "select"}
@@ -461,6 +595,8 @@ export default function Home() {
           onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />}
       </SketchCanvas>
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
+      {inspected && <InspectionOverlay state={inspected} marks={inspectionKind === "inspect-annotate" ? inspected.marks : []} result={inspectionKind === "targeted" ? activeTargeted?.result || null : null} liveValues={filterValues(sceneValues(owner.scene), brushNodeIds(owner.scene, activeBrush!, id))} clickable={inspectionKind !== "inspect-annotate"} zoom={boardZoom} onFocus={focus => focusInspection(id, focus)}
+        onStep={index => patchInspection(id, { cursor: index })} stepName={index => stepName(owner.scene, inspected.steps[index])} />}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
   // Header controls for a frame: run/pause and re-render its result, (re)generate code, annotate, extract.
@@ -474,7 +610,7 @@ export default function Home() {
       {frame.generated && <button className={frame.interacting ? "interaction-mode-on" : ""} disabled={!frame.executable} aria-pressed={frame.interacting} title={frame.interacting ? "Leave interaction mode (Esc)" : "Interaction mode: only the running result takes mouse, touch and keyboard input"}
         onClick={() => { activateSketch(id); updatePanel(id, previous => previous.interacting ? { interacting: false } : { interacting: true, annotating: false, machinePlaying: true, selectedNodeIds: [], hovered: null }); }}><Icon name="interaction" size={13} />{frame.interacting ? "Done" : "Interact"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
-      <button disabled={busy || !(present || frame.generated)} title="Extract collections into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
+      <button disabled={busy || !(present || frame.generated)} title="Extract brush stamps into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
     </>;
   };
   const frameSubtitle = (id: string, artwork: Artwork, selection: boolean) => {
@@ -505,12 +641,13 @@ export default function Home() {
       onProperty={(propertyId, patch) => edits.editProperty(node.id, propertyId, patch)} onRemoveProperty={propertyId => edits.removeProperty(node.id, propertyId)}
       onAddProperty={(algorithmId, transformationId) => edits.addProperty(node.id, algorithmId, transformationId)} onRegenerate={target => { void ai.regenerate(node.id, target); }}
       onMinimalExample={transformationId => { void ai.minimalExample(node.id, transformationId); }}
+      highlightPropertyId={(focus => inspectionKind && focus?.kind === "constraint" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
       onMakePen={(propertyId, path) => edits.makePen({ nodeId: node.id, propertyId, path })}
       onCopy={(propertyId, path) => edits.copySlot(node.id, propertyId, path)} onPaste={(propertyId, path, dropped) => edits.pasteSlot(node.id, propertyId, path, dropped)}
       clipFor={(propertyId, path) => edits.clipFor(node.id, propertyId, path)} onAddBlock={(block, transformationId) => edits.addBlock(node.id, block, transformationId)} onGenerateMachine={() => { void ai.generateMachine(node.id); }} onRemoveMachine={() => edits.removeMachine(node.id)} />
       : <><div className="section-kicker">LOOK A LITTLE CLOSER</div><h2>Every sketch is<br />a set of systems.</h2>
-        <p className="section-description">{scene.nodes.length ? "Select a collection or object in Layers or on the sketch to edit its semantic transformation." : "Draw or attach a photo, then extract its collections and objects."}</p>
-        {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No collections yet.</p><span>Sketch → Extract → Explore</span><button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
+        <p className="section-description">{scene.nodes.length ? "Select a brush stamp or object in Layers or on the sketch to edit its semantic transformation." : "Draw or attach a photo, then extract its collections and objects."}</p>
+        {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span><button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
         {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
       </>}
     <AlgorithmLibrary scene={scene} busy={busy} targetName={node?.name || null} imports={algorithmImports}
@@ -531,6 +668,8 @@ export default function Home() {
         onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
+        brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushGroup={clickBrushGroup} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)} onTargetedRemove={removeTargeted}
+        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush}
         onHelp={() => setToast("V 선택·이동 · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제")} />
       <aside className="layer-sidebar">
         <LayerPanel scene={scene} sketchId={activeSketch} selected={panel.selectedNodeIds} hovered={panel.hovered} busy={busy} canUndo={panel.sceneHistory.length > 0} canRedo={panel.sceneFuture.length > 0} title={currentSketch.name}
@@ -561,6 +700,12 @@ export default function Home() {
       editor={{ draft: panel.codeDraft || "", busy, runtimeError: panel.runtimeError, onDraft: value => patchActive({ codeDraft: value }),
         onRun: () => { if (!generated) return; if (generated.code === panel.codeDraft) void prepare(panel.codeDraft); else patchActive({ generated: { ...generated, code: panel.codeDraft || "" }, executable: "", preparedCode: "" }); patchActive(previous => ({ renderRevision: previous.renderRevision + 1 })); },
         onFix: () => { void ai.generateCode(true); } }}
+      inspectionPanel={inspectionKind && activeBrush ? <InspectionPanel brush={activeBrush} kind={inspectionKind} scene={scene} nodeIds={brushNodeIds(scene, activeBrush, activeSketch)} state={inspectionFor(panel, activeBrush.id)} busy={busy} running={Boolean(panel.executable)} interacting={panel.interacting && Boolean(panel.generated)}
+        onCursor={cursor => patchInspection(activeSketch, { cursor })} onClear={() => patchInspection(activeSketch, { steps: [], cursor: null, focus: null })}
+        onFocus={focus => focusInspection(activeSketch, focus)}
+        onConcern={concern => patchInspection(activeSketch, { concern })} onClearMarks={() => patchInspection(activeSketch, { marks: [] })}
+        targeted={activeTargeted} onInspect={() => { void runTargeted(activeBrush); }} onApplyChanges={changes => applyChanges(deps, activeSketch, changes)}
+        onApplyRecommendation={recommendation => { void applyRecommendation(deps, activeSketch, recommendation); }} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
       machinePanel={<NodeMachinePanel scene={scene} node={machineNode} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
         playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}
         target={machineNode && panel.machineTarget?.nodeId === machineNode.id ? { kind: panel.machineTarget.kind, id: panel.machineTarget.id } : null} draft={panel.machineDraft}

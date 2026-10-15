@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Prism from "prismjs";
 import { Icon } from "./icons";
 import { downloadFile } from "../lib/project";
@@ -24,7 +24,7 @@ function highlightLines(code: string) {
   return lines;
 }
 
-export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel, editor }: {
+export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel, inspectionPanel, editor }: {
   code: string;
   /** Editing the generated code (replaces the old inspector Code tab). */
   editor?: { draft: string; busy: boolean; runtimeError: string; onDraft: (code: string) => void; onRun: () => void; onFix: () => void };
@@ -33,9 +33,13 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
   onCopy: () => void;
   onError: (message: string) => void;
   machinePanel?: ReactNode;
+  /** Shown while one of a brush's inspection tools is selected (the tab opens by itself). */
+  inspectionPanel?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const [mode, setMode] = useState<"code" | "machine">("code");
+  const [mode, setMode] = useState<"code" | "machine" | "inspect">("code");
+  const inspecting = Boolean(inspectionPanel);
+  useEffect(() => { if (inspecting) { setMode("inspect"); setExpanded(true); } else setMode(current => current === "inspect" ? "machine" : current); }, [inspecting]);
   const [editing, setEditing] = useState(false);
   const lines = useMemo(() => highlightLines(code), [code]);
 
@@ -44,12 +48,12 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
     catch { onError("클립보드에 접근하지 못했습니다. 다운로드를 이용해주세요."); }
   }
 
-  return <section className={`raw-code-panel ${expanded ? "expanded" : "collapsed"} ${mode === "machine" ? "machine-mode" : ""}`} aria-label="Raw p5.js code panel">
+  return <section className={`raw-code-panel ${expanded ? "expanded" : "collapsed"} ${mode !== "code" ? "machine-mode" : ""}`} aria-label="Raw p5.js code panel">
     <header className="raw-code-header">
       <button className="raw-code-toggle" aria-label="Raw p5.js" title={expanded ? "Collapse bottom panel" : "Expand bottom panel"} aria-expanded={expanded} aria-controls="raw-p5-code" onClick={() => setExpanded(open => !open)}>
         <Icon name="code" size={16} /><strong>Raw p5.js</strong><Icon name="chevron" size={13} />
       </button>
-      {machinePanel && <div className="bottom-panel-modes" role="tablist" aria-label="Bottom panel mode"><button role="tab" aria-selected={mode === "code"} onClick={() => setMode("code")}><Icon name="code" size={13} />Code</button><button role="tab" aria-selected={mode === "machine"} onClick={() => setMode("machine")}><Icon name="grid" size={13} />State Machine</button></div>}
+      {machinePanel && <div className="bottom-panel-modes" role="tablist" aria-label="Bottom panel mode"><button role="tab" aria-selected={mode === "code"} onClick={() => setMode("code")}><Icon name="code" size={13} />Code</button><button role="tab" aria-selected={mode === "machine"} onClick={() => setMode("machine")}><Icon name="grid" size={13} />State Machine</button>{inspectionPanel && <button role="tab" aria-selected={mode === "inspect"} onClick={() => setMode("inspect")}><Icon name="inspect" size={13} />Inspection</button>}</div>}
       <span className="raw-code-sketch" title={sketchName}>{sketchName}</span>
       {code && mode === "code" && <span className="raw-code-count">{lines.length} lines</span>}
       <div className="raw-code-actions">
@@ -60,7 +64,8 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
       </div>
     </header>
     {expanded && mode === "code" && editor?.runtimeError && <div className="runtime-error raw-runtime-error" role="alert">{editor.runtimeError}<button disabled={editor.busy} onClick={editor.onFix}>Fix with AI</button></div>}
-    {expanded && (mode === "machine" ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div id="raw-p5-code" role="tabpanel" className="raw-code-body">
+    {expanded && (mode === "inspect" && inspectionPanel ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content inspection-panel-content">{inspectionPanel}</div>
+      : mode === "machine" ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div id="raw-p5-code" role="tabpanel" className="raw-code-body">
       {editor && editing && code ? <textarea className="raw-code-editor" spellCheck={false} aria-label="Generated p5.js code" value={editor.draft} onChange={e => editor.onDraft(e.target.value)} />
         : code ? <pre tabIndex={0} aria-label="Raw p5.js source"><code>{lines.map((line, index) => <span className="raw-code-line" key={index}><span className="raw-code-number" aria-hidden="true">{index + 1}</span><span>{line.length ? line.map((segment, part) => <span key={part} className={segment.className || undefined}>{segment.text}</span>) : "\n"}</span></span>)}</code></pre>
         : <div className="raw-code-empty">No generated p5.js code</div>}

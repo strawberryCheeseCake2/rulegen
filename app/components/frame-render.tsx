@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { CodePreview, type CodePreviewHandle } from "./code-preview";
+import { CodePreview, type CodePreviewHandle, type RestorePoint, type TraceStep } from "./code-preview";
 import { ResultAnnotations } from "./result-annotations";
 import { liveSceneSource } from "../lib/scene/live";
 import { syncScene } from "../lib/scene/machines";
@@ -8,7 +8,7 @@ import { clearedResultAnnotations, type SketchPanel } from "../lib/sketch-panels
 import { markLogged } from "../lib/error-report";
 
 type Patch = Partial<SketchPanel> | ((panel: SketchPanel) => Partial<SketchPanel>);
-type Props = { owner: string; panel: SketchPanel; interacting?: boolean; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
+type Props = { owner: string; panel: SketchPanel; interacting?: boolean; tracing?: boolean; onTrace?: (step: TraceStep) => void; restore?: RestorePoint; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
 
 /**
  * The generated result of a sketch frame, rendered *inside* that frame beneath
@@ -39,7 +39,7 @@ export function FrameRender(props: Props) {
   if (!panel.generated) return panel.pendingResult ? <div className="frame-render frame-render-status" role="status"><span className="loading-spinner" /><strong>Generating this frame's result…</strong><span>{panel.loading}</span></div> : null;
   return <div className={`frame-render ${panel.pendingResult ? "frame-render-updating" : ""}`} data-render-owner={owner}>
     {executable ? <CodePreview ref={props.onPreview} key={`${props.documentRevision}-${owner}-${panel.renderRevision}`} executable={executable} onError={error => props.onPatch({ runtimeError: error })}
-      machineEnabled={machineEnabled} interactive={props.interacting} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
+      machineEnabled={machineEnabled} interactive={props.interacting} tracing={props.tracing} onTrace={props.onTrace} restore={props.restore} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
       : <div className="frame-render-status"><strong>{panel.runtimeError ? "This code needs a correction." : "Preparing p5.js…"}</strong></div>}
     {panel.pendingResult && <div className="frame-render-badge" role="status"><span className="loading-spinner" />Updating…</div>}
   </div>;
