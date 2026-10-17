@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Prism from "prismjs";
 import { Icon } from "./icons";
+import { PanelResizer } from "./panel-resizer";
 import { downloadFile } from "../lib/project";
 
 type CodeSegment = { text: string; className: string };
@@ -24,6 +25,8 @@ function highlightLines(code: string) {
   return lines;
 }
 
+const HEIGHT_KEY = "rulegen.bottomPanelHeight", MIN_HEIGHT = 100;
+
 export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel, inspectionPanel, editor }: {
   code: string;
   /** Editing the generated code (replaces the old inspector Code tab). */
@@ -41,6 +44,12 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
   const inspecting = Boolean(inspectionPanel);
   useEffect(() => { if (inspecting) { setMode("inspect"); setExpanded(true); } else setMode(current => current === "inspect" ? "machine" : current); }, [inspecting]);
   const [editing, setEditing] = useState(false);
+  // The panel's height (Code, State Machine and Inspection alike), dragged on its top edge; remembered in this browser.
+  const [height, setHeight] = useState<number | null>(null);
+  const body = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { const saved = Number(localStorage.getItem(HEIGHT_KEY)); if (saved >= MIN_HEIGHT) setHeight(saved); } catch { /* storage unavailable */ } }, []);
+  const resize = (next: number | null) => { setHeight(next); try { if (next === null) localStorage.removeItem(HEIGHT_KEY); else localStorage.setItem(HEIGHT_KEY, String(next)); } catch { /* storage unavailable */ } };
+  const sized = height ? { height, minHeight: 0 } : undefined;
   const lines = useMemo(() => highlightLines(code), [code]);
 
   async function copyCode() {
@@ -49,6 +58,8 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
   }
 
   return <section className={`raw-code-panel ${expanded ? "expanded" : "collapsed"} ${mode !== "code" ? "machine-mode" : ""}`} aria-label="Raw p5.js code panel">
+    {expanded && <PanelResizer axis="y" label="Resize bottom panel" min={MIN_HEIGHT} max={typeof window === "undefined" ? 900 : Math.max(MIN_HEIGHT, Math.round(window.innerHeight * .8))}
+      measure={() => body.current?.getBoundingClientRect().height ?? 220} onResize={resize} onReset={() => resize(null)} />}
     <header className="raw-code-header">
       <button className="raw-code-toggle" aria-label="Raw p5.js" title={expanded ? "Collapse bottom panel" : "Expand bottom panel"} aria-expanded={expanded} aria-controls="raw-p5-code" onClick={() => setExpanded(open => !open)}>
         <Icon name="code" size={16} /><strong>Raw p5.js</strong><Icon name="chevron" size={13} />
@@ -64,8 +75,8 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
       </div>
     </header>
     {expanded && mode === "code" && editor?.runtimeError && <div className="runtime-error raw-runtime-error" role="alert">{editor.runtimeError}<button disabled={editor.busy} onClick={editor.onFix}>Fix with AI</button></div>}
-    {expanded && (mode === "inspect" && inspectionPanel ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content inspection-panel-content">{inspectionPanel}</div>
-      : mode === "machine" ? <div id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div id="raw-p5-code" role="tabpanel" className="raw-code-body">
+    {expanded && (mode === "inspect" && inspectionPanel ? <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="machine-panel-content inspection-panel-content">{inspectionPanel}</div>
+      : mode === "machine" ? <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="raw-code-body">
       {editor && editing && code ? <textarea className="raw-code-editor" spellCheck={false} aria-label="Generated p5.js code" value={editor.draft} onChange={e => editor.onDraft(e.target.value)} />
         : code ? <pre tabIndex={0} aria-label="Raw p5.js source"><code>{lines.map((line, index) => <span className="raw-code-line" key={index}><span className="raw-code-number" aria-hidden="true">{index + 1}</span><span>{line.length ? line.map((segment, part) => <span key={part} className={segment.className || undefined}>{segment.text}</span>) : "\n"}</span></span>)}</code></pre>
         : <div className="raw-code-empty">No generated p5.js code</div>}

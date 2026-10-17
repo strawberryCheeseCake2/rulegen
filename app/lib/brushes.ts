@@ -74,14 +74,23 @@ export function markBrushes(scene: Scene, brushes: Brush[]): Scene {
   return { ...scene, nodes: scene.nodes.map(node => byNode.has(node.id) ? { ...node, brushId: byNode.get(node.id) } : node) };
 }
 
-/** The collection to stamp: the live node in its source frame, else the saved copy. */
+/**
+ * The collection to stamp: the live node in its source frame, else the saved copy
+ * (the source frame was deleted). Either way its root carries the brush mark, so
+ * every stamp stays inspectable as this brush.
+ */
 export function brushSource(brush: Brush, liveScene: Scene | undefined): Scene {
-  const live = liveScene && findNode(liveScene, brush.nodeId);
-  return live ? { ...subScene(liveScene!, [brush.nodeId]), nodes: subScene(liveScene!, [brush.nodeId]).nodes.map(node => node.id === brush.nodeId ? { ...node, brushId: brush.id } : node) } : brush.scene;
+  const scene = liveScene && findNode(liveScene, brush.nodeId) ? subScene(liveScene, [brush.nodeId]) : brush.scene;
+  return { ...scene, nodes: scene.nodes.map(node => node.id === brush.nodeId ? { ...node, brushId: brush.id } : node) };
 }
 
-/** The nodes of a frame that belong to a brush: its marked roots (or the source node) with their members. */
+/**
+ * The nodes of a frame that belong to a brush: its marked roots (or the source
+ * node) with their members. Stamps made from a deleted source frame before the
+ * saved copy carried the mark are recognised by the brush's node id.
+ */
 export function brushNodeIds(scene: Scene, brush: Brush, frameId: string) {
-  const roots = scene.nodes.filter(node => node.brushId === brush.id || (frameId === brush.sourceFrameId && node.id === brush.nodeId)).map(node => node.id);
+  let roots = scene.nodes.filter(node => node.brushId === brush.id || (frameId === brush.sourceFrameId && node.id === brush.nodeId)).map(node => node.id);
+  if (!roots.length) roots = scene.nodes.filter(node => !node.parentId && !node.brushId && (node.id === brush.nodeId || node.codeId === brush.nodeId)).map(node => node.id);
   return [...new Set(roots.flatMap(id => [id, ...descendantIds(scene, id)]))];
 }

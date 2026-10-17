@@ -82,6 +82,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - 코드 생성은 한 노드가 여러 인스턴스를 뜻한다는 것을 알고, count·배치 블록으로 모든 인스턴스를 노드 영역 안에 그린다.
 - 원본 스케치가 바뀌면 추출된 프레임에 다시 추출하라는 안내를 표시한다. 다시 Extract하면 또 하나의 새 프레임이 생긴다.
 - AI 재생성은 세 가지다: property 하나 다시 만들기, transformation 하나를 같은 id로 다시 만들기, 새 transformation을 AI가 제안해 스택 끝에 추가하기. 나머지 값은 유지하고, 겹치는 property id는 자동으로 바꾼다.
+- **재생성은 버튼을 눌러도 바로 실행되지 않는다.** property·transformation의 ✦ 버튼이나 Add transformation with AI를 누르면 그 자리에 **Regenerate with AI** 입력 창이 열린다. 무엇이 대상인지(Property / Transformation / New transformation) 첨부 칩으로 보이고, 어떻게 바꿀지(또는 무엇을 더할지) 텍스트로 적는다. **Draw on frame**을 켜면 활성 프레임에 보라색으로 바꿀 곳을 그릴 수 있고(그 동안 스케치 획·레이어 선택은 꺼짐), "Annotation n획 첨부됨"으로 보이며 ×로 지운다. **Regenerate**를 누르면 텍스트(비어 있으면 프레임의 기존 지시), annotation 좌표, annotation을 그린 결과 이미지가 함께 AI(`transform`)에 간다. 성공하면 창이 닫히고, 실패하면 내용이 남아 다시 시도할 수 있다. Cancel로 닫는다. **재생성이 성공하면 그 프레임에 결과 코드가 있을 때 코드도 바로 다시 생성한다**(재생성된 transformation의 새 설명대로 예전 동작을 바꾸라는 지시와 함께). 그래서 장면 설명과 실행 중인 코드가 어긋나지 않고, 그 프레임에서 만든 brush도 새 코드를 쓴다.
 
 ## 6. Layers 패널과 직접 조작
 
@@ -109,6 +110,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 구조가 바뀌면(블록 교체, property 추가·삭제, 머신 변경) 상태가 *Structure changed*로 바뀌고 Update code로 다시 연결한다. 설명만 바뀐 경우도 알려준다.
 - 생성 코드는 서버에서 AST로 검사한다: 모든 바인딩 사용, 리터럴 키만 허용, 값·상태 쓰기와 호스트 이름 재선언 금지, 잘못된 이벤트 금지, 머신이 있으면 `p.draw` 유지.
 - 코드는 하단 **Raw p5.js** 패널에서 보고 복사·다운로드한다. 편집 버튼으로 코드를 고친 뒤 Run으로 실행하고, 실행 오류는 같은 패널과 우측 패널에서 Fix with AI로 고친다.
+- 하단 패널(Code · State Machine · Inspection)은 **위쪽 가장자리를 위아래로 끌어 높이를 조절**한다(↑/↓ 키로도, Shift와 함께 크게). 정한 높이는 세 탭에 똑같이 적용되고 이 브라우저에 기억되며, 더블클릭하면 기본 높이로 돌아간다.
 - 생성 코드는 프레임마다 별도 sandbox iframe에서 실행하며 저장소·네트워크 접근이 없고 반복·재귀 실행 한도를 둔다. Pause는 상태 머신과 일반 애니메이션 루프를 모두 멈춘다.
 
 ## 9. Collection · Object별 state machine
@@ -139,6 +141,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 프레임마다 장면(노드·블록·머신), 선택, 상태 편집 위치, 생성 코드와 편집 중인 초안, Compose prompt, Generation direction을 따로 보관하고, 프레임을 선택하면 그 프레임의 패널로 전환한다.
 - 각 프레임의 결과는 그 프레임 안에 그려지므로 여러 프레임의 결과를 동시에 본다. 슬라이더·코드 수정·Run/Pause·Re-render·annotation은 그 프레임에만 적용된다.
 - 장면·결과 코드·프레임 위치는 저장·내보내기·불러오기에 포함하고, 실행 중 상태와 annotation 초안은 작업 중에만 프레임별로 유지한다.
+- **AI 작업도 프레임별로 관리한다.** 요청·취소·진행 상태가 프레임마다 따로라서, 한 프레임에서 생성 중에 다른 프레임을 눌러도 그 생성은 끊기지 않고 끝까지 진행되어 그 프레임에 결과가 들어간다. 여러 프레임에서 동시에 생성할 수도 있다. 생성 중인 프레임은 헤더에 "AI 작업 중"이 보이고 ×로 그 프레임의 작업만 취소한다(하단 Cancel은 지금 프레임의 작업). 다른 프레임에 있는 동안 끝난 작업은 화면을 그 프레임으로 끌고 가지 않는다(Extract·Compose로 생긴 새 프레임도 자리만 만들어진다). 프로젝트를 열거나 새로 만들 때만 모든 프레임의 작업을 멈춘다.
 
 ## 12. Semantic pen과 Compose
 
@@ -186,7 +189,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 - 각 프레임 헤더의 휴지통 버튼으로 프레임을 삭제한다. 프레임을 삭제하면 그림·사진·장면·결과·패널·Undo/Redo·선택 상태를 함께 정리하고, 다른 프레임은 유지한다(추출된 프레임은 원본과 독립적이다).
 - 선택된 프레임을 삭제하면 남은 프레임으로 선택을 옮긴다. 기본 원본 스케치도 삭제할 수 있으며(내용을 비우고 숨김) **Add sketch frame**으로 다시 표시한다.
-- 삭제 상태는 로컬 저장과 JSON 내보내기·불러오기에 반영한다. AI 생성 중에는 삭제를 막고, 오래된 비동기 결과가 삭제된 프레임을 되살리지 않게 한다.
+- 삭제 상태는 로컬 저장과 JSON 내보내기·불러오기에 반영한다. 그 프레임이 AI 생성 중일 때는 그 프레임의 삭제를 막고(다른 프레임은 삭제할 수 있고 그 프레임들의 생성은 계속된다), 오래된 비동기 결과가 삭제된 프레임을 되살리지 않게 한다.
 
 ## 19. 이전 형식 호환 없음
 
@@ -211,7 +214,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 22. Brush: Collection → Brush Stamp
 
 - **이름**: 화면에서는 Collection을 **Brush Stamp**라고 부른다(레이어 패널, 우측 패널, 새로 만들기·그룹·해제, 안내 문구). 데이터와 AI 프롬프트 안에서는 여전히 `collection`이고 기능은 같다.
-- **Brush 자동 생성**: AI가 Collection을 만들 때마다(**Extract**, **Compose**) 그 장면의 **루트 Collection 하나당 brush 하나**가 툴바에 Brush tool group으로 생긴다. 중첩된 Collection은 그 brush의 부분이라 따로 만들지 않는다. 최대 32개이며 프로젝트에 저장된다. 원본 Collection에는 brush 표시(`brushId`)가 붙는다.
+- **Brush 자동 생성**: AI가 Collection을 만들 때마다(**Extract**, **Compose**) 그 장면의 **루트 Collection 하나당 brush 하나**가 툴바에 Brush tool group으로 생긴다. 중첩된 Collection은 그 brush의 부분이라 따로 만들지 않는다. 최대 32개이며 프로젝트에 저장된다. 원본 Collection에는 brush 표시(`brushId`)가 붙는다. 찍은 복사본도 이 표시를 이어받아 그 brush의 Inspection 도구로 검사할 수 있다. 원본 프레임을 지워도 brush는 저장된 장면·코드 사본으로 계속 찍히고, 그 복사본에도 표시가 붙는다(예전에 표시 없이 찍힌 복사본은 brush의 노드 id로 알아본다).
 - **Brush tool group 동작**
   - 그룹 버튼을 처음 누르면 그 그룹의 도구(기본은 Brush)가 선택된다.
   - 이미 선택된 그룹을 다시 누르면 도구 패널이 열리고, 한 번 더 누르면 닫힌다(Esc로도 닫힘).

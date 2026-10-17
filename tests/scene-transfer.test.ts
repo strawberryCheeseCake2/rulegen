@@ -131,3 +131,55 @@ test("Extract puts the scene into a NEW sketch frame beside the source and rende
   assert.deepEqual(brushes.map(brush => [brush.name, brush.nodeId, brush.sourceFrameId]), [["Tree", "tree", "sketch-derived"]], "the AI-made root collection became a brush");
   assert.equal(derived.scene.nodes.find(node => node.id === "tree")?.brushId, "brush-1");
 });
+
+test("regenerating a transformation rewrites the frame's code right away, so the running result does the new thing", async () => {
+  const { sceneAI } = await import("../app/studio/scene-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const { sampleScene, sceneProgram } = await import("./fixtures/scene");
+  const { connectScene } = await import("../app/server/scene-code.server");
+  const scene = sampleScene(), generated = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene);
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: { ...createSketchPanel({ scene }), generated } };
+  const requests: { intent: string; body: any }[] = [];
+  const deps = {
+    panel: (id: string) => panels[id], activate: () => {}, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined,
+    updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    request: async (intent: string, body: any) => {
+      requests.push({ intent, body });
+      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "tree" ? { ...node, transformations: node.transformations.map((item: any) => item.id === "ink-wash" ? { ...item, label: "Speed ink", description: "속도에 따라" } : item) } : node) };
+      return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
+    },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
+  } as any;
+  await sceneAI(deps, "a").regenerate("tree", { transformationId: "ink-wash" }, "속도에 따라 바뀌게");
+  assert.deepEqual(requests.map(r => r.intent), ["transform", "code"]);
+  assert.equal(requests[0].body.instruction, "속도에 따라 바뀌게");
+  assert.match(requests[1].body.instruction, /"Speed ink" \(ink-wash\) of node "Tree"[\s\S]*was just regenerated/);
+  assert.equal(panels.a.generated?.code.includes("rulegenModule(\"tree\", function (m) { return { draw() {} }; })"), true, "the new code is in place");
+  assert.deepEqual(panels.a.dirtyNodeIds, []);
+});
+
+test("AI work keeps running per frame: a frame made after the user moved away appears without taking the view", async () => {
+  const { sceneAI } = await import("../app/studio/scene-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const { aiScene } = await import("./fixtures/scene");
+  const { convertScene } = await import("../app/lib/scene/convert");
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { source: createSketchPanel(), other: createSketchPanel() };
+  const activated: string[] = [], focused: string[] = [];
+  let active = "source";
+  const deps = {
+    panel: (id: string) => panels[id], toast: () => {}, activate: (id: string) => activated.push(id), focus: (id: string) => focused.push(id), active: () => active,
+    updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    // The user switches to another frame while the AI is working.
+    request: async (intent: string) => { active = "other"; return intent === "extract" ? convertScene(structuredClone(aiScene)) : { title: "Tree", explanation: "", code: "p.setup=()=>{p.createCanvas(900,600);};" }; },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
+    createFrame: () => { panels.derived = createSketchPanel(); return "derived"; },
+    documentId: () => 1, requestId: () => 1, addPen: () => {}, clip: () => null, setClip: () => {}, addBrushes: () => [], preview: () => undefined,
+  } as any;
+  await sceneAI(deps, "source").extract();
+  assert.equal(panels.derived.generated?.title, "Tree", "the work finished in its own frame");
+  assert.deepEqual(activated, []); assert.deepEqual(focused, []);
+});

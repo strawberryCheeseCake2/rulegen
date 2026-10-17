@@ -83,6 +83,12 @@ test("AI adds a new stacked transformation or replaces one in place, keeping pro
     assert.deepEqual(next.transformations.map(item => [item.id, item.label]), [["branching-growth", "Branching growth"], ["ink-wash", "Wind sway"]], "replaced in place, id kept");
     assert.equal(next.transformations[1].properties[0].id, "ink", "its own old ids are free to reuse");
     assert.equal(JSON.parse(calls[1].input[0].content[0].text).mode, "replace");
+    // The user's text and the annotation drawn on the frame go with the request.
+    await runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "tree", targetTransformationId: "ink-wash", instruction: "더 번지게", transformMarks: [[{ x: .2, y: .3 }, { x: .4, y: .5 }]], image: "data:image/png;base64,AAAA" }), signal());
+    const context = JSON.parse(calls[2].input[0].content[0].text);
+    assert.equal(context.instruction, "더 번지게");
+    assert.deepEqual(context.annotationMarks, [[{ x: .2, y: .3 }, { x: .4, y: .5 }]]);
+    assert.match(calls[2].instructions, /annotationMarks/);
   });
   assert.match(loadPrompt("transform"), /"add"[\s\S]*"replace"[\s\S]*"property"/);
   assert.match(loadPrompt("extract"), /STACK of semantic transformations/);

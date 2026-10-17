@@ -5,7 +5,7 @@ import { connectScene } from "../app/server/scene-code.server";
 import { programModules, sceneInstances } from "../app/lib/scene/machines";
 import { sceneLiveStatus } from "../app/lib/scene/live";
 import { stampModule } from "../app/lib/scene/stamp";
-import { brushesFor, markBrushes } from "../app/lib/brushes";
+import { brushesFor, brushNodeIds, markBrushes } from "../app/lib/brushes";
 import { createSketchPanel } from "../app/lib/sketch-panels";
 import { applyBrush, brushModule } from "../app/studio/brush-actions";
 
@@ -63,4 +63,21 @@ test("using a brush never calls AI: the module comes from the source frame's pro
   const bare = { ...brush, code: "" };
   panels["sketch-a"] = { ...panels["sketch-a"], generated: null };
   assert.equal(brushModule(deps, bare), null);
+});
+
+test("a brush whose source frame was deleted still stamps inspectable copies (and older unmarked stamps are recognised)", () => {
+  const scene = sampleScene(), [brush] = brushesFor(scene, "gone", [], () => "brush-1");
+  const saved = { ...brush, code: moduleOf(generated().code).text };
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { "sketch-b": createSketchPanel() };
+  const deps = {
+    panel: (id: string) => panels[id], artwork: (id: string) => panels[id] ? { name: id, photo: null, strokes: [], revision: 0 } : undefined,
+    updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; },
+    request: async () => ({}), task: async () => {}, activate: () => {}, toast: () => {}, focus: () => {},
+  } as any;
+  applyBrush(deps, saved, "sketch-b", [{ x: 450, y: 300, t: 0 }]);
+  const target = panels["sketch-b"].scene;
+  assert.equal(target.nodes.filter(node => node.brushId === brush.id).length, 1, "the copy carries the brush mark");
+  assert.ok(brushNodeIds(target, brush, "sketch-b").length > 1, "inspection finds the stamp and its members");
+  const unmarked = { ...target, nodes: target.nodes.map(({ brushId: _drop, ...node }) => node) };
+  assert.ok(brushNodeIds(unmarked, brush, "sketch-b").includes("tree"), "an older unmarked stamp is recognised by the brush's node id");
 });

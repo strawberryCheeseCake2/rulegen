@@ -4,6 +4,7 @@ import type { SlotChoice } from "../../lib/scene/panel-ops";
 import { useEffect, useState } from "react";
 import { ALGORITHM_DRAG_TYPE, readAlgorithmDrag, type AlgorithmClip } from "../../lib/scene/transfer";
 import { Icon } from "../icons";
+import type { TransformDraft, TransformTarget } from "../../lib/sketch-panels";
 import { ValueSocket } from "./value-editor";
 import { useContextMenu } from "./context-menu";
 
@@ -24,8 +25,12 @@ export type PropertyInspectorProps = {
   onRemoveProperty: (propertyId: string) => void;
   onAddProperty: (algorithmId: string, transformationId: string) => void;
   onAddBlock: (clip: AlgorithmClip, transformationId: string) => void;
-  /** AI: one property, one transformation, or (empty target) a new stacked transformation. */
-  onRegenerate: (target: { transformationId?: string; propertyId?: string }) => void;
+  /** AI: open the regeneration composer for one property, one transformation, or (empty target) a new stacked transformation. */
+  onRegenerate: (target: TransformTarget) => void;
+  /** The open regeneration of this node (its text and frame annotation), and its actions. */
+  draft?: TransformDraft | null;
+  onDraftChange?: (patch: Partial<Pick<TransformDraft, "instruction" | "annotating" | "marks">>) => void;
+  onDraftSubmit?: () => void; onDraftCancel?: () => void;
   /** Open a new frame that renders only this transformation. */
   onMinimalExample?: (transformationId: string) => void;
   /** A constraint picked in inspection: its card is highlighted and scrolled into view. */
@@ -65,6 +70,34 @@ function StateDetails({ node, state, onState, onTransition }: Pick<PropertyInspe
   </section>;
 }
 
+const sameTarget = (a: TransformTarget, b: TransformTarget) => (a.transformationId || "") === (b.transformationId || "") && (a.propertyId || "") === (b.propertyId || "");
+
+/**
+ * Regenerate with AI: says what is attached (a property, a transformation, or a
+ * new transformation), takes how to change it and an annotation drawn on the frame.
+ */
+function RegenerateComposer({ props, what }: { props: PropertyInspectorProps; what: string }) {
+  const draft = props.draft!, busy = props.busy;
+  const kind = draft.target.propertyId ? "Property" : draft.target.transformationId ? "Transformation" : "New transformation";
+  return <form className="regenerate-composer" aria-label="Regenerate with AI" onSubmit={e => { e.preventDefault(); props.onDraftSubmit?.(); }}>
+    <span className="section-kicker">REGENERATE WITH AI</span>
+    <div className="inspection-chips"><span className="machine-attachment"><Icon name="spark" size={12} /><b>{kind}</b>{what} 첨부됨</span></div>
+    <textarea aria-label="How to regenerate" maxLength={2000} rows={3} autoFocus placeholder={draft.target.transformationId || draft.target.propertyId ? "어떻게 바꿀지 적어주세요. 예: 가지가 위로 갈수록 더 가늘어지게" : "어떤 transformation을 더할지 적어주세요. 예: 바람에 흔들리게"}
+      value={draft.instruction} onChange={e => props.onDraftChange?.({ instruction: e.target.value })} />
+    <div className="regenerate-annotation">
+      {draft.marks.length > 0 ? <span className="machine-attachment machine-attachment-annotation"><Icon name="pen" size={12} /><b>Annotation</b>{draft.marks.length}획 첨부됨
+        <button type="button" aria-label="Clear annotation" onClick={() => props.onDraftChange?.({ marks: [] })}><Icon name="close" size={11} /></button></span>
+        : <span className="inspection-muted">프레임에 그려서 바꿀 곳을 짚어줄 수 있어요.</span>}
+      <button type="button" className={draft.annotating ? "active" : ""} aria-pressed={draft.annotating} onClick={() => props.onDraftChange?.({ annotating: !draft.annotating })}>
+        <Icon name="pen" size={12} />{draft.annotating ? "Done drawing" : "Draw on frame"}</button>
+    </div>
+    <div className="regenerate-actions">
+      <button type="submit" className="primary" disabled={busy}><Icon name="spark" size={12} />{busy ? "Regenerating…" : "Regenerate"}</button>
+      <button type="button" onClick={props.onDraftCancel}>Cancel</button>
+    </div>
+  </form>;
+}
+
 /** An empty socket at the end of the list: drop (or pick) a block to add a property. */
 function NewSocket({ library, busy, onAdd, onDrop }: { library: Algorithm[]; busy: boolean; onAdd: (id: string) => void; onDrop: (clip: AlgorithmClip) => void }) {
   const [over, setOver] = useState(false);
@@ -86,6 +119,7 @@ function PropertyCard({ property, props, openMenu }: { property: Property; props
       {!state && <button className="subfeature-regenerate" aria-label={`Regenerate ${property.label}`} title="Regenerate this property with AI" onClick={() => props.onRegenerate({ propertyId: property.id })}><Icon name="spark" size={12} /></button>}
       {!state && <button className="remove-control" aria-label={`Delete ${property.label} property`} title="Delete property" onClick={() => props.onRemoveProperty(property.id)}><Icon name="close" size={13} /></button>}
     </div>
+    {props.draft && sameTarget(props.draft.target, { propertyId: property.id }) && <RegenerateComposer props={props} what={property.label} />}
     {property.description && <p className="property-description">{property.description}</p>}
     <ValueSocket value={property.value} label={property.label} path={[]} library={library} clip={props.clip} allowSwap={!state} root openMenu={openMenu} clipFor={path => props.clipFor(property.id, path)}
       onScalar={(path, value) => props.onScalar(property.id, path, value)} onSwap={(path, choice) => props.onSwap(property.id, path, choice)}
@@ -107,6 +141,7 @@ function TransformationCard({ transformation, index, count, roomInNode, props, o
         <button aria-label={`Delete ${name} transformation`} title="Delete transformation and its properties" disabled={busy} onClick={() => props.onRemoveTransformation(transformation.id)}><Icon name="close" size={13} /></button>
       </span>}
     </div>
+    {props.draft && sameTarget(props.draft.target, { transformationId: transformation.id }) && <RegenerateComposer props={props} what={name} />}
     {!state && props.onMinimalExample && <button className="minimal-example-button" disabled={busy || !transformation.properties.length} title="Open a new sketch frame that renders only this transformation, to try it in isolation"
       onClick={() => props.onMinimalExample!(transformation.id)}><Icon name="play" size={11} />Create Minimal Example</button>}
     <textarea aria-label={`${name} transformation description`} maxLength={1000} rows={2} value={transformation.description} disabled={Boolean(state)} onChange={e => props.onTransformation(transformation.id, { description: e.target.value })} />
@@ -136,6 +171,7 @@ export function PropertyInspector(props: PropertyInspectorProps) {
       {transformations.map((transformation, index) => <TransformationCard key={transformation.id} transformation={transformation} index={index} count={transformations.length} roomInNode={roomInNode} props={props} openMenu={openMenu} />)}
       {!transformations.length && <p className="empty-panel">No semantic transformations yet. Add one, or let AI propose one.</p>}
     </div>
+    {props.draft && sameTarget(props.draft.target, {}) && <RegenerateComposer props={props} what={node.name} />}
     <div className="inspector-actions">
       {canStack && <button className="copy-button" disabled={busy} onClick={props.onAddTransformation}>+ Add transformation</button>}
       {canStack && <button className="alternative-button" disabled={busy} onClick={() => props.onRegenerate({})}><Icon name="spark" size={14} />Add transformation with AI</button>}

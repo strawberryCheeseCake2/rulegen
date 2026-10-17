@@ -52,3 +52,21 @@ test("each semantic transformation card offers Create Minimal Example", () => {
   const html = renderToStaticMarkup(createElement(PropertyInspector, props as never));
   assert.equal(html.match(/Create Minimal Example/g)?.length, node.transformations.length);
 });
+
+test("regenerating opens a composer with what is attached, a text box and drawing on the frame", () => {
+  const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
+  const render = (draft: unknown) => renderToStaticMarkup(createElement(PropertyInspector, new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, draft } as Record<string, unknown>,
+    { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  assert.doesNotMatch(render(null), /REGENERATE WITH AI/, "nothing runs or opens until a regenerate button is pressed");
+  const html = render({ nodeId: "tree", target: { transformationId: "ink-wash" }, instruction: "", annotating: false, marks: [] });
+  assert.equal(html.match(/REGENERATE WITH AI/g)?.length, 1);
+  assert.match(html, /<b>Transformation<\/b>[^<]*첨부됨/); assert.match(html, /Draw on frame/); assert.match(html, /aria-label="How to regenerate"/);
+  const drawn = render({ nodeId: "tree", target: {}, instruction: "흔들리게", annotating: true, marks: [[{ x: .1, y: .1 }, { x: .2, y: .2 }]] });
+  assert.match(drawn, /<b>New transformation<\/b>/); assert.match(drawn, /Annotation<\/b>1획 첨부됨/); assert.match(drawn, /Done drawing/);
+});
+
+test("the bottom panel (code, state machine, inspection) has a height handle on its top edge", async () => {
+  const { RawCodePanel } = await import("../app/components/raw-code-panel");
+  const html = renderToStaticMarkup(createElement(RawCodePanel, { code: "p.circle(1,1,1);", sketchName: "A", fileName: "a", onCopy: () => {}, onError: () => {} }));
+  assert.match(html, /role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel"/);
+});

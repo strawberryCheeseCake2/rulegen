@@ -50,7 +50,9 @@ test("stamped copies stay inspectable as the brush; the live source is preferred
   assert.equal(twice.scene.nodes.filter(node => node.brushId === brush.id).length, 2);
   assert.equal(brushNodeIds(twice.scene, brush, "sketch-b").length, 4, "both stamps with their members");
   assert.deepEqual(brushNodeIds(scene, brush, "sketch-a").sort(), ["orb", "tree"], "the source frame by node id");
-  assert.deepEqual(brushSource(brush, undefined), brush.scene, "the saved copy when the source is gone");
+  const fallback = brushSource(brush, undefined);
+  assert.deepEqual(fallback.nodes.map(node => node.id), brush.scene.nodes.map(node => node.id), "the saved copy when the source is gone");
+  assert.equal(fallback.nodes.find(node => node.id === brush.nodeId)?.brushId, brush.id, "and its root carries the brush mark");
 });
 
 test("a click stamps once, a drag paints stamps along the stroke or drives a drag brush", () => {

@@ -47,11 +47,15 @@ export type SketchPanel = SavedSketchPanel & {
   machineTarget: (MachineTarget & { nodeId: string }) | null;
   /** The open refinement of a node's machine: its text and the annotation drawn on the graph. */
   machineDraft: MachineDraft;
-  /** Inspection of one brush in this frame: recorded steps, cursor, annotation, AI result. */
   /** Inspection per brush (recorded steps, annotation draft, focus). */
   inspections: Record<string, InspectionState>;
+  /** An open AI regeneration of a transformation/property (or a new one): the user's text and the annotation drawn on the frame. */
+  transformDraft: TransformDraft | null;
 };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
+/** What a regeneration targets: a property, a transformation, or (neither) a new stacked transformation. */
+export type TransformTarget = { transformationId?: string; propertyId?: string };
+export type TransformDraft = { nodeId: string; target: TransformTarget; instruction: string; annotating: boolean; marks: { x: number; y: number }[][] };
 export const emptyMachineDraft = (nodeId = ""): MachineDraft => ({ nodeId, open: false, instruction: "", annotating: false, strokes: [] });
 export function clearedResultAnnotations(): Partial<SketchPanel> {
   return { annotating: false, annotationImage: "", annotationSource: "", annotationHistory: emptyAnnotationHistory(), clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null };
@@ -61,7 +65,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {} };
+    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

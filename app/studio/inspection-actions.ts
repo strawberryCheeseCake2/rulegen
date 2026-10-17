@@ -7,6 +7,7 @@ import type { ScalarValue } from "../lib/scene/schema";
 import { sceneBindings } from "../lib/scene/values";
 import type { SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
+import { annotatedImage, compactMarks } from "./annotated-image";
 import type { StudioDeps } from "./deps";
 
 type Change = { key: string; stateId: string; value: number | string | boolean };
@@ -16,17 +17,6 @@ type Recommendation = InspectResult["recommendations"][number];
 export const inspectionFor = (panel: SketchPanel, brushId: string): InspectionState => panel.inspections[brushId] ?? emptyInspection(brushId);
 /** Panel patch storing one brush's inspection. */
 export const withInspection = (panel: SketchPanel, state: InspectionState) => ({ inspections: { ...panel.inspections, [state.brushId]: state } });
-
-/** Draw the inspection annotation over the image AI looks at. */
-async function annotated(image: string, marks: InspectionState["marks"]) {
-  if (!marks.length) return image;
-  const base = new Image(); base.src = image; await base.decode();
-  const canvas = document.createElement("canvas"); canvas.width = base.naturalWidth; canvas.height = base.naturalHeight;
-  const ctx = canvas.getContext("2d")!; ctx.drawImage(base, 0, 0);
-  ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = Math.max(3, canvas.width / 260); ctx.lineCap = "round"; ctx.lineJoin = "round";
-  for (const mark of marks) { ctx.beginPath(); mark.forEach((p, i) => i ? ctx.lineTo(p.x * canvas.width, p.y * canvas.height) : ctx.moveTo(p.x * canvas.width, p.y * canvas.height)); ctx.stroke(); }
-  return canvas.toDataURL("image/png");
-}
 
 /** Set scalar values (base or a state's) in one undo step. Values of the wrong type are skipped. */
 export function applyChanges(deps: StudioDeps, owner: string, changes: Change[]) {
@@ -58,13 +48,13 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
   const snapshot = JSON.stringify(panel.scene), out: { result?: InspectResult } = {};
   await deps.task("AI가 이 concern에 맞는 targeted inspection을 만들고 있습니다…", async () => {
     // The result is held at the selected step, so the live capture shows that moment.
-    const image = await annotated((await deps.capture(owner, true)).image, draft.marks);
+    const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks);
     const rows = constraintRows(panel.scene, nodeIds);
     const result = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image,
       inspection: { brushName: brush.name, nodeIds, cursor: state.cursor,
         constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: item.values, runtime: runtimeForAI(item, nodeIds) })),
-        marks: draft.marks.slice(0, 64).map(mark => mark.filter((_, i) => i % Math.max(1, Math.ceil(mark.length / 64)) === 0).slice(0, 64)) } }, owner));
+        marks: compactMarks(draft.marks) } }, owner));
     if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("검사 중 장면이 변경되었습니다. 다시 시도해주세요.");
     out.result = result;
   }, owner);

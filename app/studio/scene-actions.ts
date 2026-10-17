@@ -1,4 +1,5 @@
 import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
+import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
 import { compositionContext } from "../lib/algorithm-pens";
 import { emptyMachineDraft, type SketchPanel } from "../lib/sketch-panels";
 import { markBrushes } from "../lib/brushes";
@@ -163,8 +164,22 @@ async function sketchContext(deps: StudioDeps, owner: string) {
   return { artwork, image: (await deps.capture(owner, true)).image, ...compositionContext(artwork) };
 }
 
+/** Whether the user is still on this frame (unknown: assume yes). */
+const stillHereFor = (deps: StudioDeps) => (frame: string) => !deps.active || deps.active() === frame;
+
+/** How a regenerated part is named to the code step: the transformation (or property) and its node. */
+function describeTarget(scene: Scene, nodeId: string, target: { transformationId?: string; propertyId?: string }) {
+  const node = findNode(scene, nodeId);
+  if (!node) return "A semantic transformation";
+  const owner = target.propertyId ? node.transformations.find(item => item.properties.some(property => property.id === target.propertyId))
+    : target.transformationId ? node.transformations.find(item => item.id === target.transformationId) : node.transformations.at(-1);
+  const property = target.propertyId ? owner?.properties.find(item => item.id === target.propertyId) : undefined;
+  return `${property ? `Property "${property.label}" (${property.id}) of ` : ""}semantic transformation "${owner?.label ?? ""}" (${owner?.id ?? ""}) of node "${node.name}" (${node.id})`;
+}
+
 /** AI-backed scene actions for one sketch panel. */
 export function sceneAI(deps: StudioDeps, owner: string) {
+  const stillHere = stillHereFor(deps);
   const fresh = (document: number, revision: number | undefined) => document === deps.documentId() && revision === deps.artwork(owner)?.revision;
   async function generateCode(repair = false, instructionOverride?: string) {
     const panel = deps.panel(owner);
@@ -181,15 +196,15 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       deps.updatePanel(owner, { scene, generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [] });
       // Brushes made from this frame keep a copy of their module for when the frame is gone.
       deps.refreshBrushCode?.(owner, result.code);
-      deps.focus(owner as FrameId);
+      if (stillHere(owner)) deps.focus(owner as FrameId);
     }, owner);
   }
   async function draftComposePrompt() {
     const previous = deps.panel(owner).composePrompt, document = deps.documentId(), revision = deps.artwork(owner)?.revision;
     await deps.task(compositionPromptLabel, async () => {
-      const number = deps.requestId(), context = await sketchContext(deps, owner);
+      const number = deps.requestId(owner), context = await sketchContext(deps, owner);
       const result = compositionPromptSchema.parse(await deps.request("compose-prompt", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: previous }, owner));
-      if (number !== deps.requestId() || document !== deps.documentId()) return;
+      if (number !== deps.requestId(owner) || document !== deps.documentId()) return;
       if (!fresh(document, revision) || previous !== deps.panel(owner).composePrompt) throw new Error("스케치 또는 prompt가 변경되었습니다. AI prompt를 다시 만들어주세요.");
       deps.updatePanel(owner, { composePrompt: result.prompt });
       deps.toast("AI가 Compose prompt를 작성했습니다. 설명을 확인하거나 수정한 뒤 Compose sketch를 눌러주세요.");
@@ -202,7 +217,8 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     // Collections AI made become reusable brushes in the toolbar.
     if (brushes) scene = markBrushes(scene, deps.addBrushes(id, scene));
     deps.updatePanel(id, panel => ({ ...ops.commitScene(panel, scene), sourceFrameId: owner, analysisRevision: revision, instruction: deps.panel(owner).instruction, pendingResult: true, ...extra }));
-    deps.activate(id); deps.focus(id as FrameId);
+    // A frame made by AI work the user has moved away from appears without taking the view.
+    if (stillHere(owner)) { deps.activate(id); deps.focus(id as FrameId); }
     return id;
   }
   async function renderDerived(id: string, instruction?: string) {
@@ -245,15 +261,24 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       if (id) { deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다. 결과를 생성하는 중입니다…`); await renderDerived(id, instruction); }
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. */
-    async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string) {
+    async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {
       const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
+      const done: { changed?: { scene: Scene; label: string } } = {};
       const message = target.propertyId ? "이 property의 구현만 다시 만들고 있습니다…" : target.transformationId ? "이 semantic transformation을 다시 만들고 있습니다…" : "새 semantic transformation을 만들고 있습니다…";
       await deps.task(message, async () => {
         const scene = sceneSchema.parse(await deps.request("transform", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
-          alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction ?? panel.instruction, image: (await deps.capture(owner, true)).image }, owner));
+          alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction?.trim() || panel.instruction, transformMarks: compactMarks(marks),
+          image: await annotatedImage((await deps.capture(owner, true)).image, marks) }, owner));
         if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
-        deps.updatePanel(owner, current => ops.commitScene(current, scene, [nodeId]));
+        deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), transformDraft: null }));
+        done.changed = { scene: deps.panel(owner).scene, label: describeTarget(scene, nodeId, target) };
       }, owner);
+      // The running code still does the old thing: rewrite it from the new descriptions right away.
+      const changed = done.changed;
+      if (changed && deps.panel(owner).generated && JSON.stringify(deps.panel(owner).scene) === JSON.stringify(changed.scene)) {
+        const panelNow = deps.panel(owner), base = panelNow.generationMode === "compose" ? panelNow.composePrompt : panelNow.instruction;
+        await generateCode(false, `${base}\n${changed.label} was just regenerated: implement its NEW description and algorithms exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
+      }
     },
     async generateMachine(nodeId: string) {
       const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);

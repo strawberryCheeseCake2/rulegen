@@ -21,7 +21,10 @@ export type StudioDeps = {
   capture: (owner: string, full?: boolean) => Promise<{ image: string; region: Region }>;
   artwork: (owner: string) => Artwork | undefined;
   documentId: () => number;
-  requestId: () => number;
+  /** The frame's current request number (changes when its work is cancelled or replaced). */
+  requestId: (owner: string) => number;
+  /** The frame the user is on now (AI work that finishes elsewhere does not pull the view back). */
+  active?: () => string;
   toast: (message: string) => void;
   focus: (frame: FrameId) => void;
   addPen: (make: (id: string, color: string) => SemanticPen) => void;
