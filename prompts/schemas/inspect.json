@@ -176,6 +176,15 @@
             "type": "string",
             "maxLength": 80
           },
+          "targetIds": {
+            "default": [],
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
           "title": {
             "type": "string",
             "minLength": 1,
@@ -227,6 +236,7 @@
           "kind",
           "nodeId",
           "targetId",
+          "targetIds",
           "title",
           "detail",
           "changes"

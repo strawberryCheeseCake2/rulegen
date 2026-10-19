@@ -11,13 +11,23 @@ export type CodePreviewHandle = {
   pointer: (kind: "mousemove" | "mousedown" | "mouseup", x: number, y: number) => void;
   /** Whether the running sketch is this program (ignoring live values). */
   isReadyFor: (executable: string) => boolean;
+  /**
+   * Add a (prepared) module to the running sketch in place: it is registered at
+   * once, and `executable` (the program with it) is then taken without a reload,
+   * so new instances of it start right away and nothing that runs is reset.
+   */
+  inject: (module: string, executable: string) => void;
 };
 /** A state change (or manual capture) recorded by the running sketch, with its runtime snapshot (module stores, machine states, random seed). */
 export type TraceStep = { nodeId: string | null; from: string | null; to: string | null; transitionId: string | null; params: Record<string, unknown>; runtime: unknown };
 /** A recorded step to hold the running sketch at (null: run live). */
 export type RestorePoint = { id: string; runtime: unknown } | null;
 export type StateJump = { nodeId: string; stateId: string; revision: number } | null;
-type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; onStatesChange?: (states: Record<string, string>) => void };
+type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean;
+  /** Show the running sketch (a hidden one is not drawn by the browser) without giving it input. */
+  visible?: boolean;
+  /** Esc pressed inside the running sketch (it has the keyboard while it takes input). */
+  onEscape?: () => void; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; onStatesChange?: (states: Record<string, string>) => void };
 
 /**
  * Runs a prepared sketch in an isolated iframe. The sketch is reloaded only when
@@ -31,7 +41,12 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
   const tokenRef = useRef(""), loaded = useRef(""), ready = useRef(false), sentJump = useRef<number | null>(null), sentRestore = useRef<string | null>(null), lastStates = useRef(""), sentValues = useRef("");
   const [document, setDocument] = useState("");
   const [image, setImage] = useState("");
-  const structure = sceneStructureKey(executable);
+  // Programs taken in place (a module injected) map to the program actually loaded; anything else reloads.
+  const aliases = useRef(new Map<string, string>());
+  // The first program starts at once; later ones wait a moment, so rapid changes reload once.
+  const firstLoad = useRef(true);
+  const resolve = (key: string) => aliases.current.get(key) ?? key;
+  const structure = resolve(sceneStructureKey(executable));
   const post = (message: object) => frame.current?.contentWindow?.postMessage({ channel: "rulegen-control", token: tokenRef.current, ...message }, "*");
   const sendControls = () => {
     if (!tokenRef.current || !ready.current) return;
@@ -54,37 +69,43 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
   };
   useImperativeHandle(ref, () => ({ capture: () => image, emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
     isReady: () => ready.current, replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
-    pointer: (kind, x, y) => post({ type: "pointer", kind, x, y }), isReadyFor: executable => ready.current && loaded.current === sceneStructureKey(executable) }));
+    // A forwarded press focuses the sketch, as a real one would: sketches may ignore input while unfocused (p5 focused), and keys then reach it.
+    pointer: (kind, x, y) => { if (kind === "mousedown" && window.document.activeElement !== frame.current) frame.current?.focus(); post({ type: "pointer", kind, x, y }); }, isReadyFor: executable => ready.current && loaded.current === resolve(sceneStructureKey(executable)),
+    inject: (module, executable) => { if (!ready.current) return; post({ type: "module", code: module }); aliases.current.set(sceneStructureKey(executable), loaded.current); } }));
   useEffect(sendControls, [props.jump?.revision, props.playing, props.tracing]);
   useEffect(sendValues, [executable]);
   useEffect(sendRestore, [props.restore?.id ?? null, Boolean(props.restore?.runtime)]);
   useEffect(() => {
     const token = crypto.randomUUID();
-    tokenRef.current = token; ready.current = false; loaded.current = structure; sentJump.current = null; sentRestore.current = null; lastStates.current = "";
+    tokenRef.current = token; ready.current = false; loaded.current = structure; aliases.current.clear(); sentJump.current = null; sentRestore.current = null; lastStates.current = "";
     sentValues.current = JSON.stringify(readSceneValues(current.current.executable));
     const script = current.current.executable.replace(/<\/script/gi, "<\\/script");
     const origin = window.location.origin;
     const send = `parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},error:String(error)},'*')`;
     const timer = setTimeout(() => setDocument(`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' ${origin}; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none';"><style>html,body{margin:0;overflow:hidden;background:#fffefa}canvas{display:block}</style><script src="${origin}/vendor/p5.min.js"></script></head><body><script>
-window.onerror=(error)=>{${send}};window.onunhandledrejection=(e)=>{const error=e.reason;${send}};
+window.onerror=(error)=>{${send}};addEventListener('keydown',e=>{if(e.key==='Escape')parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},escape:true},'*');});window.onunhandledrejection=(e)=>{const error=e.reason;${send}};
 let budget=0;function __rulegenGuard(){if(++budget>100000)throw new Error('Rendering budget exceeded. Reduce loops or recursion.')}
 try{new p5(p=>{${script}
 const setup=p.setup,draw=p.draw;let lastCapture=0,forceRender=true,wasLooping=true;
-const hasMachine=${machineEnabled} && typeof rulegenMachines !== 'undefined' && Object.keys(rulegenMachines).length>0;
+// Machines can arrive later (an injected module, new values), so this is asked each time.
+const hasMachine=()=>typeof rulegenMachines!=='undefined'&&Object.keys(rulegenMachines).length>0;
 let tracing=false,traceQueue=[],lastEmit=null;
 const paramsNow=()=>typeof rulegenParams!=='undefined'?Object.assign({},rulegenParams):{};
-if(hasMachine){
-  const emitBase=rulegenEmit;rulegenEmit=function(nodeId,transitionId){lastEmit={nodeId,transitionId};try{return emitBase(nodeId,transitionId);}finally{lastEmit=null;}};
-  const jumpBase=rulegenJumpState;rulegenJumpState=function(nodeId,id){
+// Each transition keeps the runtime state of its own moment: several can happen within one frame (a state left at once), and each step must restore to its own state.
+// A selected step (pinned) is held exactly: no transition happens and none is recorded while it is shown.
+let pinned=null,lastPlaying=true;
+const snapshotNow=()=>{try{return typeof rulegenSnapshot==='function'?rulegenSnapshot():null;}catch(error){return null;}};
+if(typeof rulegenEmit==='function'&&typeof rulegenJumpState==='function'){
+  const emitBase=rulegenEmit;rulegenEmit=function(nodeId,transitionId){if(pinned)return false;lastEmit={nodeId,transitionId};try{return emitBase(nodeId,transitionId);}finally{lastEmit=null;}};
+  const jumpBase=rulegenJumpState;rulegenJumpState=function(nodeId,id){if(pinned)return false;
     const from=rulegenState[nodeId]?rulegenState[nodeId].id:null,ok=jumpBase(nodeId,id);
     if(ok&&tracing){const timed=rulegenMachines[nodeId].transitions.find(item=>item.from===from&&item.to===id&&item.trigger==='after');
-      traceQueue.push({nodeId,from,to:id,transitionId:lastEmit&&lastEmit.nodeId===nodeId?lastEmit.transitionId:(timed?timed.id:null),params:paramsNow()});}
+      traceQueue.push({nodeId,from,to:id,transitionId:lastEmit&&lastEmit.nodeId===nodeId?lastEmit.transitionId:(timed?timed.id:null),params:paramsNow(),runtime:snapshotNow()});}
     return ok;};
 }
 // Steps keep the runtime state (not an image), so selecting one puts the running sketch back there.
-let pinned=null,lastPlaying=true;
-function flushTrace(){if(!traceQueue.length)return;let runtime=null;try{runtime=typeof rulegenSnapshot==='function'?rulegenSnapshot():null;}catch(error){runtime=null;}
-  const steps=traceQueue;traceQueue=[];steps.forEach(step=>parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},trace:Object.assign(step,{runtime})},'*'));}
+function flushTrace(){if(!traceQueue.length)return;let shared;
+  const steps=traceQueue;traceQueue=[];steps.forEach(step=>{if(step.runtime===undefined){if(shared===undefined)shared=snapshotNow();step.runtime=shared;}parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},trace:step},'*');});}
 let pointerDown=false;
 function fire(type,point){const canvas=document.querySelector('canvas');if(!canvas)return;if(type==='mousedown')pointerDown=true;if(type==='mouseup')pointerDown=false;
   const box=canvas.getBoundingClientRect();canvas.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,button:0,buttons:pointerDown?1:0,clientX:box.left+point.x*box.width/(p.width||box.width),clientY:box.top+point.y*box.height/(p.height||box.height)}));}
@@ -92,44 +113,49 @@ function replay(points){if(!points.length)return;
   fire('mousemove',points[0]);fire('mousedown',points[0]);
   points.slice(1).forEach(point=>setTimeout(()=>fire('mousemove',point),Math.max(0,point.t)));
   const last=points[points.length-1];setTimeout(()=>{fire('mouseup',last);fire('click',last);},Math.max(0,last.t)+16);}
-function capture(){const canvas=document.querySelector('canvas');if(canvas)parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},image:canvas.toDataURL('image/png'),states:hasMachine?Object.fromEntries(Object.keys(rulegenState).map(id=>[id,rulegenState[id].id])):null},'*');}
+// Draw the pinned step: its state is put back, drawn once, and put back again, so the sketch's own draw cannot move it on.
+function showPinned(){rulegenRestore(pinned);forceRender=true;p.redraw();rulegenRestore(pinned);}
+function capture(){const canvas=document.querySelector('canvas');if(canvas)parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},image:canvas.toDataURL('image/png'),states:hasMachine()?Object.fromEntries(Object.keys(rulegenState).map(id=>[id,rulegenState[id].id])):null},'*');}
 function rerender(){budget=0;if(typeof rulegenSetup==='function')rulegenSetup();else setup();forceRender=true;p.redraw();capture();}
 window.addEventListener('message',event=>{
   if(event.source!==parent || event.data?.channel!=='rulegen-control' || event.data.token!==${JSON.stringify(token)})return;
   try{budget=0;
     if(event.data.type==='control'){
-      if(hasMachine && typeof event.data.nodeId==='string' && typeof event.data.stateId==='string')rulegenJumpState(event.data.nodeId,event.data.stateId);
+      if(hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.stateId==='string')rulegenJumpState(event.data.nodeId,event.data.stateId);
       const playing=event.data.playing===true;lastPlaying=playing;
       if(typeof rulegenPlaying!=='undefined')rulegenPlaying=playing&&!pinned;
       const trace=event.data.tracing===true;if(trace&&!tracing)traceQueue.push({nodeId:null,from:null,to:null,transitionId:null,params:paramsNow()});tracing=trace;
       if(playing&&!pinned){if(wasLooping)p.loop();}else p.noLoop();
+    }else if(event.data.type==='module' && typeof event.data.code==='string' && typeof rulegenModule==='function'){eval(event.data.code);return;
     }else if(event.data.type==='replay' && Array.isArray(event.data.points)){replay(event.data.points.filter(point=>point&&Number.isFinite(point.x)&&Number.isFinite(point.y)&&Number.isFinite(point.t)));return;
     }else if(event.data.type==='pointer' && ['mousemove','mousedown','mouseup'].includes(event.data.kind) && Number.isFinite(event.data.x) && Number.isFinite(event.data.y)){fire(event.data.kind,{x:event.data.x,y:event.data.y});if(event.data.kind==='mouseup')fire('click',{x:event.data.x,y:event.data.y});return;
     }else if(event.data.type==='restore'){
-      if(event.data.snapshot&&typeof rulegenRestore==='function'){pinned=event.data.snapshot;rulegenRestore(pinned);if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();}
+      if(event.data.snapshot&&typeof rulegenRestore==='function'){pinned=event.data.snapshot;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();}
       else if(pinned){pinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;if(lastPlaying&&wasLooping)p.loop();}
-    }else if(event.data.type==='event' && hasMachine && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
+    }else if(event.data.type==='event' && hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
       Object.assign(rulegenBase,event.data.params||{});
       const machines=event.data.machines||{};for(const id of Object.keys(machines)){if(rulegenMachines[id])Object.assign(rulegenMachines[id],machines[id]);else{rulegenMachines[id]=machines[id];rulegenState[id]={id:machines[id].initialState,elapsed:0};}}
       for(const id of Object.keys(rulegenMachines))if(!machines[id]){delete rulegenMachines[id];delete rulegenState[id];}
       if(Array.isArray(event.data.instances)&&typeof rulegenInstances!=='undefined'){rulegenInstances.splice(0,rulegenInstances.length,...event.data.instances);rulegenSync();}
-      rulegenApply();if(pinned){rulegenRestore(pinned);forceRender=true;p.redraw();return;}rerender();return;
+      rulegenApply();if(pinned){showPinned();return;}rerender();return;
     }
     forceRender=true;p.redraw();
   }catch(error){${send}}
 });
 p.setup=()=>{budget=0;setup();wasLooping=typeof p.isLooping==='function'?p.isLooping():true;capture();parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},ready:true},'*');};
 p.draw=()=>{budget=0;try{
-  if(hasMachine && !rulegenPlaying && !forceRender)return;
+  if(hasMachine() && !rulegenPlaying && !forceRender)return;
   if(draw)draw();
   flushTrace();
   if(forceRender || performance.now()-lastCapture>150){capture();lastCapture=performance.now();}
   forceRender=false;
 }catch(error){p.noLoop();${send}}};
-});}catch(error){${send}}</script></body></html>`), 100);
+});}catch(error){${send}}</script></body></html>`), firstLoad.current ? 0 : 100);
+    firstLoad.current = false;
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.data?.channel !== "rulegen" || event.data.token !== token) return;
+      if (event.data.escape) { current.current.onEscape?.(); return; }
       if (event.data.ready) { ready.current = true; sentJump.current = null; sendControls(); sendValues(); sendRestore(); }
       if (typeof event.data.error === "string") current.current.onError(event.data.error.slice(0, 500));
       const trace = event.data.trace;
@@ -146,7 +172,7 @@ p.draw=()=>{budget=0;try{
       if (typeof event.data.image === "string" && /^data:image\/png;base64,/.test(event.data.image) && event.data.image.length < 8_000_000) setImage(event.data.image);
     };
     window.addEventListener("message", receive); return () => { clearTimeout(timer); window.removeEventListener("message", receive); };
-  }, [structure, machineEnabled]);
+  }, [structure]);
   // The last rendered image stays visible while a new program loads, so re-runs do not flash.
-  return <div className="isolated-code-render">{image ? <img src={image} alt="Generated p5.js visual output" /> : <span className="engine-loading">Rendering p5.js…</span>}<iframe ref={frame} className={`p5-code-preview isolated-engine-frame ${machineEnabled ? "live-state-engine" : ""} ${props.interactive ? "interactive-engine" : ""}`} title="Generated p5.js render engine" sandbox="allow-scripts" srcDoc={document} /></div>;
+  return <div className="isolated-code-render">{image ? <img src={image} alt="Generated p5.js visual output" /> : <span className="engine-loading">Rendering p5.js…</span>}<iframe ref={frame} className={`p5-code-preview isolated-engine-frame ${machineEnabled || props.visible ? "live-state-engine" : ""} ${props.interactive ? "interactive-engine" : ""}`} title="Generated p5.js render engine" sandbox="allow-scripts" srcDoc={document} /></div>;
 });

@@ -25,7 +25,7 @@ function highlightLines(code: string) {
   return lines;
 }
 
-const HEIGHT_KEY = "rulegen.bottomPanelHeight", MIN_HEIGHT = 100;
+const HEIGHT_KEY = "rulegen.bottomPanelHeight", MIN_HEIGHT = 100, SIDE_KEY = "rulegen.bottomSideWidth", MIN_SIDE = 260;
 
 export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, machinePanel, inspectionPanel, editor }: {
   code: string;
@@ -36,13 +36,19 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
   onCopy: () => void;
   onError: (message: string) => void;
   machinePanel?: ReactNode;
-  /** Shown while one of a brush's inspection tools is selected (the tab opens by itself). */
+  /** Shown while one of a brush's inspection tools is selected: its own pane beside Code / State Machine, so the graph stays in view. */
   inspectionPanel?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(true);
-  const [mode, setMode] = useState<"code" | "machine" | "inspect">("code");
+  const [mode, setMode] = useState<"code" | "machine">("code");
   const inspecting = Boolean(inspectionPanel);
-  useEffect(() => { if (inspecting) { setMode("inspect"); setExpanded(true); } else setMode(current => current === "inspect" ? "machine" : current); }, [inspecting]);
+  // Inspecting opens the panel with the state machine beside it (the inspected states are highlighted there).
+  useEffect(() => { if (inspecting) { setMode("machine"); setExpanded(true); } }, [inspecting]);
+  // The width of the Code / State Machine pane beside the inspection, dragged on its left edge; remembered in this browser.
+  const [side, setSide] = useState<number | null>(null);
+  const sidePane = useRef<HTMLDivElement>(null);
+  useEffect(() => { try { const saved = Number(localStorage.getItem(SIDE_KEY)); if (saved >= MIN_SIDE) setSide(saved); } catch { /* storage unavailable */ } }, []);
+  const resizeSide = (next: number | null) => { setSide(next); try { if (next === null) localStorage.removeItem(SIDE_KEY); else localStorage.setItem(SIDE_KEY, String(next)); } catch { /* storage unavailable */ } };
   const [editing, setEditing] = useState(false);
   // The panel's height (Code, State Machine and Inspection alike), dragged on its top edge; remembered in this browser.
   const [height, setHeight] = useState<number | null>(null);
@@ -64,7 +70,7 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
       <button className="raw-code-toggle" aria-label="Raw p5.js" title={expanded ? "Collapse bottom panel" : "Expand bottom panel"} aria-expanded={expanded} aria-controls="raw-p5-code" onClick={() => setExpanded(open => !open)}>
         <Icon name="code" size={16} /><strong>Raw p5.js</strong><Icon name="chevron" size={13} />
       </button>
-      {machinePanel && <div className="bottom-panel-modes" role="tablist" aria-label="Bottom panel mode"><button role="tab" aria-selected={mode === "code"} onClick={() => setMode("code")}><Icon name="code" size={13} />Code</button><button role="tab" aria-selected={mode === "machine"} onClick={() => setMode("machine")}><Icon name="grid" size={13} />State Machine</button>{inspectionPanel && <button role="tab" aria-selected={mode === "inspect"} onClick={() => setMode("inspect")}><Icon name="inspect" size={13} />Inspection</button>}</div>}
+      {machinePanel && <div className="bottom-panel-modes" role="tablist" aria-label="Bottom panel mode"><button role="tab" aria-selected={mode === "code"} onClick={() => setMode("code")}><Icon name="code" size={13} />Code</button><button role="tab" aria-selected={mode === "machine"} onClick={() => setMode("machine")}><Icon name="grid" size={13} />State Machine</button></div>}
       <span className="raw-code-sketch" title={sketchName}>{sketchName}</span>
       {code && mode === "code" && <span className="raw-code-count">{lines.length} lines</span>}
       <div className="raw-code-actions">
@@ -75,11 +81,22 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
       </div>
     </header>
     {expanded && mode === "code" && editor?.runtimeError && <div className="runtime-error raw-runtime-error" role="alert">{editor.runtimeError}<button disabled={editor.busy} onClick={editor.onFix}>Fix with AI</button></div>}
-    {expanded && (mode === "inspect" && inspectionPanel ? <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="machine-panel-content inspection-panel-content">{inspectionPanel}</div>
-      : mode === "machine" ? <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div> : <div ref={body} style={sized} id="raw-p5-code" role="tabpanel" className="raw-code-body">
+    {expanded && (() => {
+      const split = Boolean(inspectionPanel);
+      const pane = mode === "machine" ? <div ref={split ? undefined : body} style={split ? undefined : sized} id="raw-p5-code" role="tabpanel" className="machine-panel-content">{machinePanel}</div>
+        : <div ref={split ? undefined : body} style={split ? undefined : sized} id="raw-p5-code" role="tabpanel" className="raw-code-body">
       {editor && editing && code ? <textarea className="raw-code-editor" spellCheck={false} aria-label="Generated p5.js code" value={editor.draft} onChange={e => editor.onDraft(e.target.value)} />
         : code ? <pre tabIndex={0} aria-label="Raw p5.js source"><code>{lines.map((line, index) => <span className="raw-code-line" key={index}><span className="raw-code-number" aria-hidden="true">{index + 1}</span><span>{line.length ? line.map((segment, part) => <span key={part} className={segment.className || undefined}>{segment.text}</span>) : "\n"}</span></span>)}</code></pre>
         : <div className="raw-code-empty">No generated p5.js code</div>}
-    </div>)}
+    </div>;
+      if (!split) return pane;
+      return <div ref={body} style={sized} className="bottom-panel-split">
+        <section className="inspection-dock inspection-panel-content" aria-label="Inspection">{inspectionPanel}</section>
+        <div ref={sidePane} className="bottom-panel-side" style={side ? { width: side } : undefined}>
+          <PanelResizer label="Resize inspection and state machine panes" min={MIN_SIDE} max={typeof window === "undefined" ? 900 : Math.max(MIN_SIDE, Math.round(window.innerWidth * .7))}
+            measure={() => sidePane.current?.getBoundingClientRect().width ?? 420} onResize={resizeSide} onReset={() => resizeSide(null)} />
+          {pane}</div>
+      </div>;
+    })()}
   </section>;
 }

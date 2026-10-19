@@ -6,9 +6,8 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { sampleScene, withMockedAI } from "./fixtures/scene";
-import { brushesFor, brushNodeIds, brushSource, brushTool, dragGesture, markBrushes, parseBrushTool, type Brush } from "../app/lib/brushes";
-import { addStep, historyOverlays, layoutLabels, changedKeys, constraintRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema } from "../app/lib/inspection";
-import { alongPath, brushPlan } from "../app/studio/brush-actions";
+import { brushesFor, brushNodeIds, brushRole, brushRoots, brushSource, brushTool, detachedBrush, frameIds, markBrushes, parseBrushTool, sharedIds } from "../app/lib/brushes";
+import { addStep, remapResult, resultInFrame, historyOverlays, layoutLabels, changedKeys, constraintRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema } from "../app/lib/inspection";
 import { updateNode } from "../app/lib/scene/graph";
 import { transplantNodes } from "../app/lib/scene/transfer";
 import { sceneValues } from "../app/lib/scene/values";
@@ -29,15 +28,13 @@ const makeBrushes = (scene = sampleScene()) => brushesFor(scene, "sketch-a", [],
 
 test("every AI-made root collection becomes a brush; tool ids name the brush group", () => {
   const scene = sampleScene(), [brush] = makeBrushes(scene);
-  assert.equal(brush.nodeId, "tree"); assert.equal(brush.name, "Tree"); assert.equal(brush.gesture, "stamp");
+  assert.equal(brush.nodeId, "tree"); assert.equal(brush.name, "Tree");
   assert.deepEqual(brush.scene.nodes.map(node => node.id), ["tree", "orb"], "the brush keeps its members");
   assert.deepEqual(parseBrushTool(brushTool("inspect", brush.id)), { kind: "inspect", brushId: brush.id });
   assert.deepEqual(parseBrushTool(brushTool("targeted", brush.id, "t1")), { kind: "targeted", brushId: brush.id, targetedId: "t1" });
   assert.equal(parseBrushTool(`targeted:${brush.id}`), null, "a targeted tool always names its concern tool");
   assert.deepEqual(brush.targeted, [], "no targeted inspection tool until one is made");
   assert.equal(parseBrushTool("pen"), null); assert.equal(parseBrushTool("semantic"), null);
-  const dragging = updateNode(scene, "orb", node => ({ ...node, machine: { ...node.machine!, transitions: [...node.machine!.transitions, { id: "drag-star", from: "idle", to: "moving", label: "별 드래그", trigger: "event", afterMs: 1000 }] } }));
-  assert.equal(dragGesture(dragging, "tree"), true, "a drag transition below makes it a drag brush");
   assert.equal(projectSchema.parse({ version: 2, name: "P", artwork: { name: "A", photo: null, strokes: [], revision: 0 }, brushes: [brush] }).brushes[0].id, brush.id);
 });
 
@@ -55,15 +52,41 @@ test("stamped copies stay inspectable as the brush; the live source is preferred
   assert.equal(fallback.nodes.find(node => node.id === brush.nodeId)?.brushId, brush.id, "and its root carries the brush mark");
 });
 
-test("a click stamps once, a drag paints stamps along the stroke or drives a drag brush", () => {
-  const [brush] = makeBrushes(), path = [{ x: 100, y: 100, t: 0 }, { x: 500, y: 100, t: 400 }, { x: 800, y: 100, t: 700 }];
-  assert.deepEqual(brushPlan(brush, brush.scene, [{ x: 10, y: 10, t: 0 }]).stamps.length, 1);
-  const stroke = brushPlan(brush, brush.scene, path);
-  assert.ok(stroke.stamps.length > 1 && stroke.stamps.length <= 8 && !stroke.replay);
-  const drag = brushPlan({ ...brush, gesture: "drag" } as Brush, brush.scene, path);
-  assert.equal(drag.stamps.length, 1); assert.equal(drag.replay, true);
-  const spaced = alongPath(path, 100, 20);
-  for (let i = 1; i < spaced.length; i++) assert.ok(Math.abs(Math.hypot(spaced[i].x - spaced[i - 1].x, spaced[i].y - spaced[i - 1].y) - 100) < 1e-6);
+test("the source frame holds a brush's master, every stamp is an instance; detaching makes it the master of a new brush", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene), marked = markBrushes(scene, [brush]);
+  assert.deepEqual(brushRole(marked, "sketch-a", "orb", [brush]), { brush, rootId: "tree", master: true }, "a member of the master");
+  const stamped = transplantNodes(brushSource(brush, marked), brush.nodeId, { algorithms: [], nodes: [] }, { x: .3, y: .3 });
+  const member = stamped.ids.get("orb")!;
+  assert.deepEqual(brushRole(stamped.scene, "sketch-b", member, [brush]), { brush, rootId: stamped.rootId, master: false });
+  assert.equal(brushRole(scene, "sketch-b", "orb", [brush]), null, "the same ids in another frame, without the brush mark, are not the brush");
+  const made = detachedBrush(stamped.scene, "sketch-b", stamped.rootId, { ...brush, targeted: [] }, [brush], "brush-new", "");
+  assert.equal(made.name, "Tree 2", "a free name"); assert.equal(made.sourceFrameId, "sketch-b"); assert.equal(made.nodeId, stamped.rootId);
+  const detached = updateNode(stamped.scene, stamped.rootId, node => ({ ...node, brushId: made.id }));
+  assert.deepEqual(brushRole(detached, "sketch-b", member, [brush, made]), { brush: made, rootId: stamped.rootId, master: true });
+  assert.deepEqual(brushRoots(detached, brush, "sketch-b"), [], "no longer an instance of the old brush");
+});
+
+test("a targeted inspection is kept in shared ids and works on the master and on every instance", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene), marked = markBrushes(scene, [brush]);
+  const result = inspectResultSchema.parse({ summary: "s", overlays: [{ id: "o", kind: "rect", x: "p(\"tree/@x\") + s(\"tree\", \"ball.x\")", y: "0", w: "item(\"r\")", h: "1", label: "r ${p(\"orb/radius\")} ${in('orb', 'idle')}", color: "#ff0000",
+    link: { kind: "constraint", nodeId: "orb", id: "radius" }, when: "elapsed(\"orb\") > 0", each: "tree:points", name: "n" }],
+    valueFixes: [{ key: "orb/radius", stateId: "", value: 3, reason: "r" }], recommendations: [{ kind: "value", nodeId: "orb", targetId: "radius", title: "t", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 4 }] }] });
+  const first = transplantNodes(brushSource(brush, marked), "tree", sampleScene(), { x: .3, y: .3 });
+  const second = transplantNodes(brushSource(brush, marked), "tree", first.scene, { x: .7, y: .7 });
+  const frame = second.scene, roots = brushRoots(frame, brush, "sketch-b"), [tree, orb] = [second.ids.get("tree")!, second.ids.get("orb")!];
+  assert.equal(roots.length, 2);
+  // Made on the second instance, stored in the shared ids (the master's).
+  const made = remapResult(resultInFrame(result, [frameIds(frame, second.rootId)]), new Map());
+  assert.equal(made.overlays[0].x, `p("${tree}/@x") + s("${tree}", "ball.x")`);
+  assert.deepEqual(remapResult(made, sharedIds(frame, roots)), result, "back to the shared ids");
+  const shown = resultInFrame(result, roots.map(root => frameIds(frame, root)), 1);
+  assert.equal(shown.overlays.length, 2, "drawn on both instances");
+  assert.deepEqual(shown.overlays.map(overlay => overlay.id), ["o", "o~2"]);
+  assert.equal(shown.overlays[1].label, `r \${p("${orb}/radius")} \${in('${orb}', 'idle')}`);
+  assert.equal(shown.overlays[1].each, `${tree}:points`); assert.equal(shown.overlays[1].when, `elapsed("${orb}") > 0`); assert.equal(shown.overlays[1].link.nodeId, orb);
+  assert.equal(shown.valueFixes[0].key, `${orb}/radius`, "fixes go to the selected instance");
+  assert.equal(shown.recommendations[0].nodeId, orb); assert.equal(shown.recommendations[0].changes[0].key, `${orb}/radius`);
+  assert.deepEqual(resultInFrame(result, [frameIds(marked, "tree")]), result, "the master reads it as is");
 });
 
 test("inspection keeps the newest 20 steps and reports what changed between steps", () => {
@@ -101,7 +124,9 @@ test("the toolbar shows each brush as a tool group that opens its tools", () => 
   for (const label of ["Brush", "Inspection", "Inspection annotation"]) assert.match(html, new RegExp(`<span>${label}</span>`));
   assert.doesNotMatch(html, /<span>Targeted inspection<\/span>/, "targeted tools are made from inspection annotations");
   assert.match(html, /Targeted inspection 도구가 여기에 생깁니다/);
-  assert.match(html, /Drag drives interaction/);
+  assert.doesNotMatch(html, /BRUSH GESTURE/, "a brush adds itself once per frame, then plays: no gesture setting");
+  const located = renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...props, brushMaster: () => "Sketch A" } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  assert.match(located, /MASTER.*◆ Sketch A/, "the group says where its master is");
   const result = { summary: "s", overlays: [], valueFixes: [], recommendations: [] };
   const withTool = { ...brush, targeted: [{ id: "t1", name: "별 크기", concern: "별 크기가 궁금해", marks: [], result }] };
   const selected = renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...props, tool: brushTool("targeted", brush.id, "t1"), brushes: [withTool], onTargetedRemove: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
@@ -141,7 +166,8 @@ test("targeted inspection asks AI with the brush's constraints and steps, and dr
     overlays: [{ id: "size", kind: "rect", x: "p(\"orb/@x\")", y: "p(\"orb/@y\")", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "w=${p(\"orb/radius\")}", color: "#e0457b", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
       { id: "bogus", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "state", nodeId: "orb", id: "nope" } }],
     valueFixes: [{ key: "orb/radius", stateId: "moving", value: 50, reason: "줄입니다" }, { key: "orb/nope", stateId: "", value: 1, reason: "" }],
-    recommendations: [{ kind: "transition", nodeId: "orb", targetId: "settle", title: "더 천천히", detail: "정착을 늦춥니다", changes: [] }, { kind: "state", nodeId: "orb", targetId: "ghost", title: "x", detail: "", changes: [] }] };
+    recommendations: [{ kind: "transition", nodeId: "orb", targetId: "settle", targetIds: ["pulse"], title: "더 천천히", detail: "정착을 늦춥니다", changes: [] }, { kind: "state", nodeId: "orb", targetId: "ghost", targetIds: [], title: "x", detail: "", changes: [] },
+      { kind: "transformation", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth", "ink-wash", "pulse", "nope"], title: "둘 다", detail: "", changes: [] }] };
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 1, marks: [[{ x: .4, y: .2 }, { x: .5, y: .3 }]],
     constraints: constraintRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
     steps: [{ id: 1, nodeId: "orb", from: "idle", to: "moving", transitionId: "press", values: { "orb/radius": 80 }, runtime: { states: { orb: { id: "moving", elapsed: 0 } }, stores: { tree: { ball: { x: 10 } } } } }] };
@@ -149,7 +175,8 @@ test("targeted inspection asks AI with the brush's constraints and steps, and dr
     const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기가 궁금해", inspection }), new AbortController().signal));
     assert.deepEqual(result.overlays.map(item => item.id), ["size"]);
     assert.deepEqual(result.valueFixes.map(item => item.key), ["orb/radius"]);
-    assert.deepEqual(result.recommendations.map(item => item.targetId), ["settle"]);
+    assert.deepEqual(result.recommendations.map(item => item.targetId), ["settle", "ink-wash"]);
+    assert.deepEqual(result.recommendations.map(item => item.targetIds), [[], ["branching-growth"]], "only other transformations of the same node are kept");
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(context.concern, "원 크기가 궁금해");
     assert.deepEqual(context.brushNodes.map((node: { id: string }) => node.id), ["tree", "orb"]);
@@ -206,4 +233,84 @@ test("overlay labels never overlap: each takes the first free spot beside its sh
   }
   assert.equal(labels[0].leader, false); assert.ok(labels.some(label => label.leader));
   assert.ok(labels.every(label => label.x >= 0 && label.y - label.height * .8 >= 0));
+});
+
+test("each recommendation names what it changes; its chip highlights that transformation, constraint or state", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene), noop = () => {};
+  const result = inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [
+    { kind: "transformation", nodeId: "tree", targetId: "ink-wash", title: "번짐 줄이기", detail: "d", changes: [] },
+    { kind: "value", nodeId: "orb", targetId: "", title: "반지름 줄이기", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 10 }] },
+    { kind: "state", nodeId: "orb", targetId: "moving", title: "이동 다듬기", detail: "d", changes: [] }] });
+  const tool = { id: "t1", name: "c", concern: "c", marks: [], result };
+  const render = (focus: unknown) => renderToStaticMarkup(createElement(InspectionPanel, new Proxy({ brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"],
+    state: { ...emptyInspection(brush.id), focus }, busy: false, running: true } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  const html = render(null);
+  assert.match(html, /class="inspection-target "[^>]*><svg[\s\S]*?<span>Tree<\/span><b>Ink wash<\/b>/, "the transformation and its node");
+  assert.match(html, /<span>Orb<\/span><b>[^<]*Radius<\/b>/, "the constraint a value recommendation changes");
+  assert.match(html, /<span>Orb<\/span><b>이동<\/b>/, "the state");
+  assert.match(render({ kind: "transformation", nodeId: "tree", id: "ink-wash" }), /class="inspection-target focused" aria-pressed="true"/);
+});
+
+test("master and instances read apart; editing an instance explains detach; any frame with the brush can be inspected", async () => {
+  const { BrushRoleBanner, BrushRoleBadge, DetachDialog } = await import("../app/components/brush-role");
+  const [brush] = makeBrushes(), handlers = { onMaster: noop, onDetach: noop, onAdopt: noop, onCancel: noop };
+  assert.match(renderToStaticMarkup(createElement(BrushRoleBadge, { role: { brush, master: true } })), /◆<span>Master/);
+  const instance = renderToStaticMarkup(createElement(BrushRoleBanner, { ...handlers, role: { brush, rootId: "tree-2", master: false }, nodeName: "Tree", masterFrame: "Sketch A" }));
+  assert.match(instance, /◇<span>Instance/); assert.match(instance, /master\(<b>Sketch A<\/b>\)/); assert.match(instance, /Go to master/); assert.match(instance, /Detach as new brush/);
+  const orphan = renderToStaticMarkup(createElement(BrushRoleBanner, { ...handlers, role: { brush, rootId: "tree-2", master: false }, nodeName: "Tree", masterFrame: null }));
+  assert.match(orphan, /Make master/); assert.doesNotMatch(orphan, /Go to master/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(BrushRoleBanner, { ...handlers, role: { brush, rootId: "tree", master: true }, nodeName: "Tree", masterFrame: "Sketch A" })), /Detach/, "the master has nothing to detach");
+  const dialog = renderToStaticMarkup(createElement(DetachDialog, { ...handlers, prompt: { frameId: "f", rootId: "tree-2", brushId: brush.id, nodeName: "Tree", what: "state machine", apply: noop }, brushName: "Tree", masterFrame: "Sketch A" }));
+  assert.match(dialog, /<b>state machine<\/b>/); assert.match(dialog, /Detach and create new brush/); assert.match(dialog, /Edit the master in Sketch A/);
+  const frames = [{ id: "a", name: "Sketch A", master: true }, { id: "b", name: "Sketch B", master: false }];
+  const empty = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "inspect", scene: sampleScene(), nodeIds: [], state: emptyInspection(brush.id), busy: false, running: true, frames, frameId: "c", onFrame: noop } as never));
+  assert.match(empty, /◆ Sketch A<small>master/); assert.match(empty, /◇ Sketch B<small>instance/);
+  const picker = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "inspect", scene: sampleScene(), nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, frames, frameId: "b", onFrame: noop, onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
+  assert.match(picker, /aria-label="Inspected frame"/); assert.match(picker, /<option value="b" selected="">◇ Sketch B · instance/);
+});
+
+test("inspection has its own pane beside Code / State Machine, and the graph highlights the inspected step's state, transition and related states", async () => {
+  const { RawCodePanel } = await import("../app/components/raw-code-panel");
+  const { MachineGraph } = await import("../app/components/scene/machine-graph");
+  const { machineInspection } = await import("../app/lib/inspection");
+  const html = renderToStaticMarkup(createElement(RawCodePanel, { code: "p.circle(1,1,1);", sketchName: "A", fileName: "a", onCopy: noop, onError: noop, machinePanel: createElement("div", null, "MACHINE"), inspectionPanel: createElement("div", null, "INSPECTION") }));
+  assert.match(html, /class="bottom-panel-split"/); assert.match(html, /<section class="inspection-dock[^"]*" aria-label="Inspection"><div>INSPECTION<\/div>/);
+  assert.match(html, /class="bottom-panel-side"/); assert.doesNotMatch(html, /role="tab"[^>]*>[^<]*<svg[^>]*>.*?<\/svg>Inspection</, "no Inspection tab any more");
+  assert.match(html, />Code<\/button>.*>State Machine<\/button><\/div>/);
+  const scene = sampleScene(), orb = scene.nodes.find(node => node.machine)!, [first, second] = orb.machine!.states;
+  const transition = orb.machine!.transitions[0];
+  let state = emptyInspection("b");
+  state = addStep(state, { at: 0, nodeId: orb.id, from: first.id, to: second.id, transitionId: transition.id, values: {}, runtime: null });
+  state = addStep(state, { at: 1, nodeId: "tree", from: null, to: null, transitionId: null, values: {}, runtime: { states: { [orb.id]: { id: first.id, elapsed: 0 } }, stores: {} } });
+  const result = inspectResultSchema.parse({ summary: "s", overlays: [{ id: "o", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "transition", nodeId: orb.id, id: transition.id }, when: `in("${orb.id}", "${second.id}")`, each: "", name: "" }], valueFixes: [], recommendations: [] });
+  assert.deepEqual(machineInspection({ ...state, cursor: 0 }, result, orb.id), { state: second.id, from: first.id, transition: transition.id, states: [second.id], transitions: [transition.id] });
+  assert.equal(machineInspection(state, null, orb.id).state, first.id, "another node's step: the state this node was in then (from the runtime)");
+  const graph = renderToStaticMarkup(createElement(MachineGraph, { machine: orb.machine!, selectedId: null, target: null, runtimeId: "", busy: false, annotating: false, strokes: [], onState: noop, onTransition: noop, onBackground: noop, onStroke: noop, summary: () => "",
+    inspected: { state: second.id, from: first.id, transition: transition.id, states: [], transitions: [] } }));
+  assert.match(graph, new RegExp(`data-state-id="${second.id}" class="machine-state[^"]*inspected-state`));
+  assert.match(graph, new RegExp(`data-state-id="${first.id}" class="machine-state[^"]*inspected-from`));
+  assert.match(graph, /machine-transition-edge[^"]*inspected-transition/);
+});
+
+test("the inspection annotation eraser removes the marks it passes over, and the panel offers pen / eraser", async () => {
+  const { eraseMarks } = await import("../app/lib/inspection");
+  const marks = [[{ x: .1, y: .1 }, { x: .2, y: .1 }], [{ x: .8, y: .8 }, { x: .9, y: .9 }]];
+  assert.deepEqual(eraseMarks(marks, [{ x: 180, y: 62 }]), [marks[1]], "a pass near any point of a mark erases that whole mark");
+  assert.equal(eraseMarks(marks, [{ x: 450, y: 300 }]).length, 2, "far away: nothing erased");
+  const [brush] = makeBrushes();
+  const html = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "inspect-annotate", scene: sampleScene(), nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), marks }, busy: false, running: true, eraser: true, onEraser: noop,
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
+  assert.match(html, /role="radio" aria-checked="false"[^>]*>.*?Pen<\/button>/); assert.match(html, /role="radio" aria-checked="true" class="active"[^>]*>.*?Eraser<\/button>/);
+  assert.match(html, /지울 자국 위를 문지르세요/);
+});
+
+test("a transformation recommendation that changes several transformations shows one chip per transformation", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene);
+  const recommendation = { kind: "transformation" as const, nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth"], title: "둘 다 바꾸기", detail: "d", changes: [] };
+  const tool = { id: "t1", name: "c", concern: "c", marks: [], result: inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [recommendation] }) };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), focus: { kind: "transformation", nodeId: "tree", id: "branching-growth" } }, busy: false, running: true,
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
+  const chips = [...html.matchAll(/<button class="inspection-target ?(focused)?" aria-pressed="(true|false)"[^>]*>.*?<b>([^<]*)<\/b><\/button>/g)].map(match => [match[3], match[2]]);
+  const labels = Object.fromEntries(scene.nodes[0].transformations.map(item => [item.id, item.label]));
+  assert.deepEqual(chips, [[labels["ink-wash"], "false"], [labels["branching-growth"], "true"]], "each chip highlights just its own transformation");
 });

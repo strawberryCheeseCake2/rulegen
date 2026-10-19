@@ -18,8 +18,8 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - **프레임은 한 가지 모델(스케치 프레임)뿐이다.** 결과 전용 프레임은 없다. 모든 프레임은 스케치할 수 있고, 자기 장면(Collection·Object)과 그 장면의 **generated result를 같은 프레임 안에** 그린다. 층은 아래부터 생성 결과 → 스케치 획과 레이어 박스 → (annotation 중이면) annotation이다.
 - 직접 스케치하는 입력과 사진 첨부(파일 업로드, 드롭, 클립보드 이미지 붙여넣기)를 지원한다. 스케치 프레임 배경은 흰색이다.
 - 기본 스케치 도구: 연필(색·굵기·투명도), 지우개, 라쏘, 이동(pan), 확대·축소, Undo/Redo.
-- 프레임 헤더에서 프레임마다 결과를 제어한다: **Run / Pause**(애니메이션·상태 머신 재생과 정지), **Re-render**(처음부터 다시 그리기), **Generate / Update**(코드가 없거나 구조가 바뀐 경우), **Interact**, **Annotate**, **Extract**.
-- **Interact**(인터랙션 모드): 실행 중인 결과만 마우스·터치·키보드 입력을 받는다. 그 프레임의 스케치 획, collection/object 박스, 레이어 드롭, 선택·삭제·이동 단축키, 이미지 붙여넣기는 꺼진다. **Done** 또는 Esc로 나간다. 저장되지 않는 일시 모드다.
+- 프레임 헤더에서 프레임마다 결과를 제어한다: **Run / Pause**(애니메이션·상태 머신 재생과 정지), **Re-render**(처음부터 다시 그리기), **Generate / Update**(코드가 없거나 구조가 바뀐 경우), **Annotate**, **Extract**.
+- **Interaction은 Brush 도구의 기능이다**(프레임 헤더에 따로 Interact 버튼은 없다). Brush 도구를 고른 채 그 brush가 있는 활성 프레임에서는 실행 중인 결과만 마우스·터치·키보드 입력을 받는다(프레임 부제에 "playing <brush>"). 그 프레임의 스케치 획, collection/object 박스, 레이어 드롭, 선택·삭제·이동 단축키, 이미지 붙여넣기는 꺼진다. 다른 도구를 고르거나 Esc(선택 도구로 바뀜)로 나온다. 결과 annotation 중이거나 regeneration annotation을 그리는 중에는 꺼진다(22절).
 - compose 프롬프트 초안 AI는 같은 형태를 다른 모양으로 다시 그린 것(눌림·hover·드래그 중 모습, 화살표로 이은 전/후)을 별도 collection이 아니라 인터랙션 상태에 따라 모양이 바뀌는 하나의 노드로 해석하도록 지시받는다(compose도 같은 규칙).
 
 ## 2. 왼쪽 툴바
@@ -214,40 +214,63 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 22. Brush: Collection → Brush Stamp
 
 - **이름**: 화면에서는 Collection을 **Brush Stamp**라고 부른다(레이어 패널, 우측 패널, 새로 만들기·그룹·해제, 안내 문구). 데이터와 AI 프롬프트 안에서는 여전히 `collection`이고 기능은 같다.
+- **Master와 instance**: brush의 **master**는 원본 프레임에 있는 그 Collection이고, 다른 곳에 찍힌(또는 Layers에서 끌어 놓은) 복사본은 모두 **instance**다.
+  - Layers 패널의 루트 행에 **◆ Master** / **◇ Instance** 배지가 brush 색으로 붙는다. 우측 패널은 선택한 노드(멤버 포함)가 속한 brush와 역할을 맨 위 배너로 보여준다. Instance 배너에는 **Go to master**(master 프레임으로 가서 master를 선택)와 **Detach as new brush**가 있다.
+  - 툴바 brush 그룹 패널의 **MASTER** 항목은 master가 있는 프레임을 보여주고, 누르면 그곳으로 간다.
+  - **Instance에서 semantic transformation의 구조(설명, property·블록 교체, 추가·삭제·순서, AI regenerate)나 state machine(state·transition 편집, 생성·삭제·refine)을 바꾸려 하면 바로 적용하지 않고 안내 창이 뜬다.** 노드 설명 변경, Targeted inspection의 transformation·state·transition recommendation 적용도 같다.
+  - **단순 값 조절은 instance에서도 바로 된다**(안내 없음): semantic transformation의 값 슬라이더·입력, Targeted inspection의 value fix와 값 recommendation. 그 instance만 바뀐다. 선택지는 세 가지다.
+    - **Detach and create new brush**: 그 instance를 원래 brush에서 떼어 **새 brush의 master**로 만든 뒤, 방금 하려던 변경을 적용한다. 새 brush는 툴바에 생기고, 원래 brush의 Targeted inspection 도구와 그 프레임에 기록된 단계를 이어받는다. 쓰던 도구도 새 brush의 같은 도구로 바뀐다. 원래 brush와 다른 instance는 그대로다.
+    - **Edit the master in <프레임>**: master로 가서 그곳에서 바꾼다.
+    - **Cancel**.
+  - Master가 있던 프레임이 삭제되었으면 Go to master 대신 **Make master**가 나온다. 그 instance가 brush의 master가 되고, 안내 창에서 고르면 변경도 적용된다.
+  - 이름 바꾸기, 보이기/숨기기, 이동, state 보기 선택은 instance에서도 그냥 된다.
+  - **Brush stamp 삭제**: 우측 패널 brush 배너의 **Delete stamp**(master면 **Delete master**)로 그 Collection 전체를 프레임에서 지운다. Layers의 휴지통과 Select 도구의 Delete 키도 같다.
+    - 통째로 지우면 그 프레임의 결과 코드는 그대로 live다(Update가 필요 없음). 지운 stamp의 instance만 멈추고, 모듈은 프로그램에 남아서 같은 brush를 다시 추가하면 바로 나타난다.
+    - Layers 되돌리기로 지운 stamp를 되살리거나 찍은 stamp를 되돌려도 live가 유지된다. Collection이나 object를 통째로 넣거나 빼는 변경은, 그 루트의 모듈이 프로그램에 있으면 코드가 그대로 맞는 것으로 본다. 그 밖의 구조 변경은 여전히 Update가 필요하다.
+    - Master를 지우면 brush는 저장된 사본으로 계속 쓸 수 있고, instance에서 Make master로 새 master를 정할 수 있다.
+  - Master에서 바꾼 내용은 앞으로 찍는 instance에 쓰인다. 이미 찍힌 instance는 자동으로 따라 바뀌지 않는다.
 - **Brush 자동 생성**: AI가 Collection을 만들 때마다(**Extract**, **Compose**) 그 장면의 **루트 Collection 하나당 brush 하나**가 툴바에 Brush tool group으로 생긴다. 중첩된 Collection은 그 brush의 부분이라 따로 만들지 않는다. 최대 32개이며 프로젝트에 저장된다. 원본 Collection에는 brush 표시(`brushId`)가 붙는다. 찍은 복사본도 이 표시를 이어받아 그 brush의 Inspection 도구로 검사할 수 있다. 원본 프레임을 지워도 brush는 저장된 장면·코드 사본으로 계속 찍히고, 그 복사본에도 표시가 붙는다(예전에 표시 없이 찍힌 복사본은 brush의 노드 id로 알아본다).
 - **Brush tool group 동작**
   - 그룹 버튼을 처음 누르면 그 그룹의 도구(기본은 Brush)가 선택된다.
   - 이미 선택된 그룹을 다시 누르면 도구 패널이 열리고, 한 번 더 누르면 닫힌다(Esc로도 닫힘).
-  - 패널에는 **Brush**, **Inspection**, **Inspection annotation** 도구와, 그 brush에 지금까지 만든 **Targeted inspection 도구들**(concern마다 하나, ×로 삭제), brush 설정(동작 방식, 이름, 삭제)이 있다. Targeted inspection 도구는 처음에는 없다(23절).
+  - 패널에는 **Brush**, **Inspection**, **Inspection annotation** 도구와, 그 brush에 지금까지 만든 **Targeted inspection 도구들**(concern마다 하나, ×로 삭제), brush 설정(master 위치, 이름, 삭제)이 있다. Targeted inspection 도구는 처음에는 없다(23절).
   - 패널에서 다른 도구를 고르면 그룹 버튼 아이콘이 그 도구 아이콘으로 바뀐다.
-- **찍기(Brush 도구)**: 스케치 프레임 위에서 쓰면 그 Collection이 멤버·블록·상태 머신과 함께 **그 프레임의 장면에 생성**되고, **AI를 거치지 않고 바로 그려진다.** brush의 코드 모듈(원본 프레임 프로그램에서 꺼낸 것, 원본이 없으면 brush가 보관한 사본)을 그 프레임 프로그램에 넣고 새 노드를 그 모듈의 인스턴스로 추가하기 때문이다.
-  - 같은 brush를 그 프레임에 이미 찍었다면 모듈은 그대로 두고 인스턴스만 늘어서, 실행 중인 결과에 값으로 전달되어 다시 불러오지 않고 바로 나타난다. 처음 찍을 때만 프로그램을 다시 준비한다(서버의 실행 안전 처리만, AI 없음).
-  - 이름이 같은데 내용이 다른 모듈이 이미 있으면 `tree~2`처럼 새 이름으로 넣는다. 찍은 복사본도 brush 표시를 가져서 나중에 검사할 수 있다.
-  - **드래그와 무관한 brush**("Click stamp · drag stroke"): 한 번 클릭하면 그 자리에 **single brush stamp** 하나. 드래그하면 획을 따라 Collection 크기 간격으로 여러 개를 찍는 **brush stroke**(최대 8개).
-  - **드래그와 관련된 brush**("Drag drives interaction"): 드래그를 시작하는 순간 그 자리에 Collection이 생기고, **드래그하는 동안의 마우스 움직임이 그대로 그 Collection에 입력으로 전달**된다. 그래서 Collection의 상태 머신이 드래그에 반응하며 stroke가 그려진다. 그 프레임에 처음 찍는 brush라면 프로그램이 준비되는 짧은 동안 입력을 모아 두었다가 이어서 보낸다. 드래그를 놓으면 프레임이 **Interaction 모드**가 되어 계속 직접 다룰 수 있다(Done 또는 Esc로 나감).
-  - 동작 방식은 brush를 만들 때 자동으로 정한다(하위 노드 상태 머신에 드래그·stroke·경로 같은 이벤트 전이가 있으면 drag). 패널에서 바꿀 수 있다.
+- **Brush 도구 = 추가 또는 interaction**: Brush 도구로 프레임 위를 클릭하거나 드래그하면
+  - **그 프레임에 그 brush가 없을 때**: 제스처를 시작한 자리에 Collection **하나**가 멤버·블록·상태 머신과 함께 **그 프레임의 장면에 생성**되고, **AI를 거치지 않고 바로 그려진다.** brush의 코드 모듈(원본 프레임 프로그램에서 꺼낸 것, 원본이 없으면 brush가 보관한 사본)을 그 프레임 프로그램에 넣고 새 노드를 그 모듈의 instance로 추가하기 때문이다. 이름이 같은데 내용이 다른 모듈이 이미 있으면 `tree~2`처럼 새 이름으로 넣는다. 그리고 **그 제스처(누름·움직임·놓기)가 그대로 결과에 입력으로 전달**되어, brush가 곧바로 반응한다(프로그램이 처음 준비되는 짧은 동안 입력을 모아 두었다가 이어서 보낸다).
+  - **이미 있을 때**(master든 instance든): 더 찍지 않고 **interaction**으로 동작한다. 활성 프레임에서는 결과가 입력을 직접 받고, 다른 프레임에서 시작한 제스처는 그 프레임을 활성으로 만들면서 결과에 전달된다. 그 프레임에 결과가 아직 없으면 결과를 먼저 생성하라고 안내한다.
+  - 예전의 클릭/드래그 동작 방식 설정(stamp·drag, 획을 따라 여러 개 찍기)은 없어졌다.
+  - **처음 추가할 때도 바로 반응한다.**
+    - Brush 도구는 프레임에 자기 표시를 그리지 않는다. 제스처 경로 점선과 레이어 박스·선택 박스가 보이지 않는다.
+    - 결과가 실행 중인 프레임에서는 프로그램을 다시 불러오지 않는다. 서버가 안전 처리한 brush 모듈만 실행 중인 결과에 그 자리에서 넣고, 새 instance가 곧바로 시작한다. 그래서 그 프레임에서 돌던 것(다른 brush의 상태, `m.store`)도 초기화되지 않는다.
+    - Brush 도구를 고르거나 그 도구로 프레임 위에 마우스를 올리면, 그 brush를 추가한 프로그램을 미리 서버에서 안전 처리해 둔다. 그래서 실제로 칠할 때는 서버를 기다리지 않는다. 미리 준비된 프로그램은 값만 다른 프로그램끼리 함께 쓴다.
+    - 첫 제스처가 전달되는 동안에는 결과가 숨김 상태가 아니라 실제로 보이며(숨긴 결과는 브라우저가 그리지 않음), 전달된 누름이 결과에 포커스를 준다. 포커스가 없으면 입력을 무시하는 brush(p5 `focused` 확인)도 첫 드래그부터 반응하고, 이어서 키 입력도 결과로 간다. 결과 안에서 누른 Esc도 brush 사용을 끝낸다.
+    - 결과가 아직 없는 빈 프레임은 프로그램을 새로 띄우므로 잠깐 기다린다. 첫 프로그램은 바로 띄운다. 기다리는 동안의 입력은 모아 두었다가, 한 번에 보내지 않고 몇 프레임에 나눠 보낸다. 그래서 brush가 따라잡는 동안에도 부드럽게 움직인다.
   - Layers에서 루트 노드를 다른 프레임으로 끌어 놓는 것도 같은 방식으로 AI 없이 복사된다(루트가 아닌 노드는 모듈이 따로 없어서 예전처럼 그 프레임 코드를 AI로 다시 만든다).
 - brush가 찍히려면 원본 프레임의 결과 코드가 한 번은 생성되어 있어야 한다(그때 brush가 모듈 사본도 보관한다). 이전 형식(모듈이 아닌) 코드를 가진 프레임에는 찍을 수 없고, 그 프레임을 Update로 다시 생성하라고 안내한다. 그 프레임 코드를 AI로 다시 생성하면 복사본도 자기 id로 쓰인 모듈을 새로 받는다.
 
 ## 23. Inspection Tool과 Targeted Inspection Tool
 
-두 도구 모두 **inspection 대상 brush의 tool group 안에** 있고, **활성 프레임 안의 그 brush 노드에만** 작동한다(원본 프레임의 원본 Collection, 다른 프레임에 찍은 복사본 모두). 활성 프레임에 그 brush가 없으면 안내만 보인다. 도구를 고르면 하단 패널이 **Inspection** 탭으로 열린다.
+두 도구 모두 **inspection 대상 brush의 tool group 안에** 있고, **활성 프레임 안의 그 brush 노드에만** 작동한다(master, 다른 프레임에 찍은 instance 모두). 도구를 고르면 하단 패널이 열리고, **Inspection은 State Machine과 따로 자기 영역을 가진다.** 하단 패널 왼쪽이 Inspection이고, 오른쪽은 Code / State Machine 탭이다(검사를 시작하면 State Machine으로 열림). 그래서 단계를 넘기면서 상태 머신을 함께 본다. 두 영역 사이 경계를 끌어 너비를 바꾸고(브라우저에 기억), 두 번 누르면 기본값으로 돌아간다.
+- **검사할 프레임 고르기**: Inspection 패널 툴바의 프레임 선택 상자에 그 brush가 있는 프레임이 모두 나온다(◆ master 프레임이 먼저, ◇ instance 프레임). 고르면 그 프레임이 활성이 되고 그 brush가 선택되어 그 프레임을 검사한다. 프레임을 직접 눌러 활성으로 만들어도 된다. 활성 프레임에 그 brush가 없으면 안내와 함께 그 brush가 있는 프레임 목록이 버튼으로 나온다.
+- 검사 중 **State Machine 탭은 그 프레임의 그 brush 노드**를 보여준다. 선택한 노드가 그 brush의 것이면 그 노드, 아니면 보고 있는 단계의 노드, 아니면 상태 머신이 있는 brush 노드다.
+- **관련 state 강조**(Inspection·Targeted inspection 모두): 그래프에서 보고 있는 단계의 state는 분홍 테두리, 그 단계에서 떠나온 state는 옅은 분홍, 일어난 transition은 분홍 굵은 선으로 강조된다. 다른 노드의 단계라면 그 순간 이 노드가 있던 state를 실행 상태에서 찾아 보여준다. Inspection이 다루는 state·transition은 주황 점선으로 표시된다. 누른 state·transition, targeted 오버레이가 연결된 것과 조건(`in(...)`)에 쓰인 state, recommendation의 대상이 여기에 들어간다. 그래프 위 범례에 "이 단계: A → B (전이)"와 "Inspection 관련: …"이 나온다. 단계를 바꾸면 그 state가 보이도록 그래프가 이동한다.
 
 ### Inspection Tool
-- **Stepping 기록(항상 자동)**: Recording 버튼은 없다. 실행 중인 결과가 그 brush 노드의 **상태를 바꿀 때마다 한 단계**를 자동으로 기록한다. Inspection 도구를 열어 둔 brush는 늘, **Interaction 모드에서는 도구를 열지 않아도 그 프레임의 모든 brush가 각자** 기록한다(기록은 brush별로 프레임에 저장). 단계에는 노드, 이전 → 다음 state, 발생한 transition(이벤트 또는 시간 전이), 그 순간 brush의 모든 constraint 값과 노드 박스 값, 그리고 **실행 상태**(모듈마다의 `m.store`, 모든 상태 머신의 state·경과 시간, random/noise seed)가 들어간다. 이미지는 저장하지 않는다. **최대 20단계**까지 저장하고 넘치면 오래된 것부터 버린다. 기록 시작 단계도 남긴다(직접 기록하는 버튼은 없다).
+- **Stepping 기록(항상 자동)**: Recording 버튼은 없다. 실행 중인 결과가 그 brush 노드의 **상태를 바꿀 때마다 한 단계**를 자동으로 기록한다. Inspection 도구를 열어 둔 brush는 늘, **Brush 도구로 그 brush가 있는 프레임을 다루는 동안에는 그 프레임의 모든 brush가 각자** 기록한다(기록은 brush별로 프레임에 저장). 단계에는 노드, 이전 → 다음 state, 발생한 transition(이벤트 또는 시간 전이), 그 순간 brush의 모든 constraint 값과 노드 박스 값, 그리고 **실행 상태**(모듈마다의 `m.store`, 모든 상태 머신의 state·경과 시간, random/noise seed)가 들어간다. 실행 상태는 **전이마다 그 순간에** 따로 찍는다. 한 프레임 안에서 전이가 여러 번 일어나도(곧바로 떠나는 state) 각 단계는 자기 state로 복원된다(기록 시작 단계만 그 프레임 끝에 찍음). 이미지는 저장하지 않는다. **최대 20단계**까지 저장하고 넘치면 오래된 것부터 버린다. 기록 시작 단계도 남긴다(직접 기록하는 버튼은 없다).
 - **Reset history**: Inspection 패널 툴바의 **Reset history**로 이 프레임에 저장된 그 brush의 기록을 지운다. 누르면 "n개 단계를 지울까요?"가 그 자리에 떠서 한 번 더 확인하고, 지우면 Live로 돌아간다(다른 brush의 기록은 그대로).
 - **Timeline**: 단계는 시간 순 타임라인의 점으로 보인다(가까운 단계도 겹치지 않게 간격을 둔다). 점에 마우스를 올리면 그 이벤트(transition 이름, 노드: 이전 → 다음 state, 시작 후 경과 시간)가 뜬다. 점을 누르거나 타임라인을 따라 드래그해 이동하고, ←/→·Home/End 키와 ◀ ▶로 한 단계씩 움직인다. **Live**(또는 Esc, 마지막 단계에서 →)로 실행 중인 결과를 다시 따라간다.
-- **상태 복원**: 단계를 고르면 실행 중인 결과 자체가 그 순간의 실행 상태로 돌아가 멈춘다(스냅샷 이미지가 아님). 그 상태에서 semantic transformation 값을 바꾸면 그 순간의 상태에서 새 값으로 다시 그린다. Live로 돌아가면 그 상태에서 이어서 실행된다. `m.store`에 일반 데이터(숫자·문자열·배열·일반 객체)로 둔 상태만 복원되며, 그래픽 버퍼 같은 객체는 복원하지 않는다.
+- **상태 복원**: 단계를 고르면 실행 중인 결과 자체가 그 순간의 실행 상태로 돌아가 멈춘다(스냅샷 이미지가 아님). 멈춰 있는 동안에는 **전이가 일어나지도 기록되지도 않는다.** 그래서 brush 코드가 그리면서 곧바로 state를 바꾸려 해도(예: 마우스를 누르고 있지 않으면 바로 suspended) 그 단계에 그대로 머물고, 타임라인에 단계가 새로 생기지 않는다. 그 단계는 복원 → 한 번 그리기 → 다시 복원 순서로 보여준다. 그래서 같은 단계를 몇 번 골라도 화면이 똑같고, Live로 돌아가면 정확히 그 단계에서 이어진다. 그 상태에서 semantic transformation 값을 바꾸면 그 순간의 상태에서 새 값으로 다시 그린다. Live로 돌아가면 그 상태에서 이어서 실행된다. `m.store`에 일반 데이터(숫자·문자열·배열·일반 객체)로 둔 상태만 복원되며, 그래픽 버퍼 같은 객체는 복원하지 않는다.
 - **값의 변화 tracking**: 오른쪽 표에 brush의 모든 constraint가 노드 · transformation · property(· 인자) 순으로 나온다. 고른 단계의 값, 이전 단계와의 차이(Δ), 20단계에 걸친 값의 변화(막대)를 보여주고, 바뀐 값은 강조한다.
 - 왼쪽에는 그 단계의 state와 transition이 나온다. state, transition, constraint 행을 누르면 **강조된다**: state·transition은 State Machine 그래프에서 첨부·강조되고, constraint는 우측 패널에서 그 property 카드가 강조되고 스크롤된다.
 
 ### Inspection Annotation Tool
-- 툴바 brush 그룹 안의 별도 도구다. 프레임 위에 보라색으로 inspection용 annotation을 그린다(동그라미, 화살표, 손글씨 메모). 일반 결과 annotation과 따로 저장되며, 하단 패널에 "Inspection annotation n획 첨부됨"으로 보이고 ×로 지운다. concern을 텍스트로 함께 적을 수 있다.
+- 툴바 brush 그룹 안의 별도 도구다. 프레임 위에 보라색으로 inspection용 annotation을 그린다(동그라미, 화살표, 손글씨 메모). 일반 결과 annotation과 따로 저장되며, 하단 패널에 "Inspection annotation n획 첨부됨"으로 보이고 ×로 모두 지운다. 패널의 **Pen / Eraser**나 **왼쪽 툴바의 지우개**(E 키)로 지우개로 바꾸면(이 도구를 쓰는 동안 툴바 지우개는 스케치 획이 아니라 이 보라색 자국을 지우고, 다시 누르면 펜으로 돌아감), 프레임에서 문지른 자국만 한 획씩 지운다(지나간 곳 가까이에 있는 획 전체). concern을 텍스트로 함께 적을 수 있다.
 - **Create targeted inspection**을 누를 때마다 그 annotation과 concern으로 **Targeted Inspection Tool이 하나씩 새로 생긴다.** 새 도구는 brush 그룹의 도구 목록과 하단 패널 탭에 concern 이름으로 추가되고 바로 선택된다(brush당 최대 12개, 프로젝트에 저장). 만든 뒤에는 annotation 초안이 비워진다.
 
 ### Targeted Inspection Tool
 - **처음부터 있는 도구가 아니다.** Inspection annotation으로 만들 때마다 concern 하나에 도구 하나가 생기고, 다시 고르면 그 concern의 오버레이가 프레임에 다시 보인다. 도구를 만들면 프레임의 보라색 inspection annotation 흔적은 사라진다(annotation은 도구에 저장되어 Inspect again 때 AI에 다시 보낸다). **Inspect again**은 지금까지 기록된 단계로 같은 concern의 시각화를 다시 만든다. 툴바 패널에서 ×로 지운다.
 - Inspection과 같은 stepping에 더해 그 concern에 맞춘 시각화를 보여준다.
+- **Master와 모든 instance에 작동한다.** 프레임마다 노드 id가 다르므로(복사하면 `tree-2`처럼 바뀜), 도구는 결과를 brush의 공통 id(코드가 쓰는 id, `codeId`)로 저장한다. 어느 프레임에서 만들거나 Inspect again을 해도 공통 id로 바꿔 저장한다. 보여줄 때는 그 프레임의 id로 바꾼다. 오버레이 수식(`p`·`prev`·`delta`의 값 키, `s`·`len`의 루트, `in`·`elapsed`의 노드), `each`의 루트, 연결(link), value fix와 recommendation의 키·노드가 모두 바뀐다. 한 프레임에 그 brush가 여럿 있으면 오버레이는 모두에 그려지고, value fix와 recommendation은 선택한 것(없으면 첫 번째)에 적용된다. Instance에 적용하면 detach 안내가 뜬다(22절).
 - 도구를 만들 때(그리고 Inspect again 때) AI(`inspect` intent, `prompts/inspect.md`)가 brush의 노드·transformation·상태 머신, constraint 키, **기록된 history 전체**(단계별 값, 상태 머신 상태, 각 모듈의 `m.store` 실행 상태), 현재 단계 이미지와 annotation을 보고 다음을 만든다.
   - **오버레이 = history를 따라가는 규칙**: AI는 한 순간의 그림이 아니라 규칙을 만든다. 타임라인에서 단계를 옮길 때마다 **그 단계의 값과 실행 상태로 다시 계산해** 그 단계에 맞는 오버레이가 보이고, 나중에 새로 기록된 단계에도 AI를 다시 부르지 않고 그대로 적용된다. 예: "별 크기 알고 싶어" + 별에 동그라미 → 단계마다 별 크기에 맞는 width·height 사각형과 "w=… (+15)" 숫자.
     - 수식은 `p("key")`(그 단계의 값), `prev`/`delta`(이전 단계와 비교), `s("루트", "경로")`·`len`(그 단계의 `m.store`, 예: 공의 위치·입자 수), `in("노드", "상태")`·`elapsed`(상태 머신), `step`/`steps`를 읽는다.
@@ -260,9 +283,19 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - **라벨은 서로 겹치지 않게 자동 배치된다**: 도형 위·아래·오른쪽·왼쪽 중 빈 곳에 먼저 놓고, 자리가 없으면 더 떨어진 곳에 가는 연결선과 함께 놓으며, 그래도 없으면 생략한다. 항목마다 그리는 오버레이(`each`)는 처음 3개 항목에만 라벨을 붙인다. 라벨 문구는 사용자가 보는 이름(property·state 라벨이나 크기·위치·속도 같은 일상어)과 숫자·단위로 약 20자 이내이며, AI가 내부 id·코드 변수명·스케치 고유 개념을 용어처럼 쓰지 않도록 프롬프트에서 막는다.
   - **요약**: 단계별로 무엇이 보이는지와 concern의 원인.
   - **Value fix**: 값만 조절해서 해결되면 구체적인 값 변경(base 값 또는 특정 state의 값)을 **Apply**로 바로 적용한다(한 번에 Undo 가능).
-  - **추천**: constraint 자체를 바꿔야 하면 semantic transformation, state, transition을 어떻게 바꿀지 제안하고 **Apply with AI**로 적용한다(transformation은 그 transformation 재생성, state·transition은 machine refine에 제안 내용을 지시로 전달). 다른 값 조합이나 다른 constraint 변경으로도 해결되면 대안으로 함께 제안한다.
+  - **추천**: constraint 자체를 바꿔야 하면 semantic transformation, state, transition을 어떻게 바꿀지 제안하고 **Apply with AI**로 적용한다(transformation은 그 transformation 재생성, state·transition은 machine refine에 제안 내용을 지시로 전달). 다른 값 조합이나 다른 constraint 변경으로도 해결되면 대안으로 함께 제안한다. 추천마다 **무엇을 바꾸는지** 칩으로 보인다(노드 · transformation 이름, 노드 · state/transition 이름, 값 추천이면 바뀌는 constraint들). 칩을 누르면 그 대상이 **강조**된다: transformation은 우측 패널에서 그 transformation 카드가 강조되고 스크롤되며, constraint는 property 카드, state·transition은 State Machine 그래프에서 강조된다. 다시 누르면 해제된다.
 - 오버레이 수식은 숫자, 사칙연산·비교·논리 연산, 몇 가지 함수와 위 읽기 함수만 허용하는 작은 계산기로 계산한다(코드 실행 없음). `m.store`에서 읽는 위치는 모듈이 실제로 쓰는 값이지만, property만으로 위치를 추정한 수식은 실제로 그린 픽셀과 다를 수 있다.
 - AI 결과 중 brush 밖을 가리키는 오버레이·값·추천은 서버에서 걸러낸다.
+
+- **여러 transformation을 함께 바꾸는 recommendation**
+  - Transformation recommendation은 대상 transformation을 여러 개 가질 수 있다. 주 대상은 `targetId`, 같은 노드에서 함께 바꿔야 하는 다른 것들은 `targetIds`에 들어간다(같은 노드에 실제로 있는 것만 남김).
+  - 대상마다 칩이 하나씩 생기고, 각 칩은 자기 transformation 카드 하나만 강조한다.
+  - **Apply with AI**는 대상들을 차례로 다시 만든다. 각 요청에는 함께 바뀌는 다른 transformation이 무엇인지와, 이번에는 그중 자기 몫만 하라는 지시가 붙는다. 코드는 마지막에 한 번만 다시 만들고, Undo apply로 전체가 한 번에 되돌아간다.
+- **Recommendation 적용 되돌리기**
+  - Recommendation을 적용하면(**Apply with AI** 또는 **Apply values**) 적용 전과 후의 프레임을 함께 저장한다. 저장되는 것은 장면, 결과 코드(transformation 적용 뒤 이어서 다시 만든 코드까지), Compose prompt다.
+  - RECOMMENDATIONS 제목 옆 **Undo apply / Redo**로 한 번의 적용 전체를 되돌리거나 다시 적용한다. 장면만 되돌리는 레이어 undo와 달리 코드도 함께 돌아간다.
+  - 적용한 recommendation에는 "✓ 적용됨"이 표시된다. 프레임마다 최근 20개까지 저장되고, 새로 적용하면 redo 목록은 비워진다.
+  - 적용 뒤에 그 프레임을 더 바꿨다면, 되돌리면 그 변경도 함께 사라진다는 확인이 그 자리에 한 번 더 뜬다.
 
 ## 주요 사용 흐름
 

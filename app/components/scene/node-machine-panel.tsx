@@ -4,7 +4,7 @@ import type { Scene, SceneNode } from "../../lib/scene/schema";
 import { emptyMachineDraft, type MachineDraft } from "../../lib/sketch-panels";
 import { machineLayout, machineMarks, machineSnapshotSvg, rasterizeSnapshot, type LayoutOverride } from "../../lib/scene/machine-layout";
 import { Icon } from "../icons";
-import { MachineGraph } from "./machine-graph";
+import { MachineGraph, type MachineInspection } from "./machine-graph";
 
 export type MachineRefineRequest = { target: MachineTarget | null; instruction: string; image?: string; marks: MachineMark[] };
 type Props = {
@@ -19,6 +19,8 @@ type Props = {
   onDeselect?: () => void;
   onGenerate: () => void; onDraft: (draft: MachineDraft) => void; onRefine: (request: MachineRefineRequest) => void; onError: (message: string) => void;
   onPlay: (playing: boolean) => void; onRestart: () => void; onEvent: (transitionId: string) => void;
+  /** Inspection of a brush: the inspected step's state and transition, and what the inspection is about, are highlighted in the graph. */
+  inspected?: MachineInspection | null;
 };
 
 /**
@@ -70,7 +72,13 @@ export function NodeMachinePanel(props: Props) {
           <Icon name="pen" size={13} />{draft.annotating ? "Done" : "Annotate"}{draft.strokes.length > 0 && ` · ${draft.strokes.length}`}</button>
         <button className="machine-refine" aria-expanded={draft.open} title="Describe how to change the attached state/transition" disabled={busy} onClick={() => patch({ open: true })}><Icon name="spark" size={13} />{refineLabel}</button>
       </div>
-      <MachineGraph key={node.id} machine={machine} selectedId={props.editingStateId} target={attached ? target : null} runtimeId={runtimeId} busy={busy} annotating={draft.annotating} strokes={draft.strokes} layout={props.layout}
+      {props.inspected && (() => { const inspected = props.inspected, label = (id: string | null) => machine.states.find(item => item.id === id)?.label ?? id;
+        const via = inspected.transition ? machine.transitions.find(item => item.id === inspected.transition)?.label : null;
+        return <div className="machine-inspection-legend" role="note" aria-label="Inspection highlight">
+          {inspected.state && <span><i className="now" />이 단계: {inspected.from && inspected.from !== inspected.state ? `${label(inspected.from)} → ` : ""}<b>{label(inspected.state)}</b>{via ? ` (${via})` : ""}</span>}
+          {(inspected.states.length > 0 || inspected.transitions.length > 0) && <span><i className="related" />Inspection 관련: {[...inspected.states.map(label), ...inspected.transitions.map(id => machine.transitions.find(item => item.id === id)?.label ?? id)].join(", ")}</span>}
+        </div>; })()}
+      <MachineGraph key={node.id} machine={machine} inspected={props.inspected} selectedId={props.editingStateId} target={attached ? target : null} runtimeId={runtimeId} busy={busy} annotating={draft.annotating} strokes={draft.strokes} layout={props.layout}
         onMoveState={(id, point) => props.onLayout?.({ states: { ...props.layout?.states, [id]: point }, labels: { ...props.layout?.labels } })}
         onMoveLabel={(id, offset) => props.onLayout?.({ states: { ...props.layout?.states }, labels: { ...props.layout?.labels, [id]: offset } })}
         onState={props.onState} onTransition={props.onTransition} onBackground={props.onDeselect || props.onClearTarget} onStroke={stroke => patch({ strokes: [...draft.strokes, stroke].slice(-64) })} summary={summary} />

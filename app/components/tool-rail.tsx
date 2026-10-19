@@ -4,6 +4,8 @@ import { AlgorithmPenSettings } from "./algorithm-pen-settings";
 import { Icon, type IconName } from "./icons";
 
 type Props = {
+  /** The inspection annotation tool is in use: the Eraser erases its marks (true = erasing now; undefined = not in use). */
+  inspectionEraser?: boolean;
   tool: string; toolsActive: boolean; pencilOpen: boolean; color: string; width: number; opacity: number;
   pens: SemanticPen[]; activePen: SemanticPen | undefined; penSettingsOpen: boolean;
   busy: boolean; canAddSketch: boolean; canUndo: boolean; canRedo: boolean; canClear: boolean; zoom: number;
@@ -16,10 +18,12 @@ type Props = {
   onBrushGroup?: (brushId: string) => void; onBrushTool?: (brushId: string, toolId: string) => void; onBrushGroupClose?: () => void;
   onTargetedRemove?: (brushId: string, targetedId: string) => void;
   onBrushChange?: (brush: Brush) => void; onBrushRemove?: (brush: Brush) => void;
+  /** The frame holding a brush's master (null when gone), and showing it. */
+  brushMaster?: (brush: Brush) => string | null; onBrushMaster?: (brush: Brush) => void;
 };
 
 export const BRUSH_TOOL_INFO: Record<BrushToolKind, { icon: IconName; label: string; hint: string }> = {
-  brush: { icon: "brush", label: "Brush", hint: "Click to stamp this brush stamp; drag to paint a stroke (or drive its drag interaction)." },
+  brush: { icon: "brush", label: "Brush", hint: "Brush on a frame: adds this brush where you start if the frame doesn't have it yet; on a frame that has it, you play with it (the result takes your input, Esc to stop)." },
   inspect: { icon: "inspect", label: "Inspection", hint: "Step through states, transitions and constraint values of this brush." },
   "inspect-annotate": { icon: "inspect-pen", label: "Inspection annotation", hint: "Mark a concern on the frame; each one becomes a targeted inspection tool." },
   targeted: { icon: "target", label: "Targeted inspection", hint: "A visualization, fixes and recommendations tailored to one concern." },
@@ -28,8 +32,9 @@ export const BRUSH_TOOL_INFO: Record<BrushToolKind, { icon: IconName; label: str
 /** Left toolbar: frames, drawing tools, semantic pens, history and zoom. */
 export function ToolRail(props: Props) {
   const toolButton = (name: string, icon: IconName, label: string) => {
-    const active = props.tool === name && props.toolsActive;
-    return <button className={`rail-button ${active ? "active" : ""}`} aria-label={label} title={label} aria-pressed={active} aria-expanded={name === "pen" ? props.pencilOpen : undefined} onClick={() => props.onTool(name)}><Icon name={icon} /></button>;
+    const active = (props.tool === name || (name === "eraser" && props.inspectionEraser)) && props.toolsActive;
+    const hint = name === "eraser" && props.inspectionEraser !== undefined ? `${label} · inspection annotation 지우기` : label;
+    return <button className={`rail-button ${active ? "active" : ""}`} aria-label={label} title={hint} aria-pressed={active} aria-expanded={name === "pen" ? props.pencilOpen : undefined} onClick={() => props.onTool(name)}><Icon name={icon} /></button>;
   };
   return <nav className="rail" aria-label="Workspace toolbar">
     <button className="rail-button" aria-label="Exploration workspace" onClick={props.onHome}><Icon name="grid" size={20} /></button>
@@ -73,11 +78,9 @@ export function ToolRail(props: Props) {
                 {props.onTargetedRemove && <button className="brush-targeted-remove" aria-label={`Remove targeted inspection ${tool.name}`} title="Remove this targeted inspection" onClick={() => props.onTargetedRemove!(brush.id, tool.id)}><Icon name="close" size={11} /></button>}</div>;
             })}
             {!brush.targeted.length && <span className="brush-targeted-hint">Inspection annotation으로 concern을 표시하면 Targeted inspection 도구가 여기에 생깁니다.</span>}</div>
-            <span className="left-setting-title">BRUSH GESTURE</span>
-            <div className="brush-gesture-choice" role="radiogroup" aria-label="Brush gesture">
-              {(["stamp", "drag"] as const).map(gesture => <button key={gesture} role="radio" aria-checked={brush.gesture === gesture} className={brush.gesture === gesture ? "active" : ""} onClick={() => props.onBrushChange?.({ ...brush, gesture })}>
-                {gesture === "stamp" ? "Click stamp · drag stroke" : "Drag drives interaction"}</button>)}
-            </div>
+            {props.brushMaster && (() => { const master = props.brushMaster(brush);
+              return <div className="brush-master-row"><span className="left-setting-title">MASTER</span>
+                {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">Master가 있던 프레임이 삭제되었습니다. Instance에서 Make master로 지정할 수 있습니다.</span>}</div>; })()}
             <label className="brush-name-field"><span>Name</span><input maxLength={100} value={brush.name} onChange={e => { if (e.target.value.trim()) props.onBrushChange?.({ ...brush, name: e.target.value }); }} /></label>
             {props.onBrushRemove && <button className="brush-remove" onClick={() => props.onBrushRemove!(brush)}><Icon name="trash" size={13} />Remove brush</button>}
           </div>}

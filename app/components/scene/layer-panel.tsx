@@ -12,6 +12,8 @@ export type LayerPanelProps = {
   onMove: (id: string, parentId: string | null, beforeId: string | null) => void; onReorder: (id: string, direction: -1 | 1) => void;
   onAdd: (kind: "collection" | "object") => void; onUndo: () => void; onRedo: () => void;
   onExtract: () => void; canExtract: boolean;
+  /** A mark after a row's name (the brush master ◆ / instance ◇ badge). */
+  badge?: (nodeId: string) => React.ReactNode;
 };
 
 export function LayerPanel(props: LayerPanelProps) {
@@ -58,6 +60,7 @@ export function LayerPanel(props: LayerPanelProps) {
             onClick={e => e.stopPropagation()} onBlur={e => { if (e.target.value.trim()) props.onRename(node.id, e.target.value.trim()); setEditing(null); }}
             onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEditing(null); }} />
             : <span className="layer-name" title={`${node.description || node.name} · drag onto another sketch frame to copy it there`}>{node.name}</span>}
+          {props.badge?.(node.id)}
           {node.machine && <span className="layer-machine-badge" title={`${node.machine.states.length} states`}>{node.machine.states.length}S</span>}
           {node.transformations.length > 0 && <span className="layer-property-count" title={`${node.transformations.length} semantic transformation(s): ${node.transformations.map(item => item.label || item.id).join(" → ")}`}>{node.transformations.length}</span>}
           <button className="layer-visibility" aria-label={`${node.visible ? "Hide" : "Show"} ${node.name}`} onClick={e => { e.stopPropagation(); props.onToggleVisible(node.id); }}><Icon name={node.visible ? "eye" : "eye-off"} size={13} /></button>

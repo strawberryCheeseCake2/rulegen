@@ -1,5 +1,5 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
-import { changedKeys, constraintRows, formatScalar, MAX_STEPS, type InspectionFocus, type InspectionState, type InspectResult } from "../lib/inspection";
+import { changedKeys, constraintRows, recommendationTransformations, formatScalar, MAX_STEPS, type InspectionFocus, type InspectionState, type InspectResult } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import type { Scene } from "../lib/scene/schema";
 import { useRef, useState } from "react";
@@ -8,8 +8,8 @@ import { Icon } from "./icons";
 type Change = { key: string; stateId: string; value: number | string | boolean };
 type Props = {
   brush: Brush; kind: BrushToolKind; scene: Scene; nodeIds: string[]; state: InspectionState; busy: boolean; running: boolean;
-  /** Interaction mode: every brush in the frame records its state changes. */
-  interacting?: boolean;
+  /** The inspected frame (the active one) and every frame the brush is in, so another can be inspected. */
+  frameId?: string; frames?: { id: string; name: string; master: boolean }[]; onFrame?: (frameId: string) => void;
   onCursor: (index: number | null) => void; onClear: () => void;
   /** The selected targeted inspection tool (kind "targeted"). */
   targeted?: TargetedTool;
@@ -19,6 +19,13 @@ type Props = {
   onApplyChanges: (changes: Change[]) => void; onApplyRecommendation: (recommendation: InspectResult["recommendations"][number]) => void;
   /** Switch to another tool of the group (a toolbar tool id). */
   onTool: (toolId: string) => void;
+  /** Recommendations applied in this frame (newest last), undone ones to redo, and whether the frame is still as each left it. */
+  applied?: { past: { id: string; title: string; key: string }[]; future: { id: string; title: string; key: string }[]; undoClean: boolean; redoClean: boolean };
+  onUndoApplied?: () => void; onRedoApplied?: () => void;
+  /** Inspection annotation: drawing (false) or erasing marks (true). */
+  eraser?: boolean; onEraser?: (on: boolean) => void;
+  /** Which recommendation an applied entry was (its key). */
+  recommendationKey?: (item: InspectResult["recommendations"][number]) => string;
 };
 
 const sameFocus = (a: InspectionFocus | null, b: InspectionFocus) => Boolean(a && a.kind === b.kind && a.nodeId === b.nodeId && a.id === b.id);
@@ -85,9 +92,13 @@ export function InspectionPanel(props: Props) {
   const { brush, scene, nodeIds, state, busy } = props;
   // Reset history asks once more, in place, before deleting the steps.
   const [confirmReset, setConfirmReset] = useState(false);
+  // Undo/redo of an applied recommendation asks first when the frame changed since (those later edits go too).
+  const [confirmStep, setConfirmStep] = useState<"undo" | "redo" | null>(null);
   const annotating = props.kind === "inspect-annotate", targeted = props.kind === "targeted" ? props.targeted : undefined;
+  const frames = props.frames ?? [];
   if (!nodeIds.length) return <div className="inspection-empty"><Icon name="inspect" size={24} /><strong>이 프레임에는 {brush.name} brush가 없습니다.</strong>
-    <span>Brush 도구로 이 프레임에 찍거나, brush의 원본 프레임에서 검사하세요.</span></div>;
+    <span>{frames.length ? "검사할 프레임을 고르거나, Brush 도구로 이 프레임에 brush를 추가하세요." : "Brush 도구로 이 프레임에 brush를 추가하세요."}</span>
+    {frames.length > 0 && <div className="inspection-frame-list">{frames.map(frame => <button key={frame.id} onClick={() => props.onFrame?.(frame.id)}>{frame.master ? "◆" : "◇"} {frame.name}<small>{frame.master ? "master" : "instance"}</small></button>)}</div>}</div>;
   const steps = state.steps, index = state.cursor ?? steps.length - 1, step = steps[index];
   const changed = changedKeys(steps, index), rows = constraintRows(scene, nodeIds);
   const node = (id: string | null) => id ? findNode(scene, id) : undefined;
@@ -101,9 +112,24 @@ export function InspectionPanel(props: Props) {
     return item.nodeId ? { event: via?.label || via?.id || "시간/직접 이동", detail: stepTitle(item) } : { event: stepTitle(item), detail: "이 시점의 값" };
   };
   const result = targeted?.result ?? null;
+  /** The node and part a recommendation changes, named as the user sees them. */
+  const recommendationTargets = (item: InspectResult["recommendations"][number]): { node: string; label: string; focus: InspectionFocus }[] => {
+    if (item.kind === "value") return item.changes.flatMap(change => {
+      const row = rows.find(entry => entry.key === change.key); if (!row) return [];
+      return [{ node: row.node, label: `${row.transformation ? `${row.transformation} · ` : ""}${row.property}${row.path ? ` › ${row.path}` : ""}`, focus: { kind: "constraint" as const, nodeId: row.binding.nodeId, id: row.binding.path[0] } }];
+    }).filter((target, i, all) => all.findIndex(other => sameFocus(other.focus, target.focus)) === i);
+    const target = node(item.nodeId);
+    // A transformation fix may change several transformations: one chip each, each highlighting just its own card.
+    if (item.kind === "transformation") return recommendationTransformations(item).map(id => ({ node: target?.name ?? item.nodeId, label: target?.transformations.find(entry => entry.id === id)?.label || id, focus: { kind: "transformation" as const, nodeId: item.nodeId, id } }));
+    const label = item.kind === "state" ? target?.machine?.states.find(entry => entry.id === item.targetId)?.label : target?.machine?.transitions.find(entry => entry.id === item.targetId)?.label;
+    return [{ node: target?.name ?? item.nodeId, label: label || item.targetId, focus: { kind: item.kind, nodeId: item.nodeId, id: item.targetId } }];
+  };
   return <div className="inspection-body">
     <div className="inspection-toolbar">
       <span className="inspection-brush"><i style={{ background: brush.color }} />{brush.name}</span>
+      {/* Which frame is inspected: any frame with this brush, master or instance. */}
+      {frames.length > 0 && <select className="inspection-frame" aria-label="Inspected frame" title="Inspect this brush in another frame" value={props.frameId} onChange={e => props.onFrame?.(e.target.value)}>
+        {frames.map(frame => <option key={frame.id} value={frame.id}>{frame.master ? "◆" : "◇"} {frame.name} · {frame.master ? "master" : "instance"}</option>)}</select>}
       <div className="inspection-modes" role="tablist" aria-label="Inspection tool">
         <button role="tab" aria-selected={props.kind === "inspect"} onClick={() => props.onTool(brushTool("inspect", brush.id))}><Icon name="inspect" size={12} />Inspection</button>
         <button role="tab" aria-selected={annotating} onClick={() => props.onTool(brushTool("inspect-annotate", brush.id))}><Icon name="inspect-pen" size={12} />Annotation</button>
@@ -123,7 +149,7 @@ export function InspectionPanel(props: Props) {
         : <button title={`Delete this brush's recorded history in this frame (${steps.length} steps) and follow the result live`} disabled={!steps.length} onClick={() => setConfirmReset(true)}><Icon name="trash" size={12} />Reset history</button>}
     </div>
     <StepTimeline steps={steps} cursor={state.cursor} label={stepLabel} onCursor={props.onCursor} />
-    {!steps.length && <div className="inspection-timeline-hint"><span className="inspection-hint">{props.running ? `결과가 상태를 바꿀 때마다 자동으로 기록됩니다 (최대 ${MAX_STEPS}개). Interaction 모드에서 brush를 써 보세요.` : "이 프레임의 결과를 먼저 생성해주세요."}</span></div>}
+    {!steps.length && <div className="inspection-timeline-hint"><span className="inspection-hint">{props.running ? `결과가 상태를 바꿀 때마다 자동으로 기록됩니다 (최대 ${MAX_STEPS}개). Brush 도구로 이 프레임의 brush를 움직여 보세요.` : "이 프레임의 결과를 먼저 생성해주세요."}</span></div>}
     <div className="inspection-content">
       <section className="inspection-side">
         {step && <div className="inspection-step-detail">
@@ -144,6 +170,10 @@ export function InspectionPanel(props: Props) {
         {annotating && <form className="inspection-concern" onSubmit={e => { e.preventDefault(); props.onInspect(); }}>
           <span className="section-kicker">INSPECTION ANNOTATION</span>
           <span className="inspection-muted">프레임에 보라색으로 알고 싶은 곳을 표시하고(동그라미·메모) concern을 적으면, 그 concern 전용 Targeted inspection 도구가 이 brush 그룹에 생깁니다.</span>
+          {props.onEraser && <div className="inspection-draw-mode" role="radiogroup" aria-label="Inspection annotation mode">
+            <button type="button" role="radio" aria-checked={!props.eraser} className={!props.eraser ? "active" : ""} onClick={() => props.onEraser!(false)}><Icon name="inspect-pen" size={12} />Pen</button>
+            <button type="button" role="radio" aria-checked={Boolean(props.eraser)} className={props.eraser ? "active" : ""} title="Drag over marks on the frame to erase them (E)" onClick={() => props.onEraser!(true)}><Icon name="eraser" size={12} />Eraser</button>
+            {props.eraser && <span className="inspection-muted">프레임에서 지울 자국 위를 문지르세요.</span>}</div>}
           <div className="inspection-chips">
             {state.marks.length > 0 ? <span className="machine-attachment machine-attachment-annotation inspection-mark-chip"><Icon name="inspect-pen" size={12} /><b>Inspection annotation</b>{state.marks.length}획 첨부됨
               <button type="button" aria-label="Clear inspection annotation" onClick={props.onClearMarks}><Icon name="close" size={11} /></button></span>
@@ -168,9 +198,24 @@ export function InspectionPanel(props: Props) {
               <button disabled={busy} onClick={() => props.onApplyChanges([fix])}>Apply</button></div>)}
             {result.valueFixes.length > 1 && <button className="inspection-apply-all" disabled={busy} onClick={() => props.onApplyChanges(result.valueFixes)}>Apply all values</button>}
           </div>}
-          {result.recommendations.length > 0 && <div className="inspection-recommendations"><span className="section-kicker">RECOMMENDATIONS</span>
-            {result.recommendations.map((item, i) => <div key={i} className="inspection-recommendation"><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? "Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b><span>{item.detail}</span>
-              <button disabled={busy} onClick={() => props.onApplyRecommendation(item)}>{item.kind === "value" ? "Apply values" : "Apply with AI"}</button></div>)}
+          {result.recommendations.length > 0 && <div className="inspection-recommendations"><div className="inspection-applied-bar"><span className="section-kicker">RECOMMENDATIONS</span>
+            {/* Undo / redo a whole applied recommendation: scene, code and prompt together. */}
+            {props.applied && (props.applied.past.length > 0 || props.applied.future.length > 0) && (confirmStep ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm undo">
+                적용 뒤에 바꾼 내용도 함께 {confirmStep === "undo" ? "되돌아갑니다" : "덮어씁니다"}.
+                <button className="danger" onClick={() => { const step = confirmStep; setConfirmStep(null); (step === "undo" ? props.onUndoApplied : props.onRedoApplied)?.(); }}>{confirmStep === "undo" ? "Undo" : "Redo"}</button>
+                <button onClick={() => setConfirmStep(null)}>Cancel</button></span>
+              : <span className="inspection-applied-actions">
+                <button disabled={busy || !props.applied.past.length} title={props.applied.past.length ? `Undo 「${props.applied.past.at(-1)!.title}」 (scene and code)` : "Nothing applied"}
+                  onClick={() => props.applied!.undoClean ? props.onUndoApplied?.() : setConfirmStep("undo")}><Icon name="undo" size={12} />Undo apply</button>
+                <button disabled={busy || !props.applied.future.length} title={props.applied.future.length ? `Redo 「${props.applied.future.at(-1)!.title}」` : "Nothing to redo"}
+                  onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>)}</div>
+            {result.recommendations.map((item, i) => <div key={i} className={`inspection-recommendation ${props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) ? "applied" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? "Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
+              {/* What it changes: click to highlight it (the transformation card, the property, or the state/transition in the graph). */}
+              <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
+                aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
+              <span>{item.detail}</span>
+              <button disabled={busy} onClick={() => props.onApplyRecommendation(item)}>{item.kind === "value" ? "Apply values" : "Apply with AI"}</button>
+              {props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) && <small className="inspection-applied-mark">✓ 적용됨 · Undo apply로 되돌릴 수 있습니다</small>}</div>)}
           </div>}
         </div>}
       </section>

@@ -41,8 +41,6 @@ export type SketchPanel = SavedSketchPanel & {
   stateJump: { nodeId: string; stateId: string; revision: number } | null;
   /** A result is being generated for a sketch that has none yet (e.g. after a layer drop). */
   pendingResult: boolean;
-  /** Interaction mode: pointer and keyboard input go only to the running result. */
-  interacting: boolean;
   /** The state or transition picked in the state machine panel (attached to a refinement). */
   machineTarget: (MachineTarget & { nodeId: string }) | null;
   /** The open refinement of a node's machine: its text and the annotation drawn on the graph. */
@@ -51,7 +49,12 @@ export type SketchPanel = SavedSketchPanel & {
   inspections: Record<string, InspectionState>;
   /** An open AI regeneration of a transformation/property (or a new one): the user's text and the annotation drawn on the frame. */
   transformDraft: TransformDraft | null;
+  /** Inspection recommendations applied in this frame, undoable and redoable as a whole (scene, code and prompt together). */
+  applied: { past: AppliedEntry[]; future: AppliedEntry[] };
 };
+/** What a recommendation changes in a frame: kept before and after it was applied. */
+export type AppliedSnapshot = Pick<SketchPanel, "scene" | "generated" | "codeDraft" | "executable" | "preparedCode" | "composePrompt" | "dirtyNodeIds">;
+export type AppliedEntry = { id: string; title: string; key: string; before: AppliedSnapshot; after: AppliedSnapshot };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
 /** What a regeneration targets: a property, a transformation, or (neither) a new stacked transformation. */
 export type TransformTarget = { transformationId?: string; propertyId?: string };
@@ -65,7 +68,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, interacting: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null };
+    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null, applied: { past: [], future: [] } };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

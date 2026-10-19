@@ -35,6 +35,8 @@ export type PropertyInspectorProps = {
   onMinimalExample?: (transformationId: string) => void;
   /** A constraint picked in inspection: its card is highlighted and scrolled into view. */
   highlightPropertyId?: string | null;
+  /** A transformation a recommendation targets: its card is highlighted and scrolled into view. */
+  highlightTransformationId?: string | null;
   onMakePen: (propertyId: string, path: string[]) => void;
   onCopy: (propertyId: string, path: string[]) => void;
   onPaste: (propertyId: string, path: string[], dropped?: AlgorithmClip) => void;
@@ -130,7 +132,7 @@ function PropertyCard({ property, props, openMenu }: { property: Property; props
 /** One semantic transformation of the stack: its meaning, its properties and a socket for more. */
 function TransformationCard({ transformation, index, count, roomInNode, props, openMenu }: { transformation: SemanticTransformation; index: number; count: number; roomInNode: boolean; props: PropertyInspectorProps; openMenu: ReturnType<typeof useContextMenu>[1] }) {
   const { state, busy } = props, name = transformation.label || `Transformation ${index + 1}`;
-  return <section className="transformation-card" aria-label={`Semantic transformation ${name}`}>
+  return <section className={`transformation-card ${props.highlightTransformationId === transformation.id ? "inspection-highlight" : ""}`} data-transformation-id={transformation.id} aria-label={`Semantic transformation ${name}`}>
     <div className="transformation-heading">
       <span className="transformation-order" title="Transformations apply top to bottom">{index + 1}</span>
       <input aria-label={`${name} transformation name`} maxLength={100} placeholder="e.g. Radial growth" value={transformation.label} disabled={Boolean(state)} onChange={e => props.onTransformation(transformation.id, { label: e.target.value })} />
@@ -157,6 +159,7 @@ export function PropertyInspector(props: PropertyInspectorProps) {
   const { node, transformations, state, busy } = props;
   const [menu, openMenu] = useContextMenu();
   useEffect(() => { if (props.highlightPropertyId) document.querySelector(`[data-property-id="${CSS.escape(props.highlightPropertyId)}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [props.highlightPropertyId]);
+  useEffect(() => { if (props.highlightTransformationId) document.querySelector(`[data-transformation-id="${CSS.escape(props.highlightTransformationId)}"]`)?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [props.highlightTransformationId]);
   const roomInNode = transformations.flatMap(item => item.properties).length < MAX_NODE_PROPERTIES;
   const canStack = !state && transformations.length < MAX_TRANSFORMATIONS;
   return <div className="property-inspector">{menu}

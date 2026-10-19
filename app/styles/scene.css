@@ -204,13 +204,12 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .panel-resizer.panel-resizer-y::after { top: 4px; bottom: auto; left: 0; right: 0; width: auto; height: 2px; }
 @media (max-width: 700px) { .panel-resizer:not(.panel-resizer-y) { display: none; } }
 
-/* Interaction mode: the running result sits on top and alone takes input; strokes, layer boxes and drops are off. */
+/* Playing with a brush (interaction): the running result sits on top and alone takes input; strokes, layer boxes and drops are off. */
 .sketch-frame-surface.frame-interacting > .frame-render { z-index: 2; }
 .sketch-frame-surface.frame-interacting > .p5-surface { visibility: hidden; pointer-events: none; }
 .sketch-frame-surface.frame-interacting > .frame-empty, .sketch-frame-surface.frame-interacting > .frame-annotations { display: none; }
 .isolated-engine-frame.interactive-engine { left: 0; top: 0; width: 100%; height: 100%; opacity: 1; pointer-events: auto; cursor: pointer; }
 .sketch-frame-surface.frame-interacting { outline: 2px solid #c27a2c; outline-offset: -2px; }
-.frame-actions button.interaction-mode-on { background: #c27a2c; border-color: #c27a2c; color: #fff; }
 
 /* State machine graph: pan by dragging the background, pick states/transitions, annotate. */
 .machine-graph-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; cursor: grab; touch-action: none; user-select: none; background-image: radial-gradient(#dbe3de .7px, transparent .7px); background-size: 16px 16px; }
@@ -273,9 +272,8 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .brush-group-tools button { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px; font-size: 11.5px; color: #3f5148; text-align: left; }
 .brush-group-tools button:hover { background: #eef4f0; }
 .brush-group-tools button.active { background: #e2efe7; color: #23533f; font-weight: 600; }
-.brush-gesture-choice { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
-.brush-gesture-choice button { padding: 5px 8px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 10.5px; text-align: left; color: #546a5d; }
-.brush-gesture-choice button.active { border-color: #397461; background: #eef6f1; color: #23533f; }
+.brush-master-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; }
+.brush-master-row button { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; padding: 4px 8px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 10.5px; color: #23533f; }
 .brush-name-field { display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: #7b8b81; margin-bottom: 8px; }
 .brush-name-field input { font: inherit; font-size: 12px; height: 28px; min-height: 28px; box-sizing: border-box; padding: 4px 7px; border: 1px solid #d6e0d9; border-radius: 4px; color: #2b3a31; width: 100%; }
 .brush-remove { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #a3483a; padding: 4px 0; }
@@ -390,6 +388,12 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-trace { display: flex; align-items: flex-end; gap: 2px; height: 22px; }
 .inspection-trace i { width: 5px; min-height: 3px; background: #b9cbbf; border-radius: 1px; }
 .inspection-trace i.current { background: #397461; }
+.transformation-card.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; }
+.inspection-targets { display: flex; flex-wrap: wrap; gap: 4px; }
+.inspection-recommendation .inspection-target { align-self: auto; display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 8px; border: 1px solid #dde5e0; border-radius: 11px; background: #fff; color: #4a6656; font-size: 10.5px; }
+.inspection-recommendation .inspection-target span { color: #7a8b81; }
+.inspection-recommendation .inspection-target b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspection-recommendation .inspection-target.focused { border-color: #e07b00; background: #fff4e5; color: #8a4b00; }
 .property-card.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; }
 @media (max-width: 700px) { .inspection-content { grid-template-columns: 1fr; } .inspection-side { border-right: 0; border-bottom: 1px solid #e7ece8; } }
 .brush-targeted-row { display: flex; align-items: center; gap: 2px; }
@@ -403,3 +407,49 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .frame-working { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px 2px 8px; border-radius: 11px; background: #eef6f1; color: #23533f; font-size: 10.5px; white-space: nowrap; }
 .frame-working .loading-spinner { width: 10px; height: 10px; }
 .frame-working button { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; }
+
+/* Brush master (◆) and instances (◇). */
+.brush-role-badge { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 10px; line-height: 1; }
+.brush-role-badge span { font-size: 8px; padding: 1px 4px; border-radius: 3px; background: #f3efe6; color: #6f604a; }
+.brush-role-badge.master span { background: #fbefe2; color: #8a4f17; font-weight: 600; }
+.brush-role-banner { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; padding: 9px 11px; border: 1px solid #e6dccb; border-radius: 6px; background: #fdfaf4; font-size: 11.5px; color: #5d5240; }
+.brush-role-banner.instance { border-style: dashed; }
+.brush-role-heading { display: flex; align-items: center; gap: 6px; }
+.brush-role-heading i { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; }
+.brush-role-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.brush-role-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #d9cdb8; border-radius: 4px; background: #fff; font-size: 11px; color: #5d4a2c; }
+.detach-dialog p b { font-weight: 600; }
+.detach-dialog .alternative-button + .alternative-button { margin-top: 6px; }
+.inspection-frame { max-width: 190px; padding: 2px 6px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 11px; color: #3c5246; }
+.inspection-frame-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 8px; }
+.inspection-frame-list button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #dbe4de; border-radius: 12px; background: #fff; font-size: 11.5px; }
+.inspection-frame-list small { color: #7a8b81; }
+.brush-role-actions .brush-role-delete { margin-left: auto; color: #a1452f; border-color: #e7c9bf; }
+/* Inspection has its own pane beside Code / State Machine, so the inspected states stay in view. */
+.bottom-panel-split { display: flex; height: min(350px, 40dvh); min-height: 220px; background: #f8faf9; }
+.bottom-panel-split > .inspection-dock { flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; }
+.bottom-panel-side { position: relative; flex: 0 0 auto; width: min(44%, 560px); min-width: 260px; height: 100%; border-left: 1px solid #dfe6e1; }
+.bottom-panel-side > .machine-panel-content, .bottom-panel-side > .raw-code-body { height: 100%; min-height: 0; }
+@media (max-width: 700px) { .bottom-panel-split { flex-direction: column; } .bottom-panel-side { width: auto !important; height: 50%; border-left: 0; border-top: 1px solid #dfe6e1; } }
+/* State machine states and transitions an inspection points at. */
+.machine-state.inspected-state { box-shadow: 0 0 0 3px #e0457b, 0 4px 14px rgba(224, 69, 123, .25); }
+.machine-state.inspected-from { box-shadow: 0 0 0 2px rgba(224, 69, 123, .45); }
+.machine-state.related-state:not(.inspected-state) { outline: 2px dashed #c27a2c; outline-offset: 3px; }
+.machine-transition-edge.inspected-transition .transition-path { stroke: #e0457b; stroke-width: 3; }
+.machine-transition-edge.inspected-transition .transition-label rect { stroke: #e0457b; stroke-width: 1.5; }
+.machine-transition-edge.related-transition:not(.inspected-transition) .transition-path { stroke: #c27a2c; stroke-dasharray: 5 4; stroke-width: 2.5; }
+.machine-inspection-legend { display: flex; flex-wrap: wrap; gap: 10px; padding: 4px 12px; font-size: 10.5px; color: #5c6b62; border-bottom: 1px solid #e3e9e5; background: #fbfcfb; }
+.machine-inspection-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 3px; vertical-align: -1px; }
+.machine-inspection-legend .now { box-shadow: 0 0 0 2px #e0457b; }
+.machine-inspection-legend .related { outline: 2px dashed #c27a2c; outline-offset: 1px; }
+/* Undo / redo of applied recommendations. */
+.inspection-applied-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inspection-applied-actions { display: inline-flex; gap: 4px; margin-left: auto; }
+.inspection-applied-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 10.5px; color: #3c5246; }
+.inspection-recommendation.applied { border-color: #9cc5ad; background: #f3faf5; }
+.inspection-applied-mark { color: #2f7a52; font-size: 10.5px; }
+/* Inspection annotation pen / eraser. */
+.inspection-draw-mode { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.inspection-draw-mode button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 11px; color: #4a5a50; }
+.inspection-draw-mode button.active { border-color: #7a5bb5; background: #f2eefa; color: #4f3a85; }
+.sketch-frame-surface.inspection-erasing .p5-surface { cursor: cell; }

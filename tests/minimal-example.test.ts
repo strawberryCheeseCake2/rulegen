@@ -70,3 +70,11 @@ test("the bottom panel (code, state machine, inspection) has a height handle on 
   const html = renderToStaticMarkup(createElement(RawCodePanel, { code: "p.circle(1,1,1);", sketchName: "A", fileName: "a", onCopy: () => {}, onError: () => {} }));
   assert.match(html, /role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel"/);
 });
+
+test("a transformation picked from a recommendation is highlighted in the inspector", () => {
+  const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
+  const html = renderToStaticMarkup(createElement(PropertyInspector, new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, highlightTransformationId: "ink-wash" } as Record<string, unknown>,
+    { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  assert.match(html, /class="transformation-card inspection-highlight" data-transformation-id="ink-wash"/);
+  assert.equal(html.match(/inspection-highlight/g)?.length, 1);
+});

@@ -6,7 +6,9 @@ type Props = { artwork: Artwork; tool: string; color: string; width: number; opa
   /** Brush-group tools ("kind:brushId") record a gesture instead of a stroke: canvas pixels, ms since it started. Tools that only inspect get null. */
   onGesture?: (tool: string, points: { x: number; y: number; t: number }[]) => void; gestureTool?: (tool: string) => boolean;
   /** Live progress of a gesture (canvas pixels), before onGesture reports the whole path. */
-  onGestureStep?: (tool: string, point: { x: number; y: number }, phase: "start" | "move") => void };
+  onGestureStep?: (tool: string, point: { x: number; y: number }, phase: "start" | "move") => void;
+  /** Whether a gesture draws its path while it is made (default yes). */
+  showGesture?: (tool: string) => boolean };
 export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null), instance = useRef<P5 | null>(null);
   const current = useRef(props); current.current = props;
@@ -109,7 +111,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     active.last = point; instance.current?.redraw();
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div ref={host} className="p5-host" />
-    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{gesturePath.length > 0 && <polyline className="gesture-path" points={gesturePath.map(p => `${p.x},${p.y}`).join(" ")} />}{props.children}</g></svg>
+    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{gesturePath.length > 0 && (props.showGesture?.(props.tool) ?? true) && <polyline className="gesture-path" points={gesturePath.map(p => `${p.x},${p.y}`).join(" ")} />}{props.children}</g></svg>
     {!ready && <div className="engine-loading">Loading p5.js…</div>}
   </div>;
 });

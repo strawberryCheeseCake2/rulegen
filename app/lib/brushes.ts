@@ -23,8 +23,6 @@ export const brushSchema = z.object({
   sourceFrameId: z.string().max(80), nodeId: z.string().max(80),
   /** The collection with its members, kept for when the source is gone. */
   scene: sceneSchema,
-  /** "stamp": a click stamps once, a drag stamps along the path. "drag": a drag drives the collection's own interaction. */
-  gesture: z.enum(["stamp", "drag"]).default("stamp"),
   /** Its code module (as stored in a program), kept for when the source frame or its code is gone. */
   code: z.string().max(120000).default(""),
   /** Targeted inspection tools created with the inspection annotation tool. */
@@ -49,21 +47,15 @@ export function parseBrushTool(tool: string): { kind: BrushToolKind; brushId: st
 export const isInspectionTool = (kind: BrushToolKind | undefined) => kind === "inspect" || kind === "inspect-annotate" || kind === "targeted";
 
 const COLORS = ["#c0563f", "#3b7bb8", "#7a5bb5", "#2f8f6b", "#c48a1d", "#b5487f", "#4e8a96", "#8a6a3b"];
-const DRAG_WORDS = /drag|드래그|stroke|스트로크|trail|draw|그리|swipe|스와이프|brush|붓|path|경로|follow|따라/i;
-
-/** Does any machine in the subtree react to the user dragging (rather than a click or time)? */
-export function dragGesture(scene: Scene, nodeId: string) {
-  return [nodeId, ...descendantIds(scene, nodeId)].some(id => findNode(scene, id)?.machine?.transitions.some(transition =>
-    transition.trigger === "event" && (DRAG_WORDS.test(transition.id) || DRAG_WORDS.test(transition.label))));
-}
+export const brushColor = (count: number) => COLORS[count % COLORS.length];
 
 /** One brush per root collection of an AI-generated scene (nested collections are parts of it). */
 export function brushesFor(scene: Scene, frameId: string, existing: Brush[], newId: () => string): Brush[] {
   const made: Brush[] = [];
   for (const node of scene.nodes) {
     if (node.kind !== "collection" || node.parentId || existing.length + made.length >= MAX_BRUSHES) continue;
-    made.push({ id: newId(), name: node.name, color: COLORS[(existing.length + made.length) % COLORS.length], sourceFrameId: frameId, nodeId: node.id,
-      scene: subScene(scene, [node.id]), gesture: dragGesture(scene, node.id) ? "drag" : "stamp", code: "", targeted: [] });
+    made.push({ id: newId(), name: node.name, color: brushColor(existing.length + made.length), sourceFrameId: frameId, nodeId: node.id,
+      scene: subScene(scene, [node.id]), code: "", targeted: [] });
   }
   return made;
 }
@@ -90,7 +82,48 @@ export function brushSource(brush: Brush, liveScene: Scene | undefined): Scene {
  * saved copy carried the mark are recognised by the brush's node id.
  */
 export function brushNodeIds(scene: Scene, brush: Brush, frameId: string) {
-  let roots = scene.nodes.filter(node => node.brushId === brush.id || (frameId === brush.sourceFrameId && node.id === brush.nodeId)).map(node => node.id);
-  if (!roots.length) roots = scene.nodes.filter(node => !node.parentId && !node.brushId && (node.id === brush.nodeId || node.codeId === brush.nodeId)).map(node => node.id);
-  return [...new Set(roots.flatMap(id => [id, ...descendantIds(scene, id)]))];
+  return [...new Set(brushRoots(scene, brush, frameId).flatMap(id => [id, ...descendantIds(scene, id)]))];
+}
+/** The roots of a brush in a frame: its master (in the source frame) and its instances. */
+export function brushRoots(scene: Scene, brush: Brush, frameId: string) {
+  const roots = scene.nodes.filter(node => node.brushId === brush.id || (frameId === brush.sourceFrameId && node.id === brush.nodeId)).map(node => node.id);
+  return roots.length ? roots : scene.nodes.filter(node => !node.parentId && !node.brushId && (node.id === brush.nodeId || node.codeId === brush.nodeId)).map(node => node.id);
+}
+
+// ── Master and instances ─────────────────────────────────────────────────────
+// The master of a brush is its collection in the source frame; every stamp of it
+// (in any frame) is an instance. Instances follow the brush: their semantic
+// transformations and state machines are changed on the master, or the instance
+// is detached into a brush of its own first.
+
+export type BrushRole = { brush: Brush; rootId: string; master: boolean };
+/** The brush a node belongs to (as its root or a member), and whether that is the master or an instance. */
+export function brushRole(scene: Scene, frameId: string, nodeId: string, brushes: Brush[]): BrushRole | null {
+  for (let node = findNode(scene, nodeId); node; node = node.parentId ? findNode(scene, node.parentId) : undefined) {
+    const master = brushes.find(brush => brush.sourceFrameId === frameId && brush.nodeId === node!.id);
+    if (master) return { brush: master, rootId: node.id, master: true };
+    const brush = node.brushId ? brushes.find(item => item.id === node!.brushId) : undefined;
+    if (brush) return { brush, rootId: node.id, master: false };
+  }
+  return null;
+}
+
+/**
+ * Nodes of a brush in different frames have different ids; they share the id the
+ * code uses (`codeId`, else the id). These are a frame's ids → those shared ids …
+ */
+export function sharedIds(scene: Scene, roots: string[]) {
+  return new Map(roots.flatMap(root => [root, ...descendantIds(scene, root)]).map(id => [id, findNode(scene, id)!.codeId ?? id]));
+}
+/** … and the shared ids → one root's ids in this frame. */
+export function frameIds(scene: Scene, root: string) {
+  return new Map([root, ...descendantIds(scene, root)].map(id => [findNode(scene, id)!.codeId ?? id, id]));
+}
+
+/** Detach an instance: it becomes the master of a new brush (keeping the old brush's targeted inspection tools). */
+export function detachedBrush(scene: Scene, frameId: string, rootId: string, from: Brush, brushes: Brush[], id: string, code: string): Brush {
+  const root = findNode(scene, rootId)!, taken = new Set(brushes.map(brush => brush.name));
+  let name = root.name.slice(0, 90);
+  for (let n = 2; taken.has(name); n++) name = `${root.name.slice(0, 90)} ${n}`;
+  return { id, name, color: brushColor(brushes.length), sourceFrameId: frameId, nodeId: rootId, scene: subScene(scene, [rootId]), code, targeted: from.targeted };
 }

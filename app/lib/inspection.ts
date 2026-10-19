@@ -19,7 +19,8 @@ export type InspectionStep = {
   /** The running sketch's state at that moment (module stores, machine states, random seed); selecting the step restores it. */
   runtime: unknown;
 };
-export type InspectionFocus = { kind: "constraint" | "state" | "transition"; nodeId: string; id: string };
+/** What an overlay, row or recommendation points at (a transformation only from recommendations). */
+export type InspectionFocus = { kind: "constraint" | "state" | "transition" | "transformation"; nodeId: string; id: string };
 export type InspectionState = {
   brushId: string; steps: InspectionStep[]; cursor: number | null;
   /** The inspection annotation being drawn (normalized 0..1) and its concern; they become a targeted tool. */
@@ -87,9 +88,14 @@ export const inspectResultSchema = z.object({
   valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
   /** Other ways to resolve it: values, or changing a transformation, state or transition. */
   recommendations: z.array(z.object({ kind: z.enum(["value", "transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
+    /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
+    targetIds: z.array(z.string().max(80)).max(6).default([]),
     title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) })).max(6),
 });
 export type InspectResult = z.infer<typeof inspectResultSchema>;
+/** Every transformation a recommendation changes (the main target first); none for other kinds. */
+export const recommendationTransformations = (item: Pick<InspectResult["recommendations"][number], "kind" | "targetId" | "targetIds">) =>
+  item.kind === "transformation" ? [...new Set([item.targetId, ...(item.targetIds ?? [])].filter(Boolean))] : [];
 /** Overlays written before when/each existed lack them. */
 export type Overlay = z.input<typeof overlaySchema>;
 
@@ -316,4 +322,69 @@ export function layoutLabels(requests: LabelRequest[], size: number, bounds = { 
     if (spot) placed.push({ key: request.key, text: request.text, x: spot.x, y: spot.y, width, height, leader: !near.includes(spot) });
   }
   return placed;
+}
+
+// ── One targeted inspection for every stamp of a brush ──────────────────────
+// A targeted tool keeps its result in the brush's shared node ids (the ids its
+// code uses), so the same overlays, value fixes and recommendations work on the
+// master and on every instance: they are translated to a frame's ids when shown.
+
+const READERS = /\b(p|prev|delta|s|len|in|elapsed)\(\s*(["'])(.*?)\2/g;
+/** A value key ("<node id>/…") with its node id translated. */
+const remapKey = (key: string, map: (id: string) => string) => {
+  const cut = key.indexOf("/");
+  return cut < 0 ? key : `${encodeURIComponent(map(decodeURIComponent(key.slice(0, cut))))}${key.slice(cut)}`;
+};
+/** An overlay expression (or label template) with the node ids it reads translated. */
+export function remapExpression(source: string, map: (id: string) => string) {
+  return source.replace(READERS, (_all, name: string, quote: string, arg: string) => `${name}(${quote}${name === "p" || name === "prev" || name === "delta" ? remapKey(arg, map) : map(arg)}${quote}`);
+}
+/** The same result with every node id passed through `map` (ids it does not know stay as they are). */
+export function remapResult(result: InspectResult, ids: Map<string, string>, suffix = ""): InspectResult {
+  const map = (id: string) => ids.get(id) ?? id, expression = (source: string) => remapExpression(source, map);
+  return {
+    summary: result.summary,
+    overlays: result.overlays.map(overlay => {
+      const cut = overlay.each.indexOf(":");
+      return { ...overlay, id: `${overlay.id}${suffix}`, x: expression(overlay.x), y: expression(overlay.y), w: expression(overlay.w), h: expression(overlay.h), label: expression(overlay.label), when: expression(overlay.when),
+        each: cut < 0 ? overlay.each : `${map(overlay.each.slice(0, cut))}${overlay.each.slice(cut)}`, link: { ...overlay.link, nodeId: map(overlay.link.nodeId) } };
+    }),
+    valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
+    recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })) })),
+  };
+}
+/**
+ * A stored (shared-id) result shown in one frame: overlays for every root of the
+ * brush there (master or instances), fixes and recommendations for `primary`.
+ */
+export function resultInFrame(result: InspectResult, rootIds: Map<string, string>[], primary = 0): InspectResult {
+  if (!rootIds.length) return result;
+  const main = remapResult(result, rootIds[Math.min(primary, rootIds.length - 1)]);
+  return { ...main, overlays: rootIds.length === 1 ? main.overlays : rootIds.flatMap((ids, i) => remapResult(result, ids, i ? `~${i + 1}` : "").overlays) };
+}
+
+/**
+ * What an inspection points at in one node's state machine: the state the node
+ * was in at the inspected step (and where it came from, by which transition when
+ * the step was this node's), and the states/transitions the inspection is about
+ * (the focused one, targeted overlays' links and conditions, recommendations).
+ */
+export function machineInspection(state: InspectionState, result: InspectResult | null, nodeId: string) {
+  const step = state.steps[state.cursor ?? state.steps.length - 1];
+  const own = step?.nodeId === nodeId, runtime = step ? runtimeOf(step).states?.[nodeId]?.id ?? null : null;
+  const states = new Set<string>(), transitions = new Set<string>();
+  const add = (kind: string, id: string) => { if (kind === "state") states.add(id); else if (kind === "transition") transitions.add(id); };
+  if (state.focus?.nodeId === nodeId) add(state.focus.kind, state.focus.id);
+  for (const overlay of result?.overlays ?? []) {
+    if (overlay.link.nodeId === nodeId) add(overlay.link.kind, overlay.link.id);
+    for (const source of [overlay.when, overlay.x, overlay.y, overlay.w, overlay.h, overlay.label])
+      for (const match of source.matchAll(/\bin\(\s*(["'])(.*?)\1\s*,\s*(["'])(.*?)\3/g)) if (match[2] === nodeId) states.add(match[4]);
+  }
+  for (const item of result?.recommendations ?? []) if (item.nodeId === nodeId) add(item.kind, item.targetId);
+  return { state: own ? step!.to : runtime, from: own ? step!.from : null, transition: own ? step!.transitionId : null, states: [...states], transitions: [...transitions] };
+}
+
+/** Annotation marks (normalized) left after an eraser passes these canvas points: a mark within `radius` canvas pixels goes as a whole. */
+export function eraseMarks<T extends { x: number; y: number }[]>(marks: T[], points: { x: number; y: number }[], radius = 14, size = { w: 900, h: 600 }) {
+  return marks.filter(mark => !mark.some(at => points.some(point => Math.hypot(at.x * size.w - point.x, at.y * size.h - point.y) < radius)));
 }

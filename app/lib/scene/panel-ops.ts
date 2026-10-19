@@ -4,6 +4,7 @@ import { findAlgorithm, instantiate, sceneAlgorithmUsage } from "./algorithms";
 import { findNode, updateNode } from "./graph";
 import { conformMachine, setStateValue, stateProperties, stateTransformations } from "./machines";
 import * as layers from "./transformations";
+import { relinkStamps } from "./live";
 import { defaultNumber, isAlgorithm, replaceAt, setScalarAt, valueAt } from "./values";
 
 // Pure SketchPanel → patch helpers used by the route. Structural edits are undoable;
@@ -13,8 +14,9 @@ type Patch = Partial<SketchPanel>;
 const HISTORY = 40;
 
 function tidy(panel: SketchPanel, scene: Scene): Patch {
-  const ids = new Set(scene.nodes.map(node => node.id));
+  const ids = new Set(scene.nodes.map(node => node.id)), generated = relinkStamps(panel.generated, panel.scene, scene);
   return {
+    ...(generated !== panel.generated ? { generated } : {}),
     scene: { ...scene, nodes: scene.nodes.map(conformMachine) },
     selectedNodeIds: panel.selectedNodeIds.filter(id => ids.has(id)),
     editingStates: Object.fromEntries(Object.entries(panel.editingStates).filter(([nodeId, stateId]) => findNode(scene, nodeId)?.machine?.states.some(state => state.id === stateId))),

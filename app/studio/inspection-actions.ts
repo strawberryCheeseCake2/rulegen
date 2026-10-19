@@ -1,11 +1,11 @@
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
-import { constraintRows, emptyInspection, inspectResultSchema, runtimeForAI, type InspectResult, type InspectionState } from "../lib/inspection";
+import { constraintRows, emptyInspection, inspectResultSchema, recommendationTransformations, runtimeForAI, type InspectResult, type InspectionState } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import * as ops from "../lib/scene/panel-ops";
 import type { ScalarValue } from "../lib/scene/schema";
 import { sceneBindings } from "../lib/scene/values";
-import type { SketchPanel } from "../lib/sketch-panels";
+import type { AppliedSnapshot, SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
 import { annotatedImage, compactMarks } from "./annotated-image";
 import type { StudioDeps } from "./deps";
@@ -67,11 +67,45 @@ export function targetedName(concern: string, count: number) {
   return text ? (Array.from(text).length > 24 ? `${Array.from(text).slice(0, 23).join("")}…` : text) : `Concern ${count + 1}`;
 }
 
-/** Apply a recommendation: values directly, a transformation/state/transition through AI. */
+const snapshot = (panel: SketchPanel): AppliedSnapshot => ({ scene: panel.scene, generated: panel.generated, codeDraft: panel.codeDraft, executable: panel.executable, preparedCode: panel.preparedCode, composePrompt: panel.composePrompt, dirtyNodeIds: panel.dirtyNodeIds });
+/** Same scene, code and prompt (what an applied recommendation changes). */
+export const sameSnapshot = (a: AppliedSnapshot, b: AppliedSnapshot) => (a.scene === b.scene || JSON.stringify(a.scene) === JSON.stringify(b.scene)) && (a.generated?.code ?? "") === (b.generated?.code ?? "") && a.composePrompt === b.composePrompt;
+/** Which recommendation an entry applied (to mark it in the list). */
+export const recommendationKey = (item: Recommendation) => `${item.kind}:${item.nodeId}:${item.targetId}:${item.title}`;
+/** The frame now is what an applied entry left (else undo/redo would also drop later edits). */
+export const appliedCurrent = (panel: SketchPanel, direction: "undo" | "redo") => {
+  const entry = direction === "undo" ? panel.applied.past.at(-1) : panel.applied.future.at(-1);
+  return Boolean(entry && sameSnapshot(direction === "undo" ? entry.after : entry.before, snapshot(panel)));
+};
+
+/**
+ * Apply a recommendation: values directly, a transformation/state/transition
+ * through AI (with the code rewritten after a transformation). The frame before
+ * and after is kept, so the whole application can be undone and redone.
+ */
 export async function applyRecommendation(deps: StudioDeps, owner: string, recommendation: Recommendation) {
-  const instruction = `${recommendation.title}\n${recommendation.detail}`.slice(0, 2000);
-  if (recommendation.kind === "value") { applyChanges(deps, owner, recommendation.changes); return; }
-  const ai = sceneAI(deps, owner);
-  if (recommendation.kind === "transformation") await ai.regenerate(recommendation.nodeId, { transformationId: recommendation.targetId }, instruction);
-  else await ai.refineMachine(recommendation.nodeId, { target: { kind: recommendation.kind, id: recommendation.targetId }, instruction, marks: [] });
+  const instruction = `${recommendation.title}\n${recommendation.detail}`.slice(0, 2000), before = snapshot(deps.panel(owner));
+  if (recommendation.kind === "value") applyChanges(deps, owner, recommendation.changes);
+  else {
+    const ai = sceneAI(deps, owner);
+    // Every transformation the fix changes, in turn; the code is rewritten once at the end (and undo apply takes all of it back).
+    if (recommendation.kind === "transformation") await ai.regenerateAll(recommendation.nodeId, recommendationTransformations(recommendation), instruction);
+    else await ai.refineMachine(recommendation.nodeId, { target: { kind: recommendation.kind, id: recommendation.targetId }, instruction, marks: [] });
+  }
+  const after = snapshot(deps.panel(owner));
+  if (sameSnapshot(before, after)) return;
+  deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: recommendation.title, key: recommendationKey(recommendation), before, after: snapshot(panel) }].slice(-20), future: [] } }));
+}
+
+/** Undo (or redo) the last applied recommendation: the frame's scene, code and prompt go back (or forward) together. */
+export function stepApplied(deps: StudioDeps, owner: string, direction: "undo" | "redo") {
+  const panel = deps.panel(owner), entry = direction === "undo" ? panel.applied.past.at(-1) : panel.applied.future.at(-1);
+  if (!entry || panel.loading) return null;
+  const target = direction === "undo" ? entry.before : entry.after;
+  deps.updatePanel(owner, current => ({ ...ops.commitScene(current, target.scene), generated: target.generated, codeDraft: target.codeDraft, executable: target.executable, preparedCode: target.preparedCode,
+    composePrompt: target.composePrompt, dirtyNodeIds: target.dirtyNodeIds, runtimeError: "",
+    applied: direction === "undo" ? { past: current.applied.past.slice(0, -1), future: [...current.applied.future, entry] } : { past: [...current.applied.past, entry], future: current.applied.future.slice(0, -1) } }));
+  // A brush made from this frame keeps running the restored module.
+  if (target.generated) deps.refreshBrushCode?.(owner, target.generated.code);
+  return entry;
 }

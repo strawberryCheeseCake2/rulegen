@@ -46,6 +46,8 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
     }),
     ungroup: (id: string) => structural(scene => ungroupNode(scene, id)),
     remove: () => structural((scene, panel) => removeNodes(scene, panel.selectedNodeIds)),
+    /** Delete these nodes (e.g. one brush stamp) whatever is selected. */
+    removeIds: (ids: string[]) => structural(scene => removeNodes(scene, ids)),
     reparent: (id: string, parentId: string | null, beforeId: string | null) => structural(scene => setParent(scene, id, parentId, beforeId), () => [id]),
     reorder: (id: string, direction: -1 | 1) => structural(scene => reorderNode(scene, id, direction)),
     add: (kind: "collection" | "object") => apply(panel => {
@@ -225,6 +227,29 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     try { await sceneAI(deps, id).generateCode(false, instruction); }
     finally { deps.updatePanel(id, { pendingResult: false }); }
   }
+  /** Regenerate one property/transformation (or add one); returns what changed, or null. */
+  async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = []) {
+    const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
+    const done: { changed?: { scene: Scene; label: string } } = {};
+    const message = target.propertyId ? "이 property의 구현만 다시 만들고 있습니다…" : target.transformationId ? "이 semantic transformation을 다시 만들고 있습니다…" : "새 semantic transformation을 만들고 있습니다…";
+    await deps.task(message, async () => {
+      const scene = sceneSchema.parse(await deps.request("transform", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
+        alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction?.trim() || panel.instruction, transformMarks: compactMarks(marks),
+        image: await annotatedImage((await deps.capture(owner, true)).image, marks) }, owner));
+      if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
+      deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), transformDraft: null }));
+      done.changed = { scene: deps.panel(owner).scene, label: describeTarget(scene, nodeId, target) };
+    }, owner);
+    return done.changed ?? null;
+  }
+  /** The running code still does the old thing: rewrite it from the new descriptions right away (unless the scene moved on). */
+  async function rewriteCode(labels: string[], scene: Scene) {
+    if (!labels.length || !deps.panel(owner).generated || JSON.stringify(deps.panel(owner).scene) !== JSON.stringify(scene)) return;
+    const panelNow = deps.panel(owner), base = panelNow.generationMode === "compose" ? panelNow.composePrompt : panelNow.instruction;
+    const what = labels.length === 1 ? `${labels[0]} was just regenerated: implement its NEW description and algorithms` : `${labels.join("; ")} were just regenerated together: implement their NEW descriptions and algorithms`;
+    await generateCode(false, `${base}\n${what} exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
+  }
+
   return {
     generateCode,
     draftComposePrompt,
@@ -260,25 +285,26 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         { sourceFrameId: null, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] });
       if (id) { deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다. 결과를 생성하는 중입니다…`); await renderDerived(id, instruction); }
     },
-    /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. */
+    /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. Then the code follows. */
     async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {
-      const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
-      const done: { changed?: { scene: Scene; label: string } } = {};
-      const message = target.propertyId ? "이 property의 구현만 다시 만들고 있습니다…" : target.transformationId ? "이 semantic transformation을 다시 만들고 있습니다…" : "새 semantic transformation을 만들고 있습니다…";
-      await deps.task(message, async () => {
-        const scene = sceneSchema.parse(await deps.request("transform", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
-          alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction?.trim() || panel.instruction, transformMarks: compactMarks(marks),
-          image: await annotatedImage((await deps.capture(owner, true)).image, marks) }, owner));
-        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
-        deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), transformDraft: null }));
-        done.changed = { scene: deps.panel(owner).scene, label: describeTarget(scene, nodeId, target) };
-      }, owner);
-      // The running code still does the old thing: rewrite it from the new descriptions right away.
-      const changed = done.changed;
-      if (changed && deps.panel(owner).generated && JSON.stringify(deps.panel(owner).scene) === JSON.stringify(changed.scene)) {
-        const panelNow = deps.panel(owner), base = panelNow.generationMode === "compose" ? panelNow.composePrompt : panelNow.instruction;
-        await generateCode(false, `${base}\n${changed.label} was just regenerated: implement its NEW description and algorithms exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
+      const done = await regenerateOne(nodeId, target, instruction, marks);
+      if (done) await rewriteCode([done.label], done.scene);
+    },
+    /**
+     * One fix that changes several transformations of a node: each is regenerated
+     * in turn (told which others change with it), then the code is rewritten once.
+     */
+    async regenerateAll(nodeId: string, transformationIds: string[], instruction: string) {
+      const labels: string[] = [];
+      let last: Scene | null = null;
+      for (const [i, id] of transformationIds.entries()) {
+        const together = transformationIds.length > 1 ? `\n\nThis fix changes ${transformationIds.length} semantic transformations of this node together (${transformationIds.join(", ")}). This is ${i + 1}/${transformationIds.length}: regenerate only "${id}", doing its own part of the fix so that it works with the others.` : "";
+        const done = await regenerateOne(nodeId, { transformationId: id }, `${instruction}${together}`.slice(0, 4000));
+        if (!done) break;
+        labels.push(done.label); last = done.scene;
       }
+      if (last) await rewriteCode(labels, last);
+      return labels.length;
     },
     async generateMachine(nodeId: string) {
       const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);

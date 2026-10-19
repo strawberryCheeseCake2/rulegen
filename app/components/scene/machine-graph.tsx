@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { MachineTarget } from "../../lib/schema";
 import type { NodeMachine } from "../../lib/scene/schema";
-import { curvePath, emptyLayoutOverride, machineLayout, type GraphStroke, type LayoutOverride } from "../../lib/scene/machine-layout";
+import { curvePath, emptyLayoutOverride, machineLayout, STATE_HEIGHT, STATE_WIDTH, type GraphStroke, type LayoutOverride } from "../../lib/scene/machine-layout";
 
 type Point = { x: number; y: number };
 type Props = {
@@ -13,7 +13,10 @@ type Props = {
   onState: (id: string) => void; onTransition: (id: string) => void; onBackground: () => void; onStroke: (stroke: GraphStroke) => void;
   onMoveState?: (id: string, position: Point) => void; onMoveLabel?: (id: string, offset: Point) => void;
   summary: (stateId: string) => string;
+  /** Inspection: the state (and the transition taken) of the step being looked at, and states/transitions the inspection is about. */
+  inspected?: MachineInspection | null;
 };
+export type MachineInspection = { state: string | null; from: string | null; transition: string | null; states: string[]; transitions: string[] };
 type Gesture = { pointer: number; x: number; y: number; moved: boolean } & (
   { mode: "pan"; start: Point; transition?: string } | { mode: "draw"; points: GraphStroke } |
   { mode: "state"; id: string; start: Point } | { mode: "label"; id: string; start: Point });
@@ -23,7 +26,7 @@ type Gesture = { pointer: number; x: number; y: number; moved: boolean } & (
  * it, drag the background (or scroll) to pan, double-click to reset the view.
  * A click without moving selects; in annotation mode a drag draws instead.
  */
-export function MachineGraph({ machine, selectedId, target, runtimeId, busy, layout: saved, annotating, strokes, onState, onTransition, onBackground, onStroke, onMoveState, onMoveLabel, summary }: Props) {
+export function MachineGraph({ machine, selectedId, target, runtimeId, busy, layout: saved, annotating, strokes, onState, onTransition, onBackground, onStroke, onMoveState, onMoveLabel, summary, inspected }: Props) {
   const marker = useId().replace(/[^a-zA-Z0-9]/g, "");
   const viewport = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -42,6 +45,16 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
     element.addEventListener("wheel", wheel, { passive: false });
     return () => element.removeEventListener("wheel", wheel);
   }, []);
+  // The inspected state (and where it came from) is panned into view when the inspected step changes.
+  useEffect(() => {
+    const element = viewport.current, ids = [inspected?.state, inspected?.from].filter((id): id is string => Boolean(id));
+    const boxes = layout.states.filter(state => ids.includes(state.id));
+    if (!element || !boxes.length) return;
+    const left = Math.min(...boxes.map(box => box.x)), right = Math.max(...boxes.map(box => box.x + STATE_WIDTH)), top = Math.min(...boxes.map(box => box.y)), bottom = Math.max(...boxes.map(box => box.y + STATE_HEIGHT));
+    const width = element.clientWidth, height = element.clientHeight;
+    setPan(p => left + p.x >= 8 && right + p.x <= width - 8 && top + p.y >= 8 && bottom + p.y <= height - 8 ? p
+      : { x: Math.min(0, width / 2 - (left + right) / 2), y: Math.min(0, height / 2 - (top + bottom) / 2) });
+  }, [inspected?.state, inspected?.from]);
   const graphPoint = (e: React.PointerEvent) => { const box = viewport.current!.getBoundingClientRect(); return { x: e.clientX - box.left - current.current.pan.x, y: e.clientY - box.top - current.current.pan.y }; };
   const down = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;
@@ -84,7 +97,8 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
     <div className="machine-graph" style={{ width: layout.width, height: layout.height, transform: `translate(${pan.x}px, ${pan.y}px)` }} role="group" aria-label="Node states">
       <svg className="machine-edges" width={layout.width} height={layout.height} role="img" aria-label="Semantic state transitions"><defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="context-stroke" /></marker></defs>{layout.edges.map(edge => {
         const active = edge.from === runtimeId, picked = pickedTransition === edge.id, path = curvePath(edge.curve);
-        return <g key={edge.id} className={`machine-transition-edge ${active ? "active-transition" : ""} ${picked ? "selected-transition" : ""}`}><title>{edge.description}</title>
+        const taken = inspected?.transition === edge.id, related = Boolean(inspected?.transitions.includes(edge.id));
+        return <g key={edge.id} className={`machine-transition-edge ${active ? "active-transition" : ""} ${picked ? "selected-transition" : ""} ${taken ? "inspected-transition" : ""} ${related ? "related-transition" : ""}`}><title>{taken ? `${edge.description} · 이 단계에서 일어난 전이` : edge.description}</title>
           <path d={path} className={`transition-path ${edge.event ? "event-edge" : ""} ${active ? "active-edge" : ""}`} markerEnd={`url(#${marker})`} />
           <path d={path} className="transition-hit" data-transition-id={edge.id} />
           <g className={`transition-label ${moving?.kind === "label" && moving.id === edge.id ? "dragging" : ""}`} data-transition-id={edge.id} transform={`translate(${edge.labelPoint.x},${edge.labelPoint.y})`} role="button" tabIndex={0} aria-pressed={picked} aria-label={`Select transition ${edge.fullLabel}`}
@@ -92,7 +106,8 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
             <rect x={-edge.labelWidth / 2} y={-10} width={edge.labelWidth} height={20} rx={4} /><text textAnchor="middle" dominantBaseline="central">{edge.label}</text></g>
         </g>;
       })}</svg>
-      {layout.states.map(state => <button key={state.id} data-state-id={state.id} className={`machine-state ${selectedId === state.id ? "selected-state" : ""} ${pickedState === state.id ? "attached-state" : ""} ${runtimeId === state.id ? "current-state" : ""} ${moving?.kind === "state" && moving.id === state.id ? "dragging" : ""}`} style={{ left: state.x, top: state.y }}
+      {layout.states.map(state => <button key={state.id} data-state-id={state.id} className={`machine-state ${selectedId === state.id ? "selected-state" : ""} ${pickedState === state.id ? "attached-state" : ""} ${runtimeId === state.id ? "current-state" : ""} ${inspected?.state === state.id ? "inspected-state" : ""} ${inspected?.from === state.id && inspected.state !== state.id ? "inspected-from" : ""} ${inspected?.states.includes(state.id) ? "related-state" : ""} ${moving?.kind === "state" && moving.id === state.id ? "dragging" : ""}`} style={{ left: state.x, top: state.y }}
+        title={inspected?.state === state.id ? "Inspection: 이 단계의 state" : inspected?.states.includes(state.id) ? "Inspection과 관련된 state" : undefined}
         aria-label={`Select state ${state.label}`} aria-pressed={pickedState === state.id} disabled={busy}
         // Pointer clicks are handled on release (a drag moves instead); this keeps keyboard activation.
         onClick={e => { if (e.detail === 0 && !annotating) onState(state.id); }}>

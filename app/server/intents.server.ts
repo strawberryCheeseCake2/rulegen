@@ -107,7 +107,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       };
       const change = (item: { key: string; stateId: string; nodeId?: string }) => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(node => node.machine?.states.some(state => state.id === item.stateId)));
       return { ...output, overlays: output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)), valueFixes: output.valueFixes.filter(change),
-        recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change) })) };
+        recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
+          targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [] })) };
     },
   },
   code: {
