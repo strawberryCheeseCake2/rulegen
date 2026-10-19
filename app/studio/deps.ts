@@ -36,6 +36,8 @@ export type StudioDeps = {
   createFrame: (fromId: string, name: string) => string | null;
   /** Register a brush tool group for each root collection of an AI-generated scene. */
   addBrushes: (frameId: string, scene: Scene) => Brush[];
+  /** A minimal example frame becomes a sub brush of the brush that node `nodeId` of frame `owner` belongs to. */
+  addSubBrush?: (owner: string, nodeId: string, frameId: string, scene: Scene, name: string) => Brush | null;
   /** The running result of a frame, if it is mounted. */
   preview: (owner: string) => CodePreviewHandle | undefined;
   /** Save the code module of each brush that comes from this frame. */

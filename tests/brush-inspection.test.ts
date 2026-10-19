@@ -167,7 +167,9 @@ test("targeted inspection asks AI with the brush's constraints and steps, and dr
       { id: "bogus", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "state", nodeId: "orb", id: "nope" } }],
     valueFixes: [{ key: "orb/radius", stateId: "moving", value: 50, reason: "줄입니다" }, { key: "orb/nope", stateId: "", value: 1, reason: "" }],
     recommendations: [{ kind: "transition", nodeId: "orb", targetId: "settle", targetIds: ["pulse"], title: "더 천천히", detail: "정착을 늦춥니다", changes: [] }, { kind: "state", nodeId: "orb", targetId: "ghost", targetIds: [], title: "x", detail: "", changes: [] },
-      { kind: "transformation", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth", "ink-wash", "pulse", "nope"], title: "둘 다", detail: "", changes: [] }] };
+      { kind: "transformation", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth", "ink-wash", "pulse", "nope"], title: "둘 다", detail: "", changes: [] },
+      { kind: "add-transformation", nodeId: "orb", targetId: "", targetIds: [], title: "새로 추가", detail: "속도에 따라 꼬리를 그리는 새 transformation", changes: [] },
+      { kind: "add-transformation", nodeId: "elsewhere", targetId: "", targetIds: [], title: "브러시 밖", detail: "", changes: [] }] };
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 1, marks: [[{ x: .4, y: .2 }, { x: .5, y: .3 }]],
     constraints: constraintRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
     steps: [{ id: 1, nodeId: "orb", from: "idle", to: "moving", transitionId: "press", values: { "orb/radius": 80 }, runtime: { states: { orb: { id: "moving", elapsed: 0 } }, stores: { tree: { ball: { x: 10 } } } } }] };
@@ -175,8 +177,9 @@ test("targeted inspection asks AI with the brush's constraints and steps, and dr
     const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기가 궁금해", inspection }), new AbortController().signal));
     assert.deepEqual(result.overlays.map(item => item.id), ["size"]);
     assert.deepEqual(result.valueFixes.map(item => item.key), ["orb/radius"]);
-    assert.deepEqual(result.recommendations.map(item => item.targetId), ["settle", "ink-wash"]);
-    assert.deepEqual(result.recommendations.map(item => item.targetIds), [[], ["branching-growth"]], "only other transformations of the same node are kept");
+    assert.deepEqual(result.recommendations.map(item => item.targetId), ["settle", "ink-wash", ""]);
+    assert.deepEqual(result.recommendations.map(item => item.targetIds), [[], ["branching-growth"], []], "only other transformations of the same node are kept");
+    assert.deepEqual(result.recommendations.map(item => item.kind), ["transition", "transformation", "add-transformation"], "a new transformation may be proposed, on a node of the brush");
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(context.concern, "원 크기가 궁금해");
     assert.deepEqual(context.brushNodes.map((node: { id: string }) => node.id), ["tree", "orb"]);
@@ -313,4 +316,15 @@ test("a transformation recommendation that changes several transformations shows
   const chips = [...html.matchAll(/<button class="inspection-target ?(focused)?" aria-pressed="(true|false)"[^>]*>.*?<b>([^<]*)<\/b><\/button>/g)].map(match => [match[3], match[2]]);
   const labels = Object.fromEntries(scene.nodes[0].transformations.map(item => [item.id, item.label]));
   assert.deepEqual(chips, [[labels["ink-wash"], "false"], [labels["branching-growth"], "true"]], "each chip highlights just its own transformation");
+});
+
+test("a recommendation can add a new transformation instead of forcing an unrelated one to change", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene);
+  const recommendation = { kind: "add-transformation" as const, nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [] };
+  const tool = { id: "t1", name: "c", concern: "c", marks: [], result: inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [recommendation] }) };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true,
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
+  assert.match(html, /<em>새 Transformation<\/em>꼬리 추가/);
+  assert.match(html, /<span>Orb<\/span><b>\+ 새 transformation<\/b>/);
+  assert.match(html, />Add with AI<\/button>/);
 });

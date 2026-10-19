@@ -27,6 +27,8 @@ export const brushSchema = z.object({
   code: z.string().max(120000).default(""),
   /** Targeted inspection tools created with the inspection annotation tool. */
   targeted: z.array(targetedToolSchema).max(MAX_TARGETED).default([]),
+  /** A sub brush (a minimal example of one of its transformations) lives inside this brush's tool group ("" = a group of its own). */
+  parentId: z.string().max(80).default(""),
 });
 export type Brush = z.infer<typeof brushSchema>;
 export const MAX_BRUSHES = 32;
@@ -49,13 +51,25 @@ export const isInspectionTool = (kind: BrushToolKind | undefined) => kind === "i
 const COLORS = ["#c0563f", "#3b7bb8", "#7a5bb5", "#2f8f6b", "#c48a1d", "#b5487f", "#4e8a96", "#8a6a3b"];
 export const brushColor = (count: number) => COLORS[count % COLORS.length];
 
+/** The tool group a brush shows in: its parent's for a sub brush (while the parent exists), else its own. */
+export const brushGroup = (brushes: Brush[], id: string) => { const brush = brushes.find(item => item.id === id); return brush?.parentId && brushes.some(item => item.id === brush.parentId) ? brush.parentId : id; };
+/** Brushes that are a tool group of their own (sub brushes show inside their parent's). */
+export const groupBrushes = (brushes: Brush[]) => brushes.filter(brush => brushGroup(brushes, brush.id) === brush.id);
+export const subBrushes = (brushes: Brush[], parentId: string) => brushes.filter(brush => brush.parentId === parentId && brush.id !== parentId);
+/** A sub brush for a minimal example frame: its root collection, in the parent's group and color (a group of its own without a parent). */
+export function subBrushFor(scene: Scene, frameId: string, name: string, parent: Brush | undefined, existing: Brush[], id: string): Brush | null {
+  const root = scene.nodes.find(node => !node.parentId && node.kind === "collection") ?? scene.nodes.find(node => !node.parentId);
+  if (!root || existing.length >= MAX_BRUSHES) return null;
+  return { id, name: name.slice(0, 100), color: parent?.color ?? brushColor(existing.length), sourceFrameId: frameId, nodeId: root.id, scene: subScene(scene, [root.id]), code: "", targeted: [], parentId: parent?.id ?? "" };
+}
+
 /** One brush per root collection of an AI-generated scene (nested collections are parts of it). */
 export function brushesFor(scene: Scene, frameId: string, existing: Brush[], newId: () => string): Brush[] {
   const made: Brush[] = [];
   for (const node of scene.nodes) {
     if (node.kind !== "collection" || node.parentId || existing.length + made.length >= MAX_BRUSHES) continue;
     made.push({ id: newId(), name: node.name, color: brushColor(existing.length + made.length), sourceFrameId: frameId, nodeId: node.id,
-      scene: subScene(scene, [node.id]), code: "", targeted: [] });
+      scene: subScene(scene, [node.id]), code: "", targeted: [], parentId: "" });
   }
   return made;
 }
@@ -125,5 +139,5 @@ export function detachedBrush(scene: Scene, frameId: string, rootId: string, fro
   const root = findNode(scene, rootId)!, taken = new Set(brushes.map(brush => brush.name));
   let name = root.name.slice(0, 90);
   for (let n = 2; taken.has(name); n++) name = `${root.name.slice(0, 90)} ${n}`;
-  return { id, name, color: brushColor(brushes.length), sourceFrameId: frameId, nodeId: rootId, scene: subScene(scene, [rootId]), code, targeted: from.targeted };
+  return { id, name, color: brushColor(brushes.length), sourceFrameId: frameId, nodeId: rootId, scene: subScene(scene, [rootId]), code, targeted: from.targeted, parentId: "" };
 }

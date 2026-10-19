@@ -283,7 +283,12 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       // instead of the original, so only this transformation shows; after that it is edited like any frame.
       const id = derive(scene, `${node.name} · ${transformation.label || "Transformation"} example`, deps.artwork(owner)?.revision ?? 0,
         { sourceFrameId: null, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] });
-      if (id) { deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다. 결과를 생성하는 중입니다…`); await renderDerived(id, instruction); }
+      if (!id) return;
+      // The example is also a sub brush in the tool group of the brush it came from, so it can be brushed and played with.
+      const sub = deps.addSubBrush?.(owner, nodeId, id, scene, `${transformation.label || "Transformation"} · example`);
+      if (sub) deps.updatePanel(id, current => ({ scene: markBrushes(current.scene, [sub]) }));
+      deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다${sub ? " (brush 그룹에 sub brush로 추가)" : ""}. 결과를 생성하는 중입니다…`);
+      await renderDerived(id, instruction);
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. Then the code follows. */
     async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {

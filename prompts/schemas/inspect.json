@@ -164,6 +164,7 @@
             "enum": [
               "value",
               "transformation",
+              "add-transformation",
               "state",
               "transition"
             ]

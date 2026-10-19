@@ -90,6 +90,8 @@ export async function applyRecommendation(deps: StudioDeps, owner: string, recom
     const ai = sceneAI(deps, owner);
     // Every transformation the fix changes, in turn; the code is rewritten once at the end (and undo apply takes all of it back).
     if (recommendation.kind === "transformation") await ai.regenerateAll(recommendation.nodeId, recommendationTransformations(recommendation), instruction);
+    // Nothing existing was related: a new semantic transformation is stacked on the node (then the code follows).
+    else if (recommendation.kind === "add-transformation") await ai.regenerate(recommendation.nodeId, {}, instruction);
     else await ai.refineMachine(recommendation.nodeId, { target: { kind: recommendation.kind, id: recommendation.targetId }, instruction, marks: [] });
   }
   const after = snapshot(deps.panel(owner));

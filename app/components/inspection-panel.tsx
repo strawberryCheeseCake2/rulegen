@@ -120,6 +120,8 @@ export function InspectionPanel(props: Props) {
     }).filter((target, i, all) => all.findIndex(other => sameFocus(other.focus, target.focus)) === i);
     const target = node(item.nodeId);
     // A transformation fix may change several transformations: one chip each, each highlighting just its own card.
+    // A new transformation: the chip names the node it goes on (clicking selects that node).
+    if (item.kind === "add-transformation") return [{ node: target?.name ?? item.nodeId, label: "+ 새 transformation", focus: { kind: "transformation" as const, nodeId: item.nodeId, id: "" } }];
     if (item.kind === "transformation") return recommendationTransformations(item).map(id => ({ node: target?.name ?? item.nodeId, label: target?.transformations.find(entry => entry.id === id)?.label || id, focus: { kind: "transformation" as const, nodeId: item.nodeId, id } }));
     const label = item.kind === "state" ? target?.machine?.states.find(entry => entry.id === item.targetId)?.label : target?.machine?.transitions.find(entry => entry.id === item.targetId)?.label;
     return [{ node: target?.name ?? item.nodeId, label: label || item.targetId, focus: { kind: item.kind, nodeId: item.nodeId, id: item.targetId } }];
@@ -209,12 +211,12 @@ export function InspectionPanel(props: Props) {
                   onClick={() => props.applied!.undoClean ? props.onUndoApplied?.() : setConfirmStep("undo")}><Icon name="undo" size={12} />Undo apply</button>
                 <button disabled={busy || !props.applied.future.length} title={props.applied.future.length ? `Redo 「${props.applied.future.at(-1)!.title}」` : "Nothing to redo"}
                   onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>)}</div>
-            {result.recommendations.map((item, i) => <div key={i} className={`inspection-recommendation ${props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) ? "applied" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? "Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
+            {result.recommendations.map((item, i) => <div key={i} className={`inspection-recommendation ${props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) ? "applied" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? "Transformation" : item.kind === "add-transformation" ? "새 Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
               {/* What it changes: click to highlight it (the transformation card, the property, or the state/transition in the graph). */}
               <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
                 aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
               <span>{item.detail}</span>
-              <button disabled={busy} onClick={() => props.onApplyRecommendation(item)}>{item.kind === "value" ? "Apply values" : "Apply with AI"}</button>
+              <button disabled={busy} onClick={() => props.onApplyRecommendation(item)}>{item.kind === "value" ? "Apply values" : item.kind === "add-transformation" ? "Add with AI" : "Apply with AI"}</button>
               {props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) && <small className="inspection-applied-mark">✓ 적용됨 · Undo apply로 되돌릴 수 있습니다</small>}</div>)}
           </div>}
         </div>}

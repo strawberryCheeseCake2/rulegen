@@ -453,3 +453,10 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-draw-mode button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 11px; color: #4a5a50; }
 .inspection-draw-mode button.active { border-color: #7a5bb5; background: #f2eefa; color: #4f3a85; }
 .sketch-frame-surface.inspection-erasing .p5-surface { cursor: cell; }
+/* Sub brushes (minimal examples) inside a brush tool group. */
+.brush-sub-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 10px; }
+.brush-sub-row { display: flex; align-items: center; gap: 3px; }
+.brush-sub-row > button:first-child { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; font-size: 11px; text-align: left; }
+.brush-sub-row > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brush-sub-row > button:nth-child(2) { padding: 5px 7px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; }
+.brush-sub-row button.active { border-color: #397461; background: #eef6f1; color: #23533f; }

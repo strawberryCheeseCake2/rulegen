@@ -50,6 +50,11 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - Property id는 노드 전체에서 고유하다(노드당 property 최대 32개). 그래서 라이브 키는 transformation과 무관하게 `nodeId/propertyId…`이고, state machine 값도 property id만으로 가리킨다.
 - 우측 패널에서 transformation을 추가(빈 것 또는 **Add transformation with AI**), 이름·설명 수정, ↑↓로 순서 변경, AI로 다시 만들기, 삭제(그 property와 상태 값도 함께 삭제)할 수 있다. 블록은 원하는 transformation의 소켓에 끼우거나 드롭한다. 상태 편집 중에는 스택 구조를 바꿀 수 없다.
 - transformation 카드의 **Create Minimal Example**은 그 transformation 하나만 시험해 보는 새 sketch frame을 옆에 만든다. 특수한 프레임이 아니라 일반 sketch frame이고, 안에는 collection 하나와 object 하나만 들어간다. collection의 transformation이면 그 collection에 그 transformation만 남기고 구성원 하나를 transformation 없는 평범한 object로 넣는다(구성원이 없으면 빈 object를 만든다). object의 transformation이면 그 object에 그 transformation만 남겨 평범한 collection 안에 넣는다. 상태 머신은 빼고, 쓰는 알고리즘만 가져오며, 프레임 가운데에 배치한 뒤 바로 결과를 생성한다. 첫 코드 생성만 "이 transformation만 보이게 단순하게 그려라"는 지시와 그 프레임 자체 스케치로 하고, 이후에는 다른 프레임과 똑같이 편집·Update한다.
+  - 만든 예제는 **sub brush**로도 추가된다. 그 transformation이 속한 brush(그 brush가 sub brush라면 그 부모)의 tool group 안에 들어가고, 툴바에 그룹 버튼이 따로 생기지 않는다. 그 노드가 brush에 속하지 않으면 독립된 brush가 된다.
+    - 그룹 패널의 **SUB BRUSHES**에 sub brush마다 Brush 도구와 Inspection 도구가 있다. 이름 기본값은 "<transformation> · example"이고, 색은 부모와 같으며, ×로 지운다.
+    - Brush 도구로 다른 프레임에 칠하면 추가되거나 interaction으로 동작하고, Inspection으로 검사할 수 있다. 일반 brush와 같다.
+    - 예제 프레임의 collection이 그 sub brush의 master다. sub brush 도구를 쓰는 동안 그룹 버튼 제목은 "부모 › sub brush · 도구"이다.
+    - 부모 brush를 지우면 sub brush도 함께 지워진다.
 - Layers의 노드 배지는 transformation 수를 보여주고, 툴팁에 적용 순서를 표시한다.
 
 ### Property
@@ -287,6 +292,10 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 오버레이 수식은 숫자, 사칙연산·비교·논리 연산, 몇 가지 함수와 위 읽기 함수만 허용하는 작은 계산기로 계산한다(코드 실행 없음). `m.store`에서 읽는 위치는 모듈이 실제로 쓰는 값이지만, property만으로 위치를 추정한 수식은 실제로 그린 픽셀과 다를 수 있다.
 - AI 결과 중 brush 밖을 가리키는 오버레이·값·추천은 서버에서 걸러낸다.
 
+- **새 transformation 추가 recommendation**: concern과 관련된 기존 semantic transformation이 없으면, AI는 관련 없는 기존 transformation을 억지로 고치지 않고 **새 transformation을 추가**하자고 제안할 수 있다.
+  - 이 recommendation은 "새 Transformation" 종류로 표시되고, 칩은 "<노드> · + 새 transformation"이다.
+  - **Add with AI**를 누르면 detail의 설명대로 새 transformation을 그 노드 stack 맨 아래에 만들고, 이어서 코드를 다시 만든다. Undo apply로 되돌릴 수 있다.
+  - 고치는 안과 추가하는 안을 둘 다 대안으로 낼 수도 있다. 노드의 transformation이 이미 최대 개수면 이 recommendation은 빠진다.
 - **여러 transformation을 함께 바꾸는 recommendation**
   - Transformation recommendation은 대상 transformation을 여러 개 가질 수 있다. 주 대상은 `targetId`, 같은 노드에서 함께 바꿔야 하는 다른 것들은 `targetIds`에 들어간다(같은 노드에 실제로 있는 것만 남김).
   - 대상마다 칩이 하나씩 생기고, 각 칩은 자기 transformation 카드 하나만 강조한다.

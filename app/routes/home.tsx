@@ -18,7 +18,7 @@ import { AlgorithmLibrary, type AlgorithmSource } from "../components/scene/algo
 import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
-import { brushesFor, brushNodeIds, brushRole, brushRoots, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush } from "../lib/brushes";
+import { brushesFor, brushGroup, brushNodeIds, brushRole, brushRoots, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush } from "../lib/brushes";
 import { addStep, eraseMarks, filterValues, machineInspection, remapResult, resultInFrame, type InspectionFocus, type InspectionState } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { subScene } from "../lib/scene/graph";
@@ -241,6 +241,14 @@ export default function Home() {
       if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`${made.map(brush => brush.name).join(", ")} brush를 툴바에 추가했습니다.`); }
       return made;
     },
+    addSubBrush: (owner, nodeId, frameId, scene, name) => {
+      const ownerScene = panelsRef.current[owner]?.scene, role = ownerScene ? brushRole(ownerScene, owner, nodeId, brushesRef.current) : null;
+      // Inside the group of the brush the node belongs to (its group, if that brush is a sub brush itself).
+      const parent = role ? brushesRef.current.find(item => item.id === brushGroup(brushesRef.current, role.brush.id)) : undefined;
+      const made = subBrushFor(scene, frameId, name, parent, brushesRef.current, crypto.randomUUID());
+      if (made) setBrushes([...brushesRef.current, made]);
+      return made;
+    },
     preview: owner => resultPreviews.current.get(owner),
     refreshBrushCode: (frameId, code) => {
       const scene = panelsRef.current[frameId]?.scene, modules = programModules(code);
@@ -435,14 +443,18 @@ export default function Home() {
   // ── Brush tool groups ─────────────────────────────────────────────────────
   /** First click selects the group's tool; clicking the selected group opens, then closes, its tool panel. */
   function clickBrushGroup(brushId: string) {
-    if (brushPick?.brushId === brushId) { setOpenGroup(open => open === brushId ? null : brushId); return; }
+    if (brushPick && brushGroup(brushesRef.current, brushPick.brushId) === brushId) { setOpenGroup(open => open === brushId ? null : brushId); return; }
     const remembered = groupTools[brushId], pick = remembered ? parseBrushTool(remembered) : null;
-    const exists = pick && (pick.kind !== "targeted" || brushesRef.current.find(item => item.id === brushId)?.targeted.some(item => item.id === pick.targetedId));
+    // The remembered tool may be a sub brush's; it must still exist.
+    const owner = pick ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
+    const exists = pick && owner && brushGroup(brushesRef.current, owner.id) === brushId && (pick.kind !== "targeted" || owner.targeted.some(item => item.id === pick.targetedId));
     chooseTool(exists ? remembered! : brushTool("brush", brushId)); setOpenGroup(null);
   }
+  /** Pick a tool of a brush (or of one of its sub brushes); its group remembers it. */
   function chooseBrushTool(brushId: string, toolId: string) {
-    chooseTool(toolId); setGroupTools(current => ({ ...current, [brushId]: toolId }));
-    const brush = parseBrushTool(toolId)?.kind === "brush" ? brushesRef.current.find(item => item.id === brushId) : undefined;
+    const pick = parseBrushTool(toolId), group = brushGroup(brushesRef.current, pick?.brushId ?? brushId);
+    chooseTool(toolId); setGroupTools(current => ({ ...current, [group]: toolId }));
+    const brush = pick?.kind === "brush" ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
     if (brush) prepareBrushFor(deps, brush, activeSketchRef.current);
   }
   /** Inspection annotation → a new targeted inspection tool in the group; a targeted tool → its concern again. */
@@ -464,9 +476,11 @@ export default function Home() {
   function removeTargeted(brushId: string, targetedId: string) {
     setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, targeted: item.targeted.filter(entry => entry.id !== targetedId) } : item));
   }
+  /** Remove a brush; a group goes with its sub brushes. */
   function removeBrush(brush: Brush) {
-    setBrushes(brushesRef.current.filter(item => item.id !== brush.id)); setOpenGroup(null);
-    if (brushPick?.brushId === brush.id) setTool("pen");
+    const gone = new Set([brush.id, ...brushesRef.current.filter(item => item.parentId === brush.id).map(item => item.id)]);
+    setBrushes(brushesRef.current.filter(item => !gone.has(item.id))); if (!brush.parentId) setOpenGroup(null);
+    if (brushPick && gone.has(brushPick.brushId)) setTool("pen");
   }
   // A brush gesture is fed to the frame's result while the user moves (after placing the brush there if needed).
   const brushDrag = useRef<ReturnType<typeof startBrushGesture>>(null);
@@ -850,7 +864,7 @@ export default function Home() {
         onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`「${entry.title}」을(를) 다시 적용했습니다.`); }}
         onApplyChanges={changes => applyChanges(deps, activeSketch, changes)}
         onApplyRecommendation={recommendation => recommendation.kind === "value" ? applyRecommendation(deps, activeSketch, recommendation)
-          : guardEach([recommendation.nodeId], recommendation.kind === "transformation" ? "semantic transformation" : "state machine", () => { void applyRecommendation(deps, activeSketch, recommendation); })} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
+          : guardEach([recommendation.nodeId], recommendation.kind === "transformation" || recommendation.kind === "add-transformation" ? "semantic transformation" : "state machine", () => { void applyRecommendation(deps, activeSketch, recommendation); })} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
       machinePanel={<NodeMachinePanel scene={scene} node={machineNode}
         inspected={inspection && machineNode && inspectedIds.includes(machineNode.id) ? machineInspection(inspection, inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result ?? null : null, machineNode.id) : null} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
         playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}

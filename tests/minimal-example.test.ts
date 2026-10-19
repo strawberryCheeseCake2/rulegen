@@ -78,3 +78,38 @@ test("a transformation picked from a recommendation is highlighted in the inspec
   assert.match(html, /class="transformation-card inspection-highlight" data-transformation-id="ink-wash"/);
   assert.equal(html.match(/inspection-highlight/g)?.length, 1);
 });
+
+test("Create Minimal Example adds a sub brush to the brush the transformation belongs to, shown inside its tool group", async () => {
+  const { sceneAI } = await import("../app/studio/scene-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const { brushesFor, brushGroup, groupBrushes, markBrushes, subBrushFor, brushTool, brushNodeIds } = await import("../app/lib/brushes");
+  const { ToolRail } = await import("../app/components/tool-rail");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { createElement } = await import("react");
+  const scene = sampleScene(), [parent] = brushesFor(scene, "a", [], () => "brush-parent");
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: createSketchPanel({ scene: markBrushes(scene, [parent]) }) };
+  const made: { args: unknown[]; brush: ReturnType<typeof subBrushFor> }[] = [];
+  const deps = {
+    panel: (id: string) => panels[id] ?? createSketchPanel(), activate: () => {}, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, active: () => "a", refreshBrushCode: () => {},
+    updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
+    createFrame: () => { panels.b = createSketchPanel(); return "b"; },
+    addSubBrush: (owner: string, nodeId: string, frameId: string, example: any, name: string) => { const brush = subBrushFor(example, frameId, name, parent, [parent], "brush-sub"); made.push({ args: [owner, nodeId, frameId, name], brush }); return brush; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    request: async () => ({ title: "Example", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" }),
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
+  } as any;
+  await sceneAI(deps, "a").minimalExample("tree", "ink-wash");
+  assert.equal(made.length, 1); assert.deepEqual(made[0].args.slice(0, 3), ["a", "tree", "b"]); assert.match(String(made[0].args[3]), /· example$/);
+  const sub = made[0].brush!;
+  assert.equal(sub.parentId, parent.id); assert.equal(sub.sourceFrameId, "b"); assert.equal(sub.color, parent.color);
+  assert.ok(brushNodeIds(panels.b.scene, sub, "b").length > 0, "the example's collection is the sub brush's master");
+  const all = [parent, sub];
+  assert.equal(brushGroup(all, sub.id), parent.id); assert.deepEqual(groupBrushes(all).map(item => item.id), [parent.id], "one tool group, not two");
+  const props = { tool: brushTool("brush", sub.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
+    busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: all, groupTools: {}, openGroup: parent.id, onBrushRemove: () => {} } as Record<string, unknown>;
+  const html = renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : () => {} }) as never));
+  assert.equal([...html.matchAll(/class="rail-button brush-group-button/g)].length, 1);
+  assert.match(html, new RegExp(`aria-label="Tree brush tools" title="Tree › ${sub.name} · Brush`), "the group shows the sub brush in use");
+  assert.match(html, /SUB BRUSHES/); assert.match(html, new RegExp(`class="brush-sub-row picked"><button class="active" aria-pressed="true" aria-label="${sub.name} Brush"`));
+});

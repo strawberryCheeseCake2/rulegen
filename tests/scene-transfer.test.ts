@@ -212,3 +212,31 @@ test("a fix that changes several transformations regenerates each in turn (told 
   assert.equal(panels.a.applied.past.length, 1, "one undo entry for the whole fix");
   assert.ok(panels.a.applied.past[0].before.scene.nodes[0].transformations.every(item => !item.description.endsWith("(new)")), "undo apply goes back to before both");
 });
+
+test("an add-transformation recommendation stacks a new transformation on the node, then rewrites the code", async () => {
+  const { applyRecommendation } = await import("../app/studio/inspection-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const { sampleScene, sceneProgram } = await import("./fixtures/scene");
+  const { connectScene } = await import("../app/server/scene-code.server");
+  const scene = sampleScene(), generated = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene);
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: { ...createSketchPanel({ scene }), generated } };
+  const requests: { intent: string; body: any }[] = [];
+  const deps = {
+    panel: (id: string) => panels[id], activate: () => {}, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, refreshBrushCode: () => {},
+    updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    request: async (intent: string, body: any) => {
+      requests.push({ intent, body });
+      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "orb" ? { ...node, transformations: [...node.transformations, { ...node.transformations[0], id: "tail", label: "Tail", description: "꼬리", properties: [] }] } : node) };
+      return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
+    },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
+  } as any;
+  await applyRecommendation(deps, "a", { kind: "add-transformation", nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [] });
+  assert.deepEqual(requests.map(r => r.intent), ["transform", "code"]);
+  assert.equal(requests[0].body.targetTransformationId, ""); assert.equal(requests[0].body.alternative, false, "a new one, not a rewrite of an existing one");
+  assert.match(requests[1].body.instruction, /"Tail" \(tail\)[\s\S]*was just regenerated/);
+  assert.deepEqual(panels.a.scene.nodes.find(node => node.id === "orb")!.transformations.map(item => item.id), ["pulse", "tail"]);
+  assert.equal(panels.a.applied.past.length, 1);
+});

@@ -1,5 +1,5 @@
 import type { SemanticPen } from "../lib/schema";
-import { BRUSH_TOOLS, brushTool, parseBrushTool, type Brush, type BrushToolKind } from "../lib/brushes";
+import { BRUSH_TOOLS, brushGroup, brushTool, groupBrushes, parseBrushTool, subBrushes, type Brush, type BrushToolKind } from "../lib/brushes";
 import { AlgorithmPenSettings } from "./algorithm-pen-settings";
 import { Icon, type IconName } from "./icons";
 
@@ -57,27 +57,38 @@ export function ToolRail(props: Props) {
       })}</div>
         {props.penSettingsOpen && props.activePen && props.tool === "semantic" && <AlgorithmPenSettings pen={props.activePen} onChange={props.onPenChange} onClose={props.onPenSettingsClose} onRemove={props.activePen.kind === "interaction" ? undefined : () => props.onPenRemove(props.activePen!)} />}
       </div>}
-      {(props.brushes?.length ?? 0) > 0 && <div className="brush-groups" role="group" aria-label="Brush tool groups">{props.brushes!.map(brush => {
-        const selected = parseBrushTool(props.tool), inGroup = props.toolsActive && selected?.brushId === brush.id;
+      {(props.brushes?.length ?? 0) > 0 && <div className="brush-groups" role="group" aria-label="Brush tool groups">{groupBrushes(props.brushes!).map(brush => {
+        // A group is selected when one of its tools is, or a tool of one of its sub brushes (minimal examples).
+        const all = props.brushes!, subs = subBrushes(all, brush.id), selected = parseBrushTool(props.tool), inGroup = Boolean(props.toolsActive && selected && brushGroup(all, selected.brushId) === brush.id);
+        const own = inGroup && selected!.brushId === brush.id;
         const shown = inGroup ? selected : parseBrushTool(props.groupTools?.[brush.id] || ""), kind: BrushToolKind = shown?.kind || "brush";
-        const targetedName = kind === "targeted" ? brush.targeted.find(item => item.id === shown?.targetedId)?.name : undefined;
+        const owner = all.find(item => item.id === shown?.brushId) ?? brush, sub = owner.id !== brush.id ? owner : undefined;
+        const targetedName = kind === "targeted" ? owner.targeted.find(item => item.id === shown?.targetedId)?.name : undefined;
         const info = BRUSH_TOOL_INFO[kind], open = props.openGroup === brush.id;
         return <div key={brush.id} className="left-tool-anchor brush-group-anchor">
-          <button className={`rail-button brush-group-button ${inGroup ? "active" : ""}`} style={{ color: brush.color }} aria-label={`${brush.name} brush tools`} title={`${brush.name} · ${targetedName || info.label}${inGroup ? " (click again for tools)" : ""}`}
+          <button className={`rail-button brush-group-button ${inGroup ? "active" : ""}`} style={{ color: brush.color }} aria-label={`${brush.name} brush tools`} title={`${brush.name}${sub ? ` › ${sub.name}` : ""} · ${targetedName || info.label}${inGroup ? " (click again for tools)" : ""}`}
             aria-pressed={inGroup} aria-expanded={open} onClick={() => props.onBrushGroup?.(brush.id)}><Icon name={info.icon} size={18} /><span className="semantic-pen-dot" style={{ background: brush.color }} /><span className="brush-group-corner" /></button>
           {open && <div className="pencil-popover brush-group-popover" role="group" aria-label={`${brush.name} brush tools`}>
             <div className="pencil-popover-heading"><span><i className="brush-swatch" style={{ background: brush.color }} />{brush.name}</span><button aria-label="Close brush tools" onClick={props.onBrushGroupClose}><Icon name="close" size={14} /></button></div>
             <div className="brush-group-tools">{BRUSH_TOOLS.map(tool => {
-              const active = inGroup && selected!.kind === tool;
+              const active = own && selected!.kind === tool;
               return <button key={tool} className={active ? "active" : ""} aria-pressed={active} title={BRUSH_TOOL_INFO[tool].hint} onClick={() => props.onBrushTool?.(brush.id, brushTool(tool, brush.id))}><Icon name={BRUSH_TOOL_INFO[tool].icon} size={15} /><span>{BRUSH_TOOL_INFO[tool].label}</span></button>;
             })}
             {brush.targeted.map(tool => {
-              const active = inGroup && selected!.kind === "targeted" && selected!.targetedId === tool.id;
+              const active = own && selected!.kind === "targeted" && selected!.targetedId === tool.id;
               return <div key={tool.id} className="brush-targeted-row"><button className={active ? "active" : ""} aria-pressed={active} title={`${BRUSH_TOOL_INFO.targeted.hint}\n${tool.concern}`} onClick={() => props.onBrushTool?.(brush.id, brushTool("targeted", brush.id, tool.id))}>
                 <Icon name="target" size={15} /><span>{tool.name}</span></button>
                 {props.onTargetedRemove && <button className="brush-targeted-remove" aria-label={`Remove targeted inspection ${tool.name}`} title="Remove this targeted inspection" onClick={() => props.onTargetedRemove!(brush.id, tool.id)}><Icon name="close" size={11} /></button>}</div>;
             })}
             {!brush.targeted.length && <span className="brush-targeted-hint">Inspection annotation으로 concern을 표시하면 Targeted inspection 도구가 여기에 생깁니다.</span>}</div>
+            {/* Minimal examples of this brush's transformations: each a brush of its own (brush with it, inspect it). */}
+            {subs.length > 0 && <div className="brush-sub-list" role="group" aria-label={`${brush.name} sub brushes`}><span className="left-setting-title">SUB BRUSHES</span>
+              {subs.map(item => { const picked = inGroup && selected!.brushId === item.id;
+                return <div key={item.id} className={`brush-sub-row ${picked ? "picked" : ""}`}>
+                  {(["brush", "inspect"] as const).map(tool => { const active = picked && selected!.kind === tool;
+                    return <button key={tool} className={active ? "active" : ""} aria-pressed={active} aria-label={`${item.name} ${BRUSH_TOOL_INFO[tool].label}`} title={`${item.name} · ${BRUSH_TOOL_INFO[tool].label}`} onClick={() => props.onBrushTool?.(brush.id, brushTool(tool, item.id))}>
+                      <Icon name={BRUSH_TOOL_INFO[tool].icon} size={14} />{tool === "brush" && <span>{item.name}</span>}</button>; })}
+                  {props.onBrushRemove && <button className="brush-targeted-remove" aria-label={`Remove sub brush ${item.name}`} title="Remove this sub brush" onClick={() => props.onBrushRemove!(item)}><Icon name="close" size={11} /></button>}</div>; })}</div>}
             {props.brushMaster && (() => { const master = props.brushMaster(brush);
               return <div className="brush-master-row"><span className="left-setting-title">MASTER</span>
                 {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">Master가 있던 프레임이 삭제되었습니다. Instance에서 Make master로 지정할 수 있습니다.</span>}</div>; })()}

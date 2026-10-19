@@ -87,7 +87,8 @@ export const inspectResultSchema = z.object({
   /** Value-only fixes for the concern, applied with one click. */
   valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
   /** Other ways to resolve it: values, or changing a transformation, state or transition. */
-  recommendations: z.array(z.object({ kind: z.enum(["value", "transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
+  /** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
+  recommendations: z.array(z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
     /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
     targetIds: z.array(z.string().max(80)).max(6).default([]),
     title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) })).max(6),
