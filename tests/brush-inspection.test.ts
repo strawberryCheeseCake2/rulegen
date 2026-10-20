@@ -266,6 +266,20 @@ test("per-item values stay readable: records keep their fields for AI, and an ea
   assert.deepEqual(shared.map(item => item.label).filter(Boolean), ["100→1000px/s"], "but its item-independent label only once");
 });
 
+test("every recorded step keeps a badge on the canvas: steps whose overlay sits at the same spot share one, and clicking it walks through them", async () => {
+  const { stepBadges } = await import("../app/lib/inspection");
+  // The first item stays put (it is the oldest), so steps 0–2 draw it at the same spot; step 3 moved it.
+  const at = (x: number) => ({ states: {}, stores: { bush: { items: [{ x, y: 50 }, { x: 300, y: 50 }] } } });
+  const steps = [at(10), at(10), at(10), at(90)].map((runtime, i) => ({ id: i + 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime }));
+  const overlay = { id: "o", kind: "rect" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "20", h: "20", label: "", color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" };
+  const spot = (item: { x: number; y: number }) => ({ x: item.x, y: item.y });
+  const view = (index: number) => stepBadges([overlay], steps as never, index, spot).map(({ steps, shown, next, current }) => ({ steps, shown, next, current }));
+  assert.deepEqual(view(1), [{ steps: [0, 1, 2], shown: 1, next: 2, current: true }, { steps: [3], shown: 3, next: 3, current: false }], "the shared badge goes to the next step at that spot");
+  assert.deepEqual(view(2)[0], { steps: [0, 1, 2], shown: 2, next: 0, current: true }, "and wraps around");
+  assert.deepEqual(view(3)[0], { steps: [0, 1, 2], shown: 2, next: 2, current: false }, "from elsewhere, the nearest of them");
+  assert.equal(historyOverlays([overlay], steps as never, 1).filter(item => item.ghost && item.key.endsWith(":0")).length, 1, "(as ghosts, the repeated ones are left out: only step 3's first item)");
+});
+
 test("Autocomplete: on request, AI reads the inspection annotation and suggests concerns; one that continues the typed text completes it with Tab", async () => {
   const { concernCompletion } = await import("../app/lib/inspection");
   const scene = sampleScene(), [brush] = makeBrushes(scene);

@@ -359,6 +359,32 @@ export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar>
 const GHOST_ITEMS = 40;
 const where = (item: PlacedOverlay) => `${item.overlay.id}|${item.key.split(":").at(-1)}|${[item.x, item.y, item.w, item.h].map(value => Math.round(value)).join(",")}`;
 /**
+ * One step badge per spot: each overlay's first item at every recorded step
+ * (not left out where it repeats another step, as ghosts are). Steps whose item
+ * sits at the same spot share one badge, so every step stays reachable on the
+ * canvas: the badge shows the step being looked at (or the nearest one) and how
+ * many more share it, and clicking it goes to the next of them.
+ */
+export type StepBadge = { key: string; overlay: Overlay; x: number; y: number; steps: number[]; shown: number; next: number; current: boolean };
+export function stepBadges(overlays: Overlay[], steps: InspectionStep[], index: number, spotOf: (item: PlacedOverlay) => { x: number; y: number }, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): StepBadge[] {
+  const groups = new Map<string, Omit<StepBadge, "shown" | "next" | "current">>();
+  for (const overlay of overlays) for (let j = 0; j < steps.length; j++) {
+    const [item] = placeOverlays([overlay], stepContext(steps, j, live, j === index ? drawn : null), j - index, 1);
+    if (!item) continue;
+    const spot = spotOf(item), key = `${overlay.id}|${Math.round(spot.x)},${Math.round(spot.y)}`;
+    const group = groups.get(key) ?? { key, overlay, ...spot, steps: [] };
+    group.steps.push(j); groups.set(key, group);
+  }
+  return [...groups.values()].map(group => {
+    const current = group.steps.includes(index);
+    const shown = current ? index : group.steps.reduce((best, j) => Math.abs(j - index) < Math.abs(best - index) ? j : best, group.steps[0]);
+    // The next step sharing this spot after the one looked at (wrapping), so repeated clicks walk through them.
+    const next = current ? group.steps.find(j => j > index) ?? group.steps[0] : shown;
+    return { ...group, shown, next, current };
+  });
+}
+
+/**
  * Every overlay at the step being looked at, plus faint ghosts of the same overlay
  * at every other recorded step, earlier and later, each computed from that step's
  * values and stores. A ghost that would sit exactly where a nearer step already

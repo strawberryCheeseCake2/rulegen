@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { ART_HEIGHT as H, ART_WIDTH as W } from "../lib/schema";
-import { historyOverlays, layoutLabels, markStyleAt, type InspectionFocus, type InspectionState, type InspectResult, type MarkStyle, type Scalar } from "../lib/inspection";
+import { historyOverlays, layoutLabels, stepBadges, type PlacedOverlay, markStyleAt, type InspectionFocus, type InspectionState, type InspectResult, type MarkStyle, type Scalar } from "../lib/inspection";
 
 type Props = {
   state: InspectionState;
@@ -41,11 +41,12 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
   const uid = useId().replace(/:/g, ""), badge = 7 / Math.max(.2, zoom);
   // One number per step and overlay (an overlay drawn per item numbers its first item only), and the path through those spots in step order.
   const marked = placed.filter(item => item.key.endsWith(":0"));
-  const badges = marked.map(item => {
+  const spotOf = (item: PlacedOverlay) => {
     const right = Math.max(item.x, item.x + item.w), top = Math.min(item.y, item.y + item.h);
-    const spot = item.overlay.kind === "line" ? { x: item.x + item.w, y: item.y + item.h } : item.overlay.kind === "label" ? { x: item.x - badge * 1.6, y: item.y - badge } : { x: right, y: top };
-    return { key: `badge:${item.key}`, ...spot, at: item.step, ghost: item.ghost, color: item.overlay.color };
-  });
+    return item.overlay.kind === "line" ? { x: item.x + item.w, y: item.y + item.h } : item.overlay.kind === "label" ? { x: item.x - badge * 1.6, y: item.y - badge } : { x: right, y: top };
+  };
+  // Every step has a badge, also where its overlay sits exactly where another step's does (those share one badge and are walked through by clicking it).
+  const badges = result ? stepBadges(result.overlays, state.steps, index, spotOf, liveValues, drawn) : [];
   const paths = (result?.overlays ?? []).filter(overlay => !overlay.each).map(overlay => ({ overlay, points: marked.filter(item => item.overlay.id === overlay.id).sort((a, b) => a.step - b.step)
     .map(item => item.overlay.kind === "line" || item.overlay.kind === "label" ? { x: item.x, y: item.y } : { x: item.x + item.w / 2, y: item.y + item.h / 2 }) }))
     .filter(path => path.points.length > 1 && path.points.some(point => Math.hypot(point.x - path.points[0].x, point.y - path.points[0].y) > 2));
@@ -82,13 +83,16 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
         <path d="M0,0 L8,4 L0,8 z" fill={overlay.color} /></marker>)}</defs>
       {paths.map(({ overlay, points }) => <polyline key={`path:${overlay.id}`} className="inspection-order-path" points={points.map(point => `${point.x},${point.y}`).join(" ")} stroke={overlay.color} vectorEffect="non-scaling-stroke"
         markerMid={`url(#${uid}-${overlay.id})`} markerEnd={`url(#${uid}-${overlay.id})`} />)}
-      {badges.map(({ key, x, y, at, ghost, color }) => {
-        const go = Boolean(ghost && clickable && onStep);
-        return <g key={key} className={`inspection-badge ${ghost ? "ghost" : "current"} ${go ? "clickable" : ""}`} opacity={ghost ? Math.max(.35, .8 - (Math.abs(ghost) - 1) * .08) : 1}
-          onPointerDown={e => { if (!go) return; e.preventDefault(); e.stopPropagation(); onStep!(at); }}>
-          {go && <title>{`Step ${at + 1}${stepName ? ` · ${stepName(at)}` : ""}`}</title>}
-          <circle cx={x} cy={y} r={badge} fill={ghost ? "#fffefa" : color} stroke={color} vectorEffect="non-scaling-stroke" />
-          <text x={x} y={y} fontSize={badge * 1.25} fill={ghost ? color : "#fff"} textAnchor="middle" dominantBaseline="central">{at + 1}</text>
+      {badges.map(({ key, overlay, x, y, steps, shown, next, current }) => {
+        // The badge of the step looked at is filled; one shared by other steps walks to the next of them on click.
+        const go = Boolean(clickable && onStep && next !== index), ghost = current ? 0 : shown - index, more = steps.length - 1;
+        const names = steps.map(j => `Step ${j + 1}${stepName ? ` · ${stepName(j)}` : ""}`).join("\n");
+        return <g key={`badge:${key}`} className={`inspection-badge ${current ? "current" : "ghost"} ${go ? "clickable" : ""}`} opacity={current ? 1 : Math.max(.35, .8 - (Math.abs(ghost) - 1) * .08)}
+          onPointerDown={e => { if (!go) return; e.preventDefault(); e.stopPropagation(); onStep!(next); }}>
+          <title>{more ? `${names}\n(같은 자리의 단계 ${steps.length}개 · 클릭하면 Step ${next + 1})` : names}</title>
+          <circle cx={x} cy={y} r={badge} fill={current ? overlay.color : "#fffefa"} stroke={overlay.color} vectorEffect="non-scaling-stroke" />
+          <text x={x} y={y} fontSize={badge * 1.25} fill={current ? "#fff" : overlay.color} textAnchor="middle" dominantBaseline="central">{shown + 1}</text>
+          {more > 0 && <text x={x + badge * 1.15} y={y - badge * .9} fontSize={badge * .95} fill={overlay.color} className="inspection-badge-more">+{more}</text>}
         </g>;
       })}
       {labels.map(label => {

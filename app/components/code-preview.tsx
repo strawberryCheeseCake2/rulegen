@@ -102,6 +102,8 @@ const paramsNow=()=>typeof rulegenParams!=='undefined'?Object.assign({},rulegenP
 // Each transition keeps the runtime state of its own moment: several can happen within one frame (a state left at once), and each step must restore to its own state.
 // A selected step (pinned) is held exactly: no transition happens and none is recorded while it is shown.
 let pinned=null,pinnedId=null,lastPlaying=true;
+// The running state when a step was first held, so Live goes back to it (holding a step puts that step's state into the sketch).
+let beforePinned=null;
 const snapshotNow=()=>{try{return typeof rulegenSnapshot==='function'?rulegenSnapshot():null;}catch(error){return null;}};
 if(typeof rulegenEmit==='function'&&typeof rulegenJumpState==='function'){
   const emitBase=rulegenEmit;rulegenEmit=function(nodeId,transitionId){if(pinned)return false;lastEmit={nodeId,transitionId};try{return emitBase(nodeId,transitionId);}finally{lastEmit=null;}};
@@ -162,8 +164,8 @@ window.addEventListener('message',event=>{
     }else if(event.data.type==='replay' && Array.isArray(event.data.points)){replay(event.data.points.filter(point=>point&&Number.isFinite(point.x)&&Number.isFinite(point.y)&&Number.isFinite(point.t)));return;
     }else if(event.data.type==='pointer' && ['mousemove','mousedown','mouseup'].includes(event.data.kind) && Number.isFinite(event.data.x) && Number.isFinite(event.data.y)){fire(event.data.kind,{x:event.data.x,y:event.data.y});if(event.data.kind==='mouseup')fire('click',{x:event.data.x,y:event.data.y});return;
     }else if(event.data.type==='restore'){
-      if(event.data.snapshot&&typeof rulegenRestore==='function'){pinned=event.data.snapshot;pinnedId=typeof event.data.id==='string'?event.data.id:null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();}
-      else if(pinned){pinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;if(lastPlaying&&wasLooping)p.loop();}
+      if(event.data.snapshot&&typeof rulegenRestore==='function'){if(!pinned)beforePinned=snapshotNow();pinned=event.data.snapshot;pinnedId=typeof event.data.id==='string'?event.data.id:null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();}
+      else if(pinned){pinned=null;pinnedId=null;if(beforePinned&&typeof rulegenRestore==='function')rulegenRestore(beforePinned);beforePinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;forceRender=true;if(lastPlaying&&wasLooping)p.loop();else p.redraw();}
     }else if(event.data.type==='event' && hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
       const before=Object.assign({},rulegenParams);
