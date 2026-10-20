@@ -5,6 +5,8 @@ import { SketchCanvas, type CanvasHandle } from "../components/sketch-canvas";
 import { FreeformWorkspace, type WorkspaceHandle } from "../components/freeform-workspace";
 import { ToolRail } from "../components/tool-rail";
 import { ResultRevisionPanel } from "../components/result-revision-panel";
+import { FrameJsonDialog } from "../components/frame-json-dialog";
+import { frameExport } from "../lib/frame-export";
 import type { CodePreviewHandle } from "../components/code-preview";
 import { FrameAnnotations, FrameRender } from "../components/frame-render";
 import { GenerationHistory } from "../components/generation-history";
@@ -135,6 +137,8 @@ export default function Home() {
   const activeSemanticPen = algorithmPens.find(pen => pen.id === activeSemanticPenId);
   const [toast, setToast] = useState(""), [model, setModel] = useState(""), [configured, setConfigured] = useState<boolean | null>(null);
   const [restoreReady, setRestoreReady] = useState(false), [saveState, setSaveState] = useState("Local draft");
+  /** The frame whose JSON (state machines, constraints, code) is shown to copy. */
+  const [frameJson, setFrameJson] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false), [modal, setModal] = useState(false), [exportOpen, setExportOpen] = useState(false), [newName, setNewName] = useState("");
   const upload = useRef<HTMLInputElement>(null), importInput = useRef<HTMLInputElement>(null), inspector = useRef<HTMLDivElement>(null);
   // AI work is per frame: each frame has its own request in flight, abort controller and request number, so switching frames never cuts another frame's generation.
@@ -347,7 +351,7 @@ export default function Home() {
       const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
       // Playing with a brush: the frame only takes input for its running result; Esc puts the brush down.
       if (interactingIn(activeSketch, panel)) { if (e.key === "Escape") chooseTool("select"); return; }
-      if (e.key === "Escape") { setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
+      if (e.key === "Escape") { setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); setFrameJson(null); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
       else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
@@ -857,6 +861,7 @@ export default function Home() {
       {/* Each frame shows (and can stop) its own AI work, also while another frame is active. */}
       {frameBusy && <span className="frame-working" role="status" title={frame.loading}><span className="loading-spinner" />AI 작업 중
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
+      {frame.scene.nodes.length > 0 && <button aria-label={`Copy ${artworkOf(id)?.name || id} as JSON`} title="Copy this frame's state machines, constraints and code as one JSON" onClick={e => { e.stopPropagation(); setFrameJson(id); }}><Icon name="copy" size={13} />JSON</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
@@ -1029,6 +1034,10 @@ export default function Home() {
         onAdopt={() => { close(); if (adoptMaster(detachPrompt.frameId, detachPrompt.rootId, brush.id)) detachPrompt.apply(); }} />; })()}
     {toast && <div className="toast" role="status"><Icon name="spark" size={17} /><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={15} /></button></div>}
     {historyOpen && <GenerationHistory disabled={busy} onClose={() => setHistoryOpen(false)} onRestore={restoreAIHistory} />}
+    {frameJson && panels[frameJson] && <FrameJsonDialog name={artworkOf(frameJson)?.name || frameJson} onClose={() => setFrameJson(null)} onCopied={setToast}
+      data={frameExport({ id: frameJson, name: artworkOf(frameJson)?.name || frameJson, scene: panels[frameJson].scene, generated: panels[frameJson].generated,
+        brushOf: nodeId => { const role = brushRole(panels[frameJson].scene, frameJson, nodeId, brushes); return role ? { name: role.brush.name, master: role.master } : null; },
+        brushes: brushes.filter(brush => brushNodeIds(panels[frameJson].scene, brush, frameJson).length).map(brush => ({ id: brush.id, name: brush.name, roots: brushRoots(panels[frameJson].scene, brush, frameJson), targeted: brush.targeted })) })} />}
     {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>스케치·사진·collection·object·알고리즘 블록·코드가 함께 저장됩니다. JSON 파일로 다운로드하거나 복사할 수 있어요.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("프로젝트 JSON을 복사했습니다."); } catch { patchActive({ error: "JSON 내용을 선택해 복사하거나 다운로드해주세요." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
     {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>새 탐색을 시작하면 현재 로컬 초안이 교체됩니다. JSON으로 내보내면 언제든 다시 열 수 있어요.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
   </div>;

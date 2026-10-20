@@ -561,3 +561,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .brush-group-popover { display: flex; flex-direction: column; }
 .brush-group-popover .pencil-popover-heading { flex: none; }
 .brush-group-body { height: min(380px, calc(100vh - 260px)); min-height: 160px; overflow-y: auto; overscroll-behavior: contain; margin-right: -10px; padding-right: 10px; scrollbar-width: thin; scrollbar-color: #cfdcd3 transparent; }
+/* Frame JSON: one frame's state machines, constraints and code, to copy. */
+.frame-json-modal .frame-json-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.frame-json-modal .frame-json-note { color: #a0563a; font-size: 12px; margin: 0; }

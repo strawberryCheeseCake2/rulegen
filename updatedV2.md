@@ -384,6 +384,22 @@ Semantic transformation의 property마다 그 property에 맞게 **직접 만든
   - Property를 AI로 다시 만들거나 revision을 적용해도, widget이 조절하던 값들이 남아 있으면 handle이 유지된다.
   - 앞서 만든 프레임 위 metaphor handle(Pull·Stretch 등)은 이 방식으로 대체했다. 예전 형식의 handle은 프로젝트를 열 때 빠진다.
 
+## 27. Frame JSON 복사
+
+- 장면이 있는 프레임 헤더에 **JSON** 버튼이 있다. 누르면 그 프레임 하나를 JSON 하나로 정리한 창이 열리고, **Copy JSON**(클립보드)과 **Download**(`<프레임 이름>.frame.json`)를 할 수 있다. 클립보드가 막히면 내용을 선택해 두고 ⌘C / Ctrl+C로 복사하도록 안내한다.
+- 형식 `rulegen-frame/1`(`app/lib/frame-export.ts`):
+  - `frame`(id, 이름), `canvas`(900×600).
+  - `nodes[]`: id, 이름, 종류, 설명, 부모, 보이기 여부, 캔버스 픽셀 영역(`box`), brush 루트면 `brush`(이름, master/instance).
+    - `transformations[]`: semantic transformation과 property(이름, 효과, 설명, 값 — 알고리즘은 블록 구조 그대로). property마다 `constraints[]`에 그 안의 모든 값(코드의 `rulegenParams`와 같은 key, 경로, 종류, 값, 범위·단위·선택지). Direct manipulation handle은 hint와 경로만 넣고 widget 코드는 넣지 않는다.
+    - `constraints`: 모든 constraint의 기본값(key → 값).
+    - `machine`: 시작 state, `states[]`(id, 이름, 설명, 그 state의 **전체** constraint 값 = 기본값에 그 state의 변경을 합친 것, 기본값과 달라지는 key 목록 `changed`), `transitions[]`(전부).
+  - `algorithms[]`: 이 프레임이 쓰는 알고리즘 정의만.
+  - `brushes[]`: 이 프레임에 있는 brush마다 id, 이름, 이 프레임의 루트 노드(master·instance), `targetedInspections[]`.
+    - 도구마다 id, 이름, concern, `annotation`(만들 때 그린 inspection annotation, 캔버스 픽셀 점과 각 획의 색·굵기·투명도), `summary`, `overlays`(수식 그대로), `valueFixes`, `recommendations`.
+    - 도구는 brush 공통 id로 저장돼 있지만, 여기서는 **이 프레임의 노드 id**로 바꿔 넣는다(overlay는 이 프레임의 모든 stamp마다, value fix와 recommendation은 첫 stamp 기준). 새 transformation을 추가한 recommendation에는 지금 읽히는 모습(`current`: 추가된 transformation)을 함께 넣는다.
+  - `code`: 제목, 설명, 전체 코드(코드 패널과 같음, 지금 값 반영). 아직 코드가 없으면 `null`.
+- 스케치 획과 사진은 넣지 않는다(프로젝트 전체는 Export project).
+
 ## 26. 렌더링 시간 제한(Rendering budget)
 
 - 생성 코드와 proxy widget의 모든 반복문·함수에는 안전 장치(`__rulegenGuard`)가 들어간다. 예전에는 한 프레임에 10만 번을 넘으면 "Rendering budget exceeded. Reduce loops or recursion." 에러로 멈췄다.
