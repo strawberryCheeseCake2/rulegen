@@ -3,7 +3,7 @@ import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
 import { compositionContext } from "../lib/algorithm-pens";
 import { emptyMachineDraft, type SketchPanel } from "../lib/sketch-panels";
 import { markBrushes } from "../lib/brushes";
-import type { AlgorithmCall, Algorithm, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
+import type { AlgorithmCall, Algorithm, PropertyHandle, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
 import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
 import { sceneSchema } from "../lib/scene/validate";
 import { findNode, groupNodes, moveNodes, removeNodes, reorderNode, sceneDepth, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
@@ -17,6 +17,7 @@ import { hasModules, ownCodeIds, programModules } from "../lib/scene/machines";
 import { stampModule } from "../lib/scene/stamp";
 import { minimalExampleInstruction, minimalExampleScene } from "../lib/scene/minimal-example";
 import { findTransformation } from "../lib/scene/transformations";
+import { applyHandles, handleSuggestionsSchema, setHandle, type HandleTarget } from "../lib/scene/handles";
 import type { FrameId } from "../lib/workspace";
 import type { StudioDeps } from "./deps";
 
@@ -68,6 +69,8 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
     editNode: (nodeId: string, patch: Parameters<typeof ops.editNode>[2]) => apply(panel => ops.editNode(panel, nodeId, patch)),
     editProperty: (nodeId: string, propertyId: string, patch: Parameters<typeof ops.editProperty>[3]) => apply(panel => ops.editProperty(panel, nodeId, propertyId, patch)),
     removeProperty: (nodeId: string, propertyId: string) => apply(panel => ops.removeProperty(panel, nodeId, propertyId)),
+    /** A property's handle changed (its hint) or removed (null). UI only: the code needs nothing new. */
+    handle: (nodeId: string, propertyId: string, handle: PropertyHandle | null) => apply(panel => ops.commitScene(panel, setHandle(panel.scene, nodeId, propertyId, handle))),
     addProperty: (nodeId: string, algorithmId: string, transformationId?: string | null) => {
       try { deps.updatePanel(owner, ops.addAlgorithmProperty(deps.panel(owner), nodeId, algorithmId, transformationId)); }
       catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
@@ -272,6 +275,20 @@ export function sceneAI(deps: StudioDeps, owner: string) {
      * A new frame beside this one with only `transformationId` of the node (plus a
      * plain member for a collection), rendered so that transformation can be tried alone.
      */
+    /** AI makes a direct manipulation interface for one property, a transformation's properties, or every property of the node; they run in its proxy frame. */
+    async suggestHandles(nodeId: string, target: HandleTarget, instruction = "") {
+      const out: { count?: number; skipped?: number } = {};
+      await deps.task(target.propertyId ? "AI가 이 property에 맞는 direct manipulation 인터페이스를 만들고 있습니다…" : "AI가 property마다 맞는 direct manipulation 인터페이스를 만들고 있습니다…", async () => {
+        const result = handleSuggestionsSchema.parse(await deps.request("handles", { scene: deps.panel(owner).scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
+          instruction: instruction.trim(), image: (await deps.capture(owner, true)).image }, owner));
+        // Handles are UI: they go onto the scene as it is now, even if it changed meanwhile.
+        deps.updatePanel(owner, current => findNode(current.scene, nodeId) ? ops.commitScene(current, applyHandles(current.scene, nodeId, result.handles)) : {});
+        out.count = result.handles.length; out.skipped = result.skipped.length;
+      }, owner);
+      if (!out.count) return;
+      deps.openProxy?.(owner, nodeId);
+      deps.toast(`direct manipulation handle ${out.count}개를 만들었습니다${out.skipped ? ` (${out.skipped}개는 코드 오류로 빠짐)` : ""}. proxy frame에서 조작하면 결과가 바로 바뀝니다.`);
+    },
     async minimalExample(nodeId: string, transformationId: string) {
       const panel = deps.panel(owner), node = findNode(panel.scene, nodeId), transformation = node && findTransformation(node, transformationId);
       if (!node || !transformation) return;

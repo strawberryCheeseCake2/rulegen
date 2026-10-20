@@ -1,9 +1,10 @@
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
-import { constraintRows, emptyInspection, inspectResultSchema, recommendationTransformations, runtimeForAI, type InspectResult, type InspectionState } from "../lib/inspection";
+import { concernSuggestionsSchema, constraintRows, emptyInspection, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import * as ops from "../lib/scene/panel-ops";
 import type { ScalarValue } from "../lib/scene/schema";
+import type { InspectionInput } from "../lib/schema";
 import { sceneBindings } from "../lib/scene/values";
 import type { AppliedSnapshot, SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
@@ -11,7 +12,6 @@ import { annotatedImage, compactMarks } from "./annotated-image";
 import type { StudioDeps } from "./deps";
 
 type Change = { key: string; stateId: string; value: number | string | boolean };
-type Recommendation = InspectResult["recommendations"][number];
 
 /** The frame's inspection for this brush. */
 export const inspectionFor = (panel: SketchPanel, brushId: string): InspectionState => panel.inspections[brushId] ?? emptyInspection(brushId);
@@ -41,24 +41,47 @@ export function applyChanges(deps: StudioDeps, owner: string, changes: Change[])
 /**
  * Targeted inspection: AI builds overlays for the concern (marked with the
  * inspection annotation and/or written) and suggests fixes. Returns the result.
+ * With `update`, a recommendation just added a transformation and the overlays are rebuilt to show it.
  */
-export async function inspectConcern(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"] }) {
+export async function inspectConcern(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"]; markStyles?: MarkStyle[] }, update: InspectionInput["update"] = null) {
   const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner);
   if (!nodeIds.length) { deps.updatePanel(owner, { error: `이 프레임에는 ${brush.name} brush가 없습니다.` }); return null; }
   const snapshot = JSON.stringify(panel.scene), out: { result?: InspectResult } = {};
-  await deps.task("AI가 이 concern에 맞는 targeted inspection을 만들고 있습니다…", async () => {
+  await deps.task(update ? "AI가 추가된 transformation이 보이도록 targeted inspection overlay를 고치고 있습니다…" : "AI가 이 concern에 맞는 targeted inspection을 만들고 있습니다…", async () => {
     // The result is held at the selected step, so the live capture shows that moment.
-    const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks);
+    const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
+    const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
     const rows = constraintRows(panel.scene, nodeIds);
     const result = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image,
       inspection: { brushName: brush.name, nodeIds, cursor: state.cursor,
         constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: item.values, runtime: runtimeForAI(item, nodeIds) })),
-        marks: compactMarks(draft.marks) } }, owner));
+        marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update } }, owner));
     if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("검사 중 장면이 변경되었습니다. 다시 시도해주세요.");
     out.result = result;
   }, owner);
   return out.result ?? null;
+}
+
+/** What concern suggestions were read from: the marks (cheap to compare). */
+export const concernMarksKey = (marks: InspectionState["marks"]) => marks.map(mark => `${mark.length}:${mark[0]?.x.toFixed(3)},${mark[0]?.y.toFixed(3)}:${mark.at(-1)?.x.toFixed(3)},${mark.at(-1)?.y.toFixed(3)}`).join("|");
+/**
+ * Concern autocomplete: AI reads the inspection annotation (and what has been
+ * typed) and suggests concerns. Quiet on purpose: it is not a frame task (no
+ * busy state, no frame error, not cancelled with the frame's work) and the
+ * caller drops answers that came too late.
+ */
+export async function suggestConcerns(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"]; markStyles?: MarkStyle[] }, signal: AbortSignal) {
+  const panel = deps.panel(owner), nodeIds = brushNodeIds(panel.scene, brush, owner);
+  if (!nodeIds.length || (!draft.marks.length && !draft.concern.trim())) return [];
+  const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
+  const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
+  if (signal.aborted) return [];
+  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "concern", scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.slice(0, 2000), image,
+    inspection: { brushName: brush.name, nodeIds, constraints: [], steps: [], cursor: null, marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS) } }) });
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || "concern을 제안하지 못했습니다.");
+  return concernSuggestionsSchema.parse(result).suggestions;
 }
 
 /** A name for a new targeted tool: the start of its concern. */
@@ -81,10 +104,12 @@ export const appliedCurrent = (panel: SketchPanel, direction: "undo" | "redo") =
 /**
  * Apply a recommendation: values directly, a transformation/state/transition
  * through AI (with the code rewritten after a transformation). The frame before
- * and after is kept, so the whole application can be undone and redone.
+ * and after is kept, so the whole application can be undone and redone (marked
+ * with `key`, the recommendation as listed). Returns the transformation it added, if any.
  */
-export async function applyRecommendation(deps: StudioDeps, owner: string, recommendation: Recommendation) {
+export async function applyRecommendation(deps: StudioDeps, owner: string, recommendation: Recommendation, key = recommendationKey(recommendation)) {
   const instruction = `${recommendation.title}\n${recommendation.detail}`.slice(0, 2000), before = snapshot(deps.panel(owner));
+  const existing = new Set(findNode(before.scene, recommendation.nodeId)?.transformations.map(item => item.id));
   if (recommendation.kind === "value") applyChanges(deps, owner, recommendation.changes);
   else {
     const ai = sceneAI(deps, owner);
@@ -95,8 +120,9 @@ export async function applyRecommendation(deps: StudioDeps, owner: string, recom
     else await ai.refineMachine(recommendation.nodeId, { target: { kind: recommendation.kind, id: recommendation.targetId }, instruction, marks: [] });
   }
   const after = snapshot(deps.panel(owner));
-  if (sameSnapshot(before, after)) return;
-  deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: recommendation.title, key: recommendationKey(recommendation), before, after: snapshot(panel) }].slice(-20), future: [] } }));
+  if (sameSnapshot(before, after)) return null;
+  deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: recommendation.title, key, before, after: snapshot(panel) }].slice(-20), future: [] } }));
+  return recommendation.kind === "add-transformation" ? findNode(after.scene, recommendation.nodeId)?.transformations.find(item => !existing.has(item.id)) ?? null : null;
 }
 
 /** Undo (or redo) the last applied recommendation: the frame's scene, code and prompt go back (or forward) together. */

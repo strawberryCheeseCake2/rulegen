@@ -10,6 +10,25 @@ test("generated loops are bounded before they can freeze the browser", () => {
   vm.runInNewContext(code, { p, __rulegenGuard() { if (++budget > 50) throw new Error("budget"); } });
   assert.throws(() => p.setup(), /budget/);
 });
+test("the sandbox guard stops a frame by time: heavy but finite frames run, runaway ones stop", async () => {
+  const { GUARD_RUNTIME, FRAME_LIMIT_MS } = await import("../app/lib/render-guard");
+  // A long trail redrawn from the input history: 1000 items × 700 steps each, far over the old 100,000-step cap.
+  const heavy = prepareCode("p.setup=()=>{p.createCanvas(900,600)};p.draw=()=>{let n=0;for(let i=0;i<1000;i++){for(let j=0;j<700;j++){n+=j}}p.done=n};");
+  const p: Record<string, unknown> = { setup() {}, draw() {}, createCanvas() {} };
+  let now = 0; const performance = { now: () => now };
+  const context = vm.createContext({ p, performance });
+  vm.runInContext(`${GUARD_RUNTIME}\n${heavy}`, context);
+  vm.runInContext("budgetReset()", context); (p.draw as () => void)();
+  assert.equal(p.done, 1000 * (699 * 700 / 2), "the heavy frame finishes");
+  // A frame still running after the limit is stopped (the clock jumps past it).
+  const runaway = prepareCode("p.setup=()=>{p.createCanvas(900,600)};p.draw=()=>{while(true){}};");
+  vm.runInContext(runaway, context); vm.runInContext("budgetReset()", context);
+  now = FRAME_LIMIT_MS + 1;
+  assert.throws(() => (p.draw as () => void)(), /one frame ran over 2s/);
+  // Each frame (and input event) starts the clock again.
+  vm.runInContext("budgetReset()", context); vm.runInContext(heavy, context); (p.draw as () => void)();
+  assert.equal(p.done, 1000 * (699 * 700 / 2));
+});
 test("recursive functions are guarded too", () => { const code = prepareCode("function grow(){grow()}p.setup=()=>{p.createCanvas(900,600);grow()}"); let budget = 0; const p = { setup() {}, createCanvas() {} }; vm.runInNewContext(code, { p, __rulegenGuard() { if (++budget > 20) throw new Error("budget"); } }); assert.throws(() => p.setup(), /budget/); });
 test("network, dynamic evaluation, and DOM APIs cannot enter generated sketches", () => { for (const extra of ["fetch('x')", "document.body.innerHTML='x'", "p['constructor']('x')", "import('x')"]) assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`)); });
 test("regular p5 drawing remains executable", () => { let lines = 0; const p = { setup() {}, createCanvas() {}, line() { lines++; } }; vm.runInNewContext(prepareCode("p.setup=()=>{p.createCanvas(900,600);for(let i=0;i<3;i++)p.line(i,0,i,3)}"), { p, __rulegenGuard() {} }); p.setup(); assert.equal(lines, 3); });

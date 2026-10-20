@@ -11,8 +11,8 @@ const traverse = (traverseImport as unknown as { default?: typeof traverseImport
 // Host names the modules must not touch (only rulegenModule, as the top-level call).
 const HOST_NAMES = new Set(["rulegenParams", "rulegenMachines", "rulegenInstances", "rulegenState", "rulegenBase", "rulegenPlaying", "rulegenApply", "rulegenJumpState", "rulegenEmit", "rulegenTickState",
   "rulegenResetStates", "rulegenSetup", "rulegenDraw", "rulegenModule", "rulegenModules", "rulegenLive", "rulegenStarted", "rulegenKey", "rulegenInstance", "rulegenSync", "rulegenDispatch", "rulegenPlain", "rulegenSnapshot", "rulegenRestore"]);
-/** The module context: m.v / m.box / m.state / m.emit read the module's own nodes; m.p is the shared p5 instance; m.store holds the instance's state. */
-const CONTEXT = new Set(["v", "box", "state", "emit", "p", "store"]);
+/** The module context: m.v / m.box / m.state / m.emit read the module's own nodes; m.history() is the input given so far; m.p is the shared p5 instance; m.store holds the instance's state. */
+const CONTEXT = new Set(["v", "box", "state", "emit", "history", "memo", "p", "store"]);
 /** The host owns the canvas and the loop. */
 const HOST_CALLS = new Set(["background", "clear", "createCanvas", "resizeCanvas", "noCanvas", "noLoop", "loop", "redraw", "frameRate", "pixelDensity", "remove"]);
 
@@ -97,7 +97,7 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (!referenced) return;
       const member = parent;
       if (!member.isMemberExpression() || member.node.object !== self || member.node.computed || !t.isIdentifier(member.node.property) || !CONTEXT.has(member.node.property.name))
-        throw new Error("m은 m.v / m.box / m.state / m.emit / m.p / m.store로만 쓸 수 있습니다.");
+        throw new Error("m은 m.v / m.box / m.state / m.emit / m.history / m.memo / m.p / m.store로만 쓸 수 있습니다.");
       const field = (member.node.property as t.Identifier).name;
       if (field === "store") {
         const use = member.parentPath as NodePath;
@@ -108,6 +108,8 @@ export function connectScene(result: { title: string; explanation: string; code:
       const call = member.parentPath as NodePath | null;
       if (!call?.isCallExpression() || call.node.callee !== member.node) throw new Error(`m.${field}는 직접 호출해야 합니다.`);
       const args = call.node.arguments;
+      if (field === "history") { if (args.length) throw new Error("m.history()는 인자 없이 호출합니다."); return; }
+      if (field === "memo") { if (args.length !== 2) throw new Error("m.memo(key, () => 값) 형태로 호출합니다."); return; }
       if (field === "v") {
         const key = literal(args[0]);
         if (!key || !required.has(key) || !subtree.get(moduleOf(path))!.has(decodeURIComponent(key.slice(0, key.indexOf("/"))))) throw new Error("생성 코드의 property 연결이 올바르지 않습니다. 다시 생성해주세요.");

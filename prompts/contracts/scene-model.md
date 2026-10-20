@@ -28,6 +28,7 @@ Split the semantics as finely as possible. One transformation = ONE semantic ope
 - Example, a flower collection: 1 "Radial bloom" (`count`, `layout`) → 2 "Petal size falloff" (`size`) → 3 "Petal curl" (`curl`) → 4 "Hue drift by petal" (`hue-shift`, `base-color`) → 5 "Wind sway" (`sway`, `speed`).
 - Transformation `id`s are unique within the node (kebab-case, e.g. `"radial-bloom"`). Property `id`s are unique across ALL transformations of the node (state machines and code address a property by node id + property id only).
 - Max 8 properties per transformation, 32 per node.
+- A property in the supplied scene may carry a `handle` (the user's direct manipulation widget). It is UI only: ignore it, and never output it.
 
 - Each **property** has an `effect`:
   - `spatial` — position, layout, size, rotation, spacing, branching, path, density, deformation.

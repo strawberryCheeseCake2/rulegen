@@ -114,6 +114,15 @@ function readBlock(source: string) {
   if (!match) return null;
   try { return { start, end: endMarker + 1 + SCENE_END.length, block: { params: JSON.parse(match[1]), machines: JSON.parse(match[2]), instances: JSON.parse(match[3]) } as Block }; } catch { return null; }
 }
+/**
+ * A program assembled by an older version, with the current host runtime and
+ * driver (they are host code, not the modules'); anything else is left as is.
+ */
+export function refreshProgram(source: string) {
+  const found = readBlock(source), start = source.indexOf(MODULES_START), end = source.indexOf(MODULES_END, start), driver = end < 0 ? -1 : source.indexOf(SCENE_DRIVER_MARK, end);
+  if (!found || start < 0 || end < 0 || driver < 0) return source;
+  return [source.slice(0, found.end), SCENE_RUNTIME, source.slice(start, end + MODULES_END.length), SCENE_DRIVER].join("\n");
+}
 /** Patch only the host block: drawing code and hand edits stay intact. */
 export function syncScene(source: string, scene: Scene) {
   const found = readBlock(source);
@@ -176,20 +185,65 @@ rulegenApply();
 export const SCENE_DRIVER = `
 ${SCENE_DRIVER_MARK}
 let rulegenLive = [], rulegenStarted = false;
+// Input history: every press-drag-release on the canvas, in canvas pixels with ms since its press,
+// shared by all modules (m.history()). Modules derive what they draw from it with the current values,
+// so changing a value adjusts what is already there instead of only what comes next.
+// Each gesture has a stable id and a rev that changes whenever its points (or done) change,
+// so what a module makes from one gesture is computed once per (id, rev, values) with m.memo.
+const rulegenGestures = [];
+let rulegenGesture = null, rulegenGestureStart = 0, rulegenGestureIds = 0;
+const RULEGEN_MAX_GESTURES = 24, RULEGEN_MAX_POINTS = 4000;
+function rulegenRecord(kind) {
+  const touch = p.touches && p.touches[0], x = Math.round((touch ? touch.x : p.mouseX) * 10) / 10, y = Math.round((touch ? touch.y : p.mouseY) * 10) / 10;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const now = typeof performance !== 'undefined' ? performance.now() : 0;
+  if (kind === 'down') {
+    rulegenGesture = { id: ++rulegenGestureIds, rev: 0, points: [{ x, y, t: 0 }], done: false }; rulegenGestureStart = now;
+    rulegenGestures.push(rulegenGesture); if (rulegenGestures.length > RULEGEN_MAX_GESTURES) rulegenGestures.shift();
+  } else if (rulegenGesture) {
+    const last = rulegenGesture.points[rulegenGesture.points.length - 1];
+    if (last.x !== x || last.y !== y) { rulegenGesture.points.push({ x, y, t: Math.round(now - rulegenGestureStart) }); rulegenGesture.rev++; }
+    if (kind === 'up') { rulegenGesture.done = true; rulegenGesture.rev++; rulegenGesture = null; }
+  }
+  // Bounded: the oldest gestures are thinned out first.
+  let total = rulegenGestures.reduce((n, g) => n + g.points.length, 0);
+  for (let i = 0; total > RULEGEN_MAX_POINTS && i < rulegenGestures.length; i++) {
+    const g = rulegenGestures[i]; if (g.points.length < 3) continue;
+    const kept = g.points.filter((point, k) => k % 2 === 0 || k === g.points.length - 1); total -= g.points.length - kept.length; g.points.splice(0, g.points.length, ...kept); g.rev++;
+  }
+}
+function rulegenInputReset() { rulegenGestures.length = 0; rulegenGesture = null; }
+/** Whether a value change can only show by giving the input again: a module takes input but keeps what it made from it (not derived from m.history()). */
+function rulegenNeedsReplay() {
+  return rulegenLive.some(inst => !inst.usesHistory && ['mousePressed', 'mouseDragged', 'mouseReleased', 'mouseClicked', 'touchStarted', 'touchMoved', 'touchEnded'].some(name => inst.handlers[name]));
+}
 function rulegenKey(inst, key) {
   const cut = key.indexOf('/'), actual = cut > 0 ? inst.entry.map[decodeURIComponent(key.slice(0, cut))] : undefined;
   if (actual === undefined) throw new Error('Unknown value key: ' + key);
   return encodeURIComponent(actual) + key.slice(cut);
 }
 function rulegenInstance(entry) {
-  const inst = { entry, handlers: {}, store: {} };
+  // reads: value keys read while setup runs (setup re-runs only when one of them changes).
+  // memo: results a module computes once per key (not part of m.store, so not copied into inspection steps).
+  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map() };
   const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
   const m = {
     p,
-    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); return rulegenParams[k]; },
-    box(id) { const a = encodeURIComponent(node(id)); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
+    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k); return rulegenParams[k]; },
+    box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
+    history() { inst.usesHistory = true; return rulegenGestures; },
+    memo(key, compute) {
+      const k = typeof key === 'string' ? key : JSON.stringify(key);
+      if (k.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
+      const hit = inst.memo.get(k);
+      if (hit) { hit.used = rulegenFrameNo; return hit.value; }
+      const value = compute();
+      inst.memo.set(k, { value, used: rulegenFrameNo });
+      if (inst.memo.size > RULEGEN_MEMO_MAX) inst.memo.delete(inst.memo.keys().next().value);
+      return value;
+    },
     store: inst.store,
   };
   inst.handlers = rulegenModules[entry.module](m) || {};
@@ -203,7 +257,7 @@ function rulegenSync() {
     const found = rulegenLive.find(inst => inst.entry.root === entry.root && inst.entry.module === entry.module);
     if (found) { found.entry = entry; next.push(found); continue; }
     const inst = rulegenInstance(entry); next.push(inst);
-    if (rulegenStarted && inst.handlers.setup) inst.handlers.setup();
+    if (rulegenStarted) rulegenSetupOne(inst);
   }
   rulegenLive = next;
 }
@@ -227,7 +281,7 @@ function rulegenSnapshot() {
   const states = {}, stores = {};
   for (const nodeId of Object.keys(rulegenState)) states[nodeId] = { id: rulegenState[nodeId].id, elapsed: rulegenState[nodeId].elapsed };
   for (const inst of rulegenLive) stores[inst.entry.root] = rulegenPlain(inst.store, 0);
-  return { seed, states, stores };
+  return { seed, states, stores, history: rulegenPlain(rulegenGestures, 0) };
 }
 /** Put a snapshot back (with the current values): stores are refilled in place, objects that are not plain data are kept. */
 function rulegenRestore(snapshot) {
@@ -243,21 +297,49 @@ function rulegenRestore(snapshot) {
     for (const key of Object.keys(inst.store)) if (rulegenPlain(inst.store[key], 0) !== undefined) delete inst.store[key];
     Object.assign(inst.store, rulegenPlain(saved, 0));
   }
+  if (Array.isArray(snapshot.history)) {
+    rulegenInputReset();
+    // Restored gestures keep their id and rev (their memoized results stay valid); new ones get new ids.
+    for (const g of snapshot.history) if (g && Array.isArray(g.points)) {
+      const id = Number.isInteger(g.id) && g.id > 0 ? g.id : ++rulegenGestureIds;
+      rulegenGestureIds = Math.max(rulegenGestureIds, id);
+      rulegenGestures.push({ id, rev: Number.isInteger(g.rev) ? g.rev : 0, points: g.points.filter(q => q && Number.isFinite(q.x) && Number.isFinite(q.y)).map(q => ({ x: q.x, y: q.y, t: Number(q.t) || 0 })), done: true });
+    }
+  }
   if (typeof p.randomSeed === 'function') p.randomSeed(snapshot.seed);
   if (typeof p.noiseSeed === 'function') p.noiseSeed(snapshot.seed);
 }
-function rulegenSetup() { for (const inst of rulegenLive) if (inst.handlers.setup) inst.handlers.setup(); }
+function rulegenSetupOne(inst) {
+  if (!inst.handlers.setup) return;
+  inst.reads = new Set();
+  try { inst.handlers.setup(); } finally { inst.setupReads = inst.reads; inst.reads = null; }
+}
+/**
+ * Run the modules' setup. Given the value keys that just changed, only modules
+ * whose setup read one of them run it again; the others keep their state
+ * (trails, particles, drags) and simply draw with the new values.
+ */
+function rulegenSetup(changed) {
+  for (const inst of rulegenLive) if (!changed || !inst.setupReads || [...inst.setupReads].some(key => changed.has(key))) rulegenSetupOne(inst);
+}
 p.setup = () => { p.createCanvas(900, 600); rulegenResetStates(); rulegenSync(); rulegenSetup(); rulegenStarted = true; };
+let rulegenFrameNo = 0;
+const RULEGEN_MEMO_MAX = 4000, RULEGEN_MEMO_IDLE = 240;
 p.draw = () => {
   rulegenTickState(p.deltaTime);
   p.clear();
+  rulegenFrameNo++;
   for (const inst of rulegenLive) {
     if (!inst.handlers.draw || rulegenParams[encodeURIComponent(inst.entry.root) + '/@visible'] === false) continue;
     p.push(); try { inst.handlers.draw(); } finally { p.pop(); }
   }
+  // Results not used for a while (old values, gestures that are gone) are dropped.
+  if (rulegenFrameNo % 120 === 0) for (const inst of rulegenLive) for (const [k, entry] of inst.memo) if (rulegenFrameNo - entry.used > RULEGEN_MEMO_IDLE) inst.memo.delete(k);
 };
+const RULEGEN_INPUT = { mousePressed: 'down', mouseDragged: 'move', mouseReleased: 'up', touchStarted: 'down', touchMoved: 'move', touchEnded: 'up' };
 function rulegenDispatch(name, fallback, touch) {
   return event => {
+    if (RULEGEN_INPUT[name]) rulegenRecord(RULEGEN_INPUT[name]);
     let handled = false, result;
     for (const inst of rulegenLive) {
       const handler = inst.handlers[name] || (fallback && inst.handlers[fallback]);

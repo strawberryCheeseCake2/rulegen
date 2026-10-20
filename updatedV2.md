@@ -185,7 +185,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 - 모든 AI 생성 요청을 서버의 `ai-generations/<날짜>/<시각-의도-ID>/`에 저장한다: 입력 이미지, 사용자 입력, AI에 보낸 prompt, 원본 응답, 최종 검증 결과, 코드는 `generated.js`, 모델·시간·상태·소요 시간·token 사용량. 실패·취소도 기록하고, API 키와 인증 헤더는 저장하지 않는다. 폴더는 Git에서 제외하며 `RULEGEN_AI_LOG_DIR`로 위치를 바꾼다. AI를 부르지 않는 로컬 편집(블록 끼우기, Make pen, 슬라이더, 레이어 편집)은 기록하지 않는다.
 - 상단 **AI history**에서 기록을 조회하고(종류·시각·모델·상태), 결과와 오류를 확인하고 JSON으로 내려받는다.
-- 완료된 생성은 **이 생성 복원하기**로 AI 재호출 없이 복원한다. 새 생성은 `context.json`(생성 직전 프로젝트·대상 스케치·라쏘 영역·annotation·clarification·검토 중 제안)과 `recovery.json`(복원용 프로젝트)을 함께 저장한다. 미확정 제안은 검토 상태로 복원하고 자동 적용하지 않는다. 복원은 현재 로컬 초안을 교체하므로 먼저 Export project로 내보내도록 안내한다.
+- 완료된 생성은 **이 생성 복원하기**로 AI 재호출 없이 복원한다. 새 생성은 `context.json`(생성 직전 프로젝트·대상 스케치·라쏘 영역·annotation·clarification·검토 중 제안)과 `recovery.json`(복원용 프로젝트)을 함께 저장한다. 미확정 제안은 검토 상태로 복원하고 자동 적용하지 않는다. 보드도 그때 모습으로 돌아온다: 프레임 위치(proxy frame 포함)와 화면 시점(camera, 확대 배율)을 그대로 복원하고, 시점이 없는 옛 기록만 대상 프레임으로 화면을 옮긴다. 복원은 현재 로컬 초안을 교체하므로 먼저 Export project로 내보내도록 안내한다.
 - OpenAI의 일시적 오류(과부하 503, 500/502/504, 요청 한도 429)는 2초·4초·8초 간격으로(Retry-After가 있으면 그 값) 최대 3번 자동 재시도한다. 사용 한도 소진(`insufficient_quota`)이나 키·모델 오류는 재시도하지 않는다. 재시도한 응답은 `response-<회차>-retry<n>.txt`와 `log.json`의 `retries`에 남는다.
 - **오류 로그**: 화면에 뜨는 모든 오류를 `error-logs/<날짜>/<시각-출처-ID>.json`에 하나씩 저장한다(Git 제외, `RULEGEN_ERROR_LOG_DIR`로 위치 변경). 출처는 `ai`(AI 생성 실패: 의도·모델·HTTP 상태·OpenAI 오류 코드·`ai-generations/` 생성 폴더 키), `prepare`(코드 안전 검사 실패와 그 코드), `runtime`(생성 코드를 브라우저에서 실행할 때 난 오류와 그 코드), `ui`(그 밖에 프레임에 표시된 오류), `server`(요청 형식 등)다. API 키는 지우고, 이미지 data URL은 길이만 남긴다. 서버가 이미 기록한 오류는 브라우저에서 다시 기록하지 않는다.
 - 실패·취소 기록은 복원하지 않는다. 로그 폴더 밖 파일 접근을 막고 이미지 참조와 복원 형식을 검증한다.
@@ -272,9 +272,30 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 툴바 brush 그룹 안의 별도 도구다. 프레임 위에 보라색으로 inspection용 annotation을 그린다(동그라미, 화살표, 손글씨 메모). 일반 결과 annotation과 따로 저장되며, 하단 패널에 "Inspection annotation n획 첨부됨"으로 보이고 ×로 모두 지운다. 패널의 **Pen / Eraser**나 **왼쪽 툴바의 지우개**(E 키)로 지우개로 바꾸면(이 도구를 쓰는 동안 툴바 지우개는 스케치 획이 아니라 이 보라색 자국을 지우고, 다시 누르면 펜으로 돌아감), 프레임에서 문지른 자국만 한 획씩 지운다(지나간 곳 가까이에 있는 획 전체). concern을 텍스트로 함께 적을 수 있다.
 - **Create targeted inspection**을 누를 때마다 그 annotation과 concern으로 **Targeted Inspection Tool이 하나씩 새로 생긴다.** 새 도구는 brush 그룹의 도구 목록과 하단 패널 탭에 concern 이름으로 추가되고 바로 선택된다(brush당 최대 12개, 프로젝트에 저장). 만든 뒤에는 annotation 초안이 비워진다.
 
+- **Concern Autocomplete**: concern 입력칸 아래 **Autocomplete** 버튼을 누르면 AI가 inspection annotation(과 지금까지 쓴 글)을 보고 concern 문장을 최대 3개 제안한다(`concern` intent, `prompts/concern.md`). 버튼을 누를 때만 요청하고, 자동으로는 요청하지 않는다.
+  - 아무것도 안 썼으면 가장 그럴듯한 제안이 입력칸의 placeholder로 보이고 **Tab**으로 넣는다. 쓰기 시작했으면 그 글로 시작하는 제안의 나머지가 회색으로 이어 보이고 **Tab**으로 완성한다. 아래 제안을 눌러서 고를 수도 있다.
+  - 표시도 글도 없거나 다른 AI 작업 중이면 버튼이 꺼진다. 다시 누르면 이전 요청을 대신하고, 응답이 오기 전에 표시가 바뀌었으면 그 응답은 버리고 다시 누르라고 안내한다.
+  - AI는 annotation이 그려진 결과 이미지, 표시 좌표와 색·굵기, brush 노드의 이름·설명·transformation·property·state 이름만 받는다(값이나 코드는 받지 않는다). 제안은 표시한 그림 위치가 아니라 brush에 대한 질문(크기·간격·개수, 겹침·정렬, 동작)으로, 쉬운 한국어 한 문장으로 쓴다.
+  - 화면 작업(busy)이나 프레임 오류를 만들지 않는 요청이다. AI history에는 "Concern 제안"으로 남고, 복원해도 프로젝트는 바뀌지 않는다.
+- **획 개수**: Inspection annotation 하나(와 그것으로 만든 targeted 도구)는 획을 최대 **128개**까지 보관한다(이전 64개). 넘으면 가장 오래된 획부터 빠지고, AI에도 128개까지 보낸다.
+- **Annotation 펜 설정**: Inspection annotation 패널의 Pen 아래에서 다음에 그릴 자국의 **색**(6가지 기본색과 색 선택), **굵기**(1–30px, 프레임 900×600 기준이라 확대하면 같이 커짐), **투명도**(10–100%)를 정한다. 미리보기 선이 함께 보인다.
+  - 설정은 이 브라우저에 기억된다. 그릴 때 보이는 선과 그려진 자국 모두 이 설정을 따른다. 이미 그린 자국은 그린 때의 스타일을 유지한다.
+  - 지우개는 자국 굵기만큼 더 넓게 닿는다.
+  - Targeted inspection을 만들 때 각 자국의 스타일이 도구에 저장된다. AI에게 보내는 이미지에도 그 색·굵기·투명도로 그려지고, 자국별 스타일도 함께 보내진다(`annotationMarkStyles`). 그래서 색으로 서로 다른 곳을 구분해 표시할 수 있다.
+
 ### Targeted Inspection Tool
 - **처음부터 있는 도구가 아니다.** Inspection annotation으로 만들 때마다 concern 하나에 도구 하나가 생기고, 다시 고르면 그 concern의 오버레이가 프레임에 다시 보인다. 도구를 만들면 프레임의 보라색 inspection annotation 흔적은 사라진다(annotation은 도구에 저장되어 Inspect again 때 AI에 다시 보낸다). **Inspect again**은 지금까지 기록된 단계로 같은 concern의 시각화를 다시 만든다. 툴바 패널에서 ×로 지운다.
 - Inspection과 같은 stepping에 더해 그 concern에 맞춘 시각화를 보여준다.
+- **오버레이는 그려진 것 위에 놓인다.**
+  - 문제: 입력 history에서 다시 그리는 brush(예: Sketch 8의 수풀)는 그려진 항목의 위치가 `m.store`에 긴 점 목록(윤곽선)으로만 있었다. AI에 보낼 때 크기 제한으로 이 목록이 잘려서 AI는 수풀이 어디 있는지 몰랐다. 그래서 폭·간격·잎 개수를 캔버스 왼쪽 아래 빈 곳에 고정 위치 눈금으로 그렸고, 어떤 수풀과도 연결되지 않았다.
+  - 점 목록(`[{x, y}, …]`)은 이제 경로 끝에 `@x`, `@y`, `@w`, `@h`, `@cx`, `@cy`, `@n`을 붙여 그 상자로 읽는다. 예: `s("bush", "polygons.2.@x")`, `each` 안에서 `item("@cx")`.
+  - AI에도 점 목록을 잘라 보내지 않고 각 항목의 상자로 요약해 보낸다. 그래서 항목마다 위치를 안다.
+  - 입력 history(`m.history()`)도 가상 루트 `"@input"`으로 AI에 보내고 오버레이에서 읽는다(`each: "@input:"`, `item("points.@x")`).
+  - 프롬프트에 규칙을 더했다: 오버레이는 실제로 그려진 것(항목, 두 항목 사이 간격, 경로, 사용자가 표시한 곳)에 붙인다. 빈 곳에 고정 위치로 눈금이나 값을 띄우지 않는다. 길이는 그 대상 위에, 개수는 그 항목 옆에 둔다. 위치를 알 수 없으면 노드 영역이나 입력 경로처럼 계산할 수 있는 것에 붙이고, annotation 좌표에는 붙이지 않는다.
+- **Targeted inspection은 concern에 대한 도구다.** 한 장면에 대한 답이 아니다.
+  - concern은 brush에 대한 질문(크기·간격·개수 같은 양, 겹침·간격·정렬 같은 관계, 언제 나타나는지·왜 움직이는지 같은 동작)이다. annotation은 그 질문이 무엇에 대한 것인지 보여 주는 예시일 뿐이다.
+  - 도구는 툴바에 남아 나중에 다시 쓰인다. 그 뒤에 그린 항목, 다른 단계, 다른 값, master와 모든 instance에 쓰인다. 그래서 overlay는 표시한 하나가 아니라 그 concern에 해당하는 모든 항목에 `each`로 그린다.
+  - 표시한 좌표, 지금 그림의 위치, 고정된 항목 번호, 지금 보이는 항목 개수는 수식에 넣지 않는다. 모두 단계의 값·store·입력에서 계산한다.
 - **Master와 모든 instance에 작동한다.** 프레임마다 노드 id가 다르므로(복사하면 `tree-2`처럼 바뀜), 도구는 결과를 brush의 공통 id(코드가 쓰는 id, `codeId`)로 저장한다. 어느 프레임에서 만들거나 Inspect again을 해도 공통 id로 바꿔 저장한다. 보여줄 때는 그 프레임의 id로 바꾼다. 오버레이 수식(`p`·`prev`·`delta`의 값 키, `s`·`len`의 루트, `in`·`elapsed`의 노드), `each`의 루트, 연결(link), value fix와 recommendation의 키·노드가 모두 바뀐다. 한 프레임에 그 brush가 여럿 있으면 오버레이는 모두에 그려지고, value fix와 recommendation은 선택한 것(없으면 첫 번째)에 적용된다. Instance에 적용하면 detach 안내가 뜬다(22절).
 - 도구를 만들 때(그리고 Inspect again 때) AI(`inspect` intent, `prompts/inspect.md`)가 brush의 노드·transformation·상태 머신, constraint 키, **기록된 history 전체**(단계별 값, 상태 머신 상태, 각 모듈의 `m.store` 실행 상태), 현재 단계 이미지와 annotation을 보고 다음을 만든다.
   - **오버레이 = history를 따라가는 규칙**: AI는 한 순간의 그림이 아니라 규칙을 만든다. 타임라인에서 단계를 옮길 때마다 **그 단계의 값과 실행 상태로 다시 계산해** 그 단계에 맞는 오버레이가 보이고, 나중에 새로 기록된 단계에도 AI를 다시 부르지 않고 그대로 적용된다. 예: "별 크기 알고 싶어" + 별에 동그라미 → 단계마다 별 크기에 맞는 width·height 사각형과 "w=… (+15)" 숫자.
@@ -295,6 +316,15 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - **새 transformation 추가 recommendation**: concern과 관련된 기존 semantic transformation이 없으면, AI는 관련 없는 기존 transformation을 억지로 고치지 않고 **새 transformation을 추가**하자고 제안할 수 있다.
   - 이 recommendation은 "새 Transformation" 종류로 표시되고, 칩은 "<노드> · + 새 transformation"이다.
   - **Add with AI**를 누르면 detail의 설명대로 새 transformation을 그 노드 stack 맨 아래에 만들고, 이어서 코드를 다시 만든다. Undo apply로 되돌릴 수 있다.
+  - 적용한 뒤에는 그 recommendation이 **실제로 추가된 transformation**으로 바뀐다.
+    - 종류는 "Transformation · 추가됨", 칩은 추가된 transformation 이름이고, 버튼은 그 transformation을 다듬는 Apply with AI다.
+    - targeted 도구에는 추가된 transformation id(`addedId`)가 함께 저장된다. Undo apply로 그 transformation이 없어지면 다시 "새 Transformation"으로 보인다.
+  - 이어서 targeted inspection의 **interactive overlay도 갱신**된다.
+    - 새 코드가 실행된 결과를 캡처해, 같은 concern과 annotation으로 `inspect`를 다시 요청한다.
+    - 이때 적용한 recommendation, 추가된 transformation id, 이전 summary와 overlay를 함께 보낸다(`inspection.update` → `appliedRecommendation`, `previousSummary`, `previousOverlays`).
+    - AI는 아직 맞는 overlay는 유지하고, 새 transformation의 property를 보여 주는 overlay를 더한다. summary와 value fix도 새로 쓴다.
+    - recommendation 목록은 사용자가 보던 그대로 유지한다.
+    - 새 transformation이 생기기 전에 기록된 단계에는 그 값이 없으므로, 그 값을 읽는 overlay는 그 단계에서 그려지지 않는다.
   - 고치는 안과 추가하는 안을 둘 다 대안으로 낼 수도 있다. 노드의 transformation이 이미 최대 개수면 이 recommendation은 빠진다.
 - **여러 transformation을 함께 바꾸는 recommendation**
   - Transformation recommendation은 대상 transformation을 여러 개 가질 수 있다. 주 대상은 `targetId`, 같은 노드에서 함께 바꿔야 하는 다른 것들은 `targetIds`에 들어간다(같은 노드에 실제로 있는 것만 남김).
@@ -305,6 +335,71 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - RECOMMENDATIONS 제목 옆 **Undo apply / Redo**로 한 번의 적용 전체를 되돌리거나 다시 적용한다. 장면만 되돌리는 레이어 undo와 달리 코드도 함께 돌아간다.
   - 적용한 recommendation에는 "✓ 적용됨"이 표시된다. 프레임마다 최근 20개까지 저장되고, 새로 적용하면 redo 목록은 비워진다.
   - 적용 뒤에 그 프레임을 더 바꿨다면, 되돌리면 그 변경도 함께 사라진다는 확인이 그 자리에 한 번 더 뜬다.
+
+## 24. Direct manipulation handle과 proxy frame
+
+Semantic transformation의 property마다 그 property에 맞게 **직접 만든 direct manipulation 인터페이스**(handle)를 두고, 그것을 **proxy frame**에서 조작한다. 정해진 metaphor 몇 개를 고르는 방식이 아니라, AI가 property마다 새 widget을 만든다.
+
+- **Proxy frame**
+  - 대상 프레임 옆에 생기는 별도 프레임이다. 한 노드의 handle들을 grid로 나란히 보여준다.
+  - 여기서 widget을 조작하면 대상 프레임의 그 노드 값이 바뀌고, 결과가 실시간으로 따라 바뀐다. 거꾸로 슬라이더나 state 선택으로 값이 바뀌면 widget도 그 값으로 다시 그려진다. State를 편집 중이면 그 state의 값이 바뀐다.
+  - 헤더에는 handle 수와 편집 중인 state가 표시된다.
+  - AI 디자인·redesign은 **property 하나 또는 transformation 하나**에만 한다. 노드 전체를 한 번에 만드는 요청은 없다(서버도 대상 없는 `handles` 요청을 거부한다).
+    - property 카드의 ◎, PROXY HANDLE 줄의 Redesign / Fix with AI → 그 property 하나.
+    - transformation 카드의 Design with AI / Redesign with AI → 그 transformation의 property들.
+    - 빈 proxy frame에는 조절할 수 있는 transformation마다 **Design <transformation>** 버튼이 있다.
+  - Inspector의 **Open proxy frame**, transformation 카드와 handle의 **Open proxy**로 연다. 노드마다 하나씩 있고, 이미 있으면 그 프레임으로 이동한다.
+  - Proxy frame을 지워도 handle은 property에 남는다. 대상 프레임을 지우면 그 proxy frame도 함께 지워진다. 프로젝트에 저장된다(`proxyFrames`).
+- **조작이 대상에 반영되는 방식**
+  - Proxy frame은 sandbox iframe이 포인터를 직접 받지 않는다. 위에 놓인 입력 레이어가 포인터를 받아 iframe 안으로 보낸다. 보드를 움직인 직후 같은 때 iframe에 입력이 닿지 않아 조작이 무시되던 문제를 이렇게 고쳤다.
+  - 입력 레이어는 widget 영역마다 하나씩만 놓인다. 나머지 영역은 프레임을 옮기는 데 쓰인다.
+    - 각 칸의 제목 줄(property 이름·hint)과 칸 사이 빈 곳을 드래그하면 헤더처럼 proxy frame이 보드에서 움직인다. 커서는 move로 바뀐다.
+    - widget이 아직 없는 proxy frame은 버튼을 뺀 어디를 잡아도 움직인다.
+  - 값이 바뀌어도 결과의 module `setup`은 그 setup이 읽은 값(`m.v`/`m.box`)이 바뀔 때만 다시 실행된다. 그래서 trail·particle·드래그 상태가 값 조절로 지워지지 않는다. 처음 시작과 Re-render에서는 모든 setup이 실행된다. 코드 생성 계약(`contracts/scene-code.md`)도 store를 다시 만들어야 하는 값만 setup에서 읽도록 바뀌었다.
+  - **기존 결과를 그 자리에서 조절**: host가 받은 입력(누르고 끌고 떼는 제스처, 최근 24개)을 `m.history()`로 module에 준다. 코드 계약의 "DERIVE FROM THE INPUT" 규칙에 따라 module은 입력으로 만든 것(드래그를 따라 놓인 trail, 클릭으로 찍은 stamp, 끌면서 나온 것)을 입력이 들어온 순간의 값으로 저장하지 않는다. 대신 매 frame `m.history()`와 지금 값으로 다시 계산한다. 그래서 간격·크기·개수를 바꾸면 이미 그려진 결과가 처음부터 다시 그려지지 않고 그 자리에서 바뀐다. state machine 상태와 나머지 store도 그대로다. 입력 기록은 inspection step snapshot에도 들어가서, 지난 step으로 돌아가면 그때의 입력도 함께 돌아온다.
+  - **이전 방식 코드의 대체 동작**: 입력을 받으면서 `m.history()`를 쓰지 않는 module은 만든 것에 그때의 값을 저장해 둔다. 이런 코드에서만 값이 바뀌면 처음 상태에서 기록된 입력을 새 값으로 빠르게 다시 실행해(최대 약 200프레임) 새로 그린다. Inspection에서 고정된 step을 보는 중에는 다시 실행하지 않고, 다시 실행 중의 전이는 기록하지 않는다.
+  - 대상 코드가 그런 방식이면 proxy frame 아래에 안내가 나오고, **Update code to adjust in place**로 그 프레임 코드를 `m.history()` 기반으로 다시 만들 수 있다. 모양·동작·state machine은 유지하도록 지시한다.
+  - 이전 버전으로 만든 저장 프로그램도 열 때 현재 host runtime·driver로 바뀌어(`refreshProgram`) 위 동작을 따른다. Module 코드는 그대로다.
+- **Proxy ↔ target 연결 표시**
+  - Proxy frame 헤더에 **LINKED → <대상 프레임> / <노드>** 칩이 있다. 편집 중인 state도 함께 표시된다. 마우스를 올리면 대상 프레임과 연결선이 강조되고, 누르면 대상 프레임으로 이동한다.
+  - 대상 프레임 헤더에도 그 프레임을 조작하는 proxy frame마다 **◎ <노드> proxy** 칩이 있다. 마우스를 올리면 proxy frame이 강조되고, 누르면 그곳으로 이동한다.
+  - 보드에는 proxy frame에서 대상 프레임으로 가는 점선 화살표("◎ 조작")가 그려진다.
+  - Proxy frame 안을 누르면 대상 프레임이 활성화되고 노드가 선택된다.
+- **Property마다 만드는 인터페이스**
+  - Widget은 p5 코드다(`rulegenHandle(function (h) { return { draw, pressed, dragged, released } })`).
+  - AI(`handles` intent)는 property의 의미, transformation, 값들(경로·범위·단위·옵션), 그 뒤의 algorithm 설명, 현재 결과 이미지를 보고 widget을 쓴다. 그 property가 그림에 하는 일을 단순화한 미니어처(proxy)를 그리고, 그 일부를 잡아 끌게 한다. 예를 들어 가지 각도는 갈라진 가지의 팔을 끌어 벌리고, 꽃잎 개수는 링의 꽃잎을 돌리고, 진폭은 물결 꼭대기를 끌어 올린다.
+  - Algorithm property는 여러 인자를 한 제스처로 함께 조절할 수 있다(예: 점의 x는 간격, y는 흔들림). Temporal property는 `h.time`으로 움직임을 보여준다.
+  - Widget API: `h.w/h.h`, `h.mouseX/Y`, `h.pressed/hover/time/color`, `h.v(path)`, `h.spec(path)`, `h.ratio(path)`, `h.set(path, value)`, `h.setRatio(path, t)`.
+  - `h.set`은 값을 범위로 clamp하고 step에 맞게 반올림한 뒤 대상에 보낸다. Widget이 바꿀 수 있는 것은 AI가 `paths`에 선언한 값뿐이다.
+- **만들기와 고치기**
+  - Property 카드의 ◎ 버튼은 그 property 하나를 만든다.
+  - Transformation 카드의 **Design with AI / Redesign with AI**는 그 transformation의 property들을 만든다. Proxy frame 헤더는 노드 전체를 만든다.
+  - 만든 뒤에는 proxy frame이 자동으로 열린다.
+  - Property 카드의 PROXY HANDLE에서 hint를 고치고, "어떻게 바꿀지"를 적어 **Redesign**하고, Widget code를 보고, handle을 지운다.
+  - 실행 중 오류가 나면 그 widget 칸에만 오류가 표시되고, 다른 widget은 계속 동작한다. 카드에도 ⚠ 오류가 나타나고, **Fix with AI**는 오류 내용을 함께 보내 고친다.
+- **안전과 성질**
+  - Widget 코드는 결과 코드와 같은 guard를 거친다. 브라우저 전역과 eval·timer를 쓸 수 없고, 루프와 함수 호출 수가 제한된다. 캔버스를 만들거나 `p.setup`/`p.draw`를 바꿀 수 없다.
+  - Widget은 sandbox iframe 안에서 실행되고, guard를 거친 코드(`prepared`)가 property에 저장된다. 쓸 수 없는 API를 쓴 widget은 이유와 함께 빠진다.
+  - Handle은 UI 정보다. 코드 재생성이 필요 없고, 다른 AI 요청에는 widget 코드가 보내지지 않는다. Instance에서도 detach 없이 만들 수 있다.
+  - Property를 AI로 다시 만들거나 revision을 적용해도, widget이 조절하던 값들이 남아 있으면 handle이 유지된다.
+  - 앞서 만든 프레임 위 metaphor handle(Pull·Stretch 등)은 이 방식으로 대체했다. 예전 형식의 handle은 프로젝트를 열 때 빠진다.
+
+## 26. 렌더링 시간 제한(Rendering budget)
+
+- 생성 코드와 proxy widget의 모든 반복문·함수에는 안전 장치(`__rulegenGuard`)가 들어간다. 예전에는 한 프레임에 10만 번을 넘으면 "Rendering budget exceeded. Reduce loops or recursion." 에러로 멈췄다.
+- 입력 history에서 매 프레임 다시 그리는 방식(DERIVE FROM THE INPUT)에서는 정상 코드도 이 횟수를 쉽게 넘었다. 예: 하트 trail은 하트 하나에 약 700번, 하트가 많아지면 한 프레임에 약 39만 번. 그래서 무한 루프가 아닌데도 에러가 자주 났다(오류 로그에 하루 수십 건).
+- 이제 **시간으로** 판단한다: 한 프레임(또는 입력 이벤트·메시지 하나)이 **2초** 넘게 끝나지 않을 때만 멈춘다. 무거워도 끝나는 프레임은 그대로 그린다. 매 프레임, 입력 이벤트마다 시계를 다시 시작한다(`app/lib/render-guard.ts`).
+- **프레임 비용이 입력 전체와 함께 커지지 않게 했다.**
+  - 문제: Sketch 8 수풀 brush는 캐시 키를 입력 기록 전체(`JSON.stringify(history)`)로 만들었다. 드래그 중에는 점이 늘 때마다 키가 바뀌어 매 프레임 모든 드래그의 수풀과 겹친 선 지우기(선분마다 근처 수풀 안인지 검사)를 처음부터 다시 했다. 수풀이 쌓이면 한 프레임이 2초를 넘었다.
+  - `m.history()`의 드래그마다 **`id`**(바뀌지 않고 다시 쓰이지 않음)와 **`rev`**(점이 추가되거나, 손을 떼거나, 점이 솎아질 때마다 바뀜)가 붙는다. 같은 `id`·`rev`면 점도 같다. inspection 단계 복원 뒤에도 그대로이고, 새 드래그는 새 id를 받는다.
+  - **`m.memo(key, () => 값)`**: 모듈의 host 캐시. key(짧은 문자열이나 작은 배열)마다 한 번만 계산한다. `m.store` 밖에 있어 inspection 단계마다 복사되지 않는다. 한동안 쓰이지 않은 항목은 지우고(240프레임), 모듈당 4000개까지 둔다. 2000자보다 긴 key(점이나 기록 전체로 만든 key)는 오류로 막는다.
+  - 코드 계약: 드래그 하나가 만드는 것은 `m.memo`로 그 드래그의 `id`·`rev`와 쓰는 값으로 한 번만 계산한다. 끝난 드래그는 다시 계산하지 않고, 드래그 중에는 그 드래그만 다시 계산한다. 값이 바뀌면 드래그마다 한 번씩 다시 계산한다. 여러 드래그에 걸친 계산(겹침, 가려진 선, 충돌)은 앞 드래그들의 결과를 바탕으로 드래그마다 나눠 계산하고, 격자나 경계 상자로 근처만 비교한다. 기록 전체를 key로 쓰거나 `JSON.stringify`하지 않는다. `m.store`에는 상태와 그린 항목의 가벼운 목록(위치·크기)만 두고 윤곽 점이나 캐시는 두지 않는다. 도형은 path 하나로 그리고 그리기 호출은 프레임당 수천 개 이내.
+  - 이 에러가 나면 메시지에 "드래그마다 m.memo로 한 번만 계산하라"는 안내가 들어가 **Fix with AI**가 그 방향으로 고친다. "Update code to adjust in place" 지시에도 같은 내용을 넣었다.
+  - 이미 생성된 코드는 그대로이므로, 그 프레임에서 Fix with AI나 Update로 다시 생성해야 빨라진다.
+
+## 25. Brush tool group 패널 스크롤
+
+Brush tool group을 눌러 여는 패널은 제목 줄 아래 높이가 고정된다(최대 380px, 창이 작으면 그에 맞춰 줄어듦). Targeted inspection 도구, sub brush, master, 이름 같은 내용이 많아지면 그 안에서 스크롤해 내린다.
 
 ## 주요 사용 흐름
 
@@ -320,8 +415,11 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 10. 필요 없는 프레임은 휴지통 버튼으로 삭제하고, AI history에서 생성 기록을 확인·복원한다.
 11. Extract·Compose로 생긴 Brush tool group의 Brush로 다른 프레임에 brush stamp를 찍거나 stroke를 그린다. 드래그 brush는 드래그가 그 brush의 인터랙션을 움직인다.
 12. 같은 그룹의 Inspection으로 상태 변화를 단계별로 넘기며 constraint 값을 확인하고, Inspection annotation과 Targeted inspection으로 특정 concern의 오버레이·값 수정·추천을 받는다.
+13. 노드의 property마다 AI가 만든 direct manipulation 인터페이스(◎, Design with AI)를 proxy frame에 두고, 거기서 직접 조작해 대상 프레임의 결과를 바꾼다.
 
 ## 검증
+
+- Direct manipulation handle: widget 저장과 예전 handle 제거, guard(쓸 수 없는 API·캔버스 생성 거부), AI 요청 문맥(의미·값·algorithm·widget 크기)과 결과 정리(중복·다른 노드 제거, 경로 확인, 실행 불가 widget 제외), 다른 요청에서 widget 코드 제외, 재생성·revision 뒤 유지, proxy runtime(가짜 p5에서 드래그 → 값 보고, 범위 clamp, 오류 widget 격리, 외부 값 반영), proxy frame 저장과 대상과 함께 삭제, setup이 읽은 값이 바뀔 때만 setup이 다시 실행되는 것, 저장 프로그램의 runtime 갱신, 보드 연결선 렌더링, `m.history()` 기록·snapshot 복원과 그것으로 만든 결과가 값 변경만으로 다시 배치되는 것, 저장형 module 감지(다시 실행 대체 동작과 코드 업데이트 안내)를 테스트했다. Headless Chrome에서 손으로 쓴 widget을 넣은 proxy frame을 띄워, 드래그로 대상의 Outline width가 2.5 → 6, 탭으로 Filled가 켜지는 것을 확인했다(AI 생성은 mock으로만 테스트). 실제 AI가 만든 Distribution widget으로 heart trail을 그린 뒤 간격을 62 → 107로 끌면, 대상 프레임의 trail이 새 간격으로 다시 그려지는 것을 5번 반복해 확인했다. `m.history()`로 바꾼 heart-trail module에서는 같은 조작으로 기존 하트들이 다시 그려지지 않고 그 자리에서 새 간격으로 배치되었고, 안내도 나오지 않았다.
 
 - 블록 복사·붙여넣기(다른 스케치 포함, 같은 id 다른 정의는 이름 변경, 중첩 한도), 블록 드롭으로 새 property 만들기, 레이어를 다른 프레임으로 복사(멤버·블록·머신·id 충돌)한 뒤 그 프레임 안의 결과 생성, 같은 프레임 내 이동(재생성 없음), Extract가 새 프레임을 만들고 원본 스케치를 문맥으로 결과를 생성하는 흐름, 값만 바뀔 때 프로그램이 같게 유지되어 실행 중 결과에 그대로 반영되는 것, 드래그 데이터 검증을 테스트했다.
 - 중첩 5단계(넘친 노드 끌어올리기, 6단계 거부)를 테스트했다. 테스트는 네트워크에 접근하지 못하게 막았다.
@@ -330,4 +428,5 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 구조·쪼개기·반복 규칙은 **프롬프트로만** 지시하고 서버에서 검사하지 않는다. 예전 서버 검사 코드와 테스트는 `backup/server-checks/`에 보관한다(복원 방법은 그 폴더의 README).
 - Brush: 루트 Collection마다 brush 생성, 툴 id, drag brush 판정, 찍은 복사본의 brush 표시와 검사 대상, 클릭 한 번·stroke 간격 찍기·드래그 재생 계획, 툴바 그룹 렌더링을 테스트했다. Inspection: 20단계 제한, 단계 간 변화, brush 값만 거르기, constraint 행, 오버레이 수식(허용되지 않는 식 거부), 단계별 오버레이 배치, Inspection 패널·오버레이 렌더링, `inspect` 요청 문맥과 brush 밖 결과 걸러내기를 테스트했다.
 - 모듈 코드 계약(루트마다 모듈 하나, `m` 사용 규칙, p 속성 쓰기·캔버스 호출·전역 변수 금지, 다른 모듈 노드 접근 금지), 모듈 분리 저장과 인스턴스 실행(다른 id의 복사본이 같은 모듈로 그리고 자기 머신으로 입력을 받음), AI 없이 찍기(빈 프레임, 같은 모듈 재사용, 같은 이름 다른 모듈 이름 변경, 이전 형식 거부, brush 사용 시 AI 요청 0회), concern별 targeted 도구 id와 툴바 목록을 테스트했다. 조립한 프로그램을 실제 p5.js(headless Chrome)에서 실행해 두 인스턴스가 각자 박스에 그려지고 합성 마우스 입력이 각 인스턴스의 상태 머신에 전달되는 것을 확인했다.
+- 새 transformation 추가 recommendation: 저장된 `addedId`(이전 도구도 그대로 읽힘, 프레임 간 id 변환 후 유지), 적용 후 "Transformation · 추가됨"과 추가된 transformation 칩, Undo로 없어지면 다시 "새 Transformation", overlay 갱신 요청 문맥(`appliedRecommendation`, `previousSummary`, `previousOverlays`)을 테스트했다. headless Chrome에서 AI 응답(transform·code·inspect)을 가짜로 바꿔, Add with AI → 새 transformation 추가 → 코드 실행 → overlay 재요청 → recommendation이 추가된 transformation으로 바뀌고 새 overlay가 그려지는 흐름을 확인했다.
 - 타입 검사, 전체 테스트 107개, 프로덕션 빌드가 통과했다. 실제 AI가 새 모듈 계약대로 코드를 쓰는지, 그리고 앱에서 드래그 brush를 끝까지 써 보는 것은 확인하지 못했다.

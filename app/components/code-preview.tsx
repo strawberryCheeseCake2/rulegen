@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { readSceneValues, sceneStructureKey } from "../lib/scene/machines";
+import { GUARD_INPUT_RESET, GUARD_RUNTIME } from "../lib/render-guard";
 
 export type CodePreviewHandle = {
   capture: () => string; emit: (nodeId: string, transitionId: string) => void;
@@ -84,7 +85,8 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
     const send = `parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},error:String(error)},'*')`;
     const timer = setTimeout(() => setDocument(`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' ${origin}; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none';"><style>html,body{margin:0;overflow:hidden;background:#fffefa}canvas{display:block}</style><script src="${origin}/vendor/p5.min.js"></script></head><body><script>
 window.onerror=(error)=>{${send}};addEventListener('keydown',e=>{if(e.key==='Escape')parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},escape:true},'*');});window.onunhandledrejection=(e)=>{const error=e.reason;${send}};
-let budget=0;function __rulegenGuard(){if(++budget>100000)throw new Error('Rendering budget exceeded. Reduce loops or recursion.')}
+${GUARD_RUNTIME}
+${GUARD_INPUT_RESET}
 try{new p5(p=>{${script}
 const setup=p.setup,draw=p.draw;let lastCapture=0,forceRender=true,wasLooping=true;
 // Machines can arrive later (an injected module, new values), so this is asked each time.
@@ -99,7 +101,7 @@ if(typeof rulegenEmit==='function'&&typeof rulegenJumpState==='function'){
   const emitBase=rulegenEmit;rulegenEmit=function(nodeId,transitionId){if(pinned)return false;lastEmit={nodeId,transitionId};try{return emitBase(nodeId,transitionId);}finally{lastEmit=null;}};
   const jumpBase=rulegenJumpState;rulegenJumpState=function(nodeId,id){if(pinned)return false;
     const from=rulegenState[nodeId]?rulegenState[nodeId].id:null,ok=jumpBase(nodeId,id);
-    if(ok&&tracing){const timed=rulegenMachines[nodeId].transitions.find(item=>item.from===from&&item.to===id&&item.trigger==='after');
+    if(ok&&tracing&&!replaying){const timed=rulegenMachines[nodeId].transitions.find(item=>item.from===from&&item.to===id&&item.trigger==='after');
       traceQueue.push({nodeId,from,to:id,transitionId:lastEmit&&lastEmit.nodeId===nodeId?lastEmit.transitionId:(timed?timed.id:null),params:paramsNow(),runtime:snapshotNow()});}
     return ok;};
 }
@@ -107,6 +109,27 @@ if(typeof rulegenEmit==='function'&&typeof rulegenJumpState==='function'){
 function flushTrace(){if(!traceQueue.length)return;let shared;
   const steps=traceQueue;traceQueue=[];steps.forEach(step=>{if(step.runtime===undefined){if(shared===undefined)shared=snapshotNow();step.runtime=shared;}parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},trace:step},'*');});}
 let pointerDown=false;
+// Input history: every press-drag-release given to the sketch (by hand or forwarded), in canvas pixels.
+// A value change replays it from the start, so values that only act on input (spacing of a trail, emission rate…) show at once.
+let gestures=[],gesture=null,replaying=false;const MAX_GESTURES=12,MAX_POINTS=1500;
+function canvasPoint(e){const canvas=document.querySelector('canvas');if(!canvas)return null;const box=canvas.getBoundingClientRect();return {x:(e.clientX-box.left)*(p.width||box.width)/box.width,y:(e.clientY-box.top)*(p.height||box.height)/box.height};}
+addEventListener('mousedown',e=>{if(replaying||e.button!==0)return;const point=canvasPoint(e);if(!point)return;gesture=[point];gestures.push(gesture);if(gestures.length>MAX_GESTURES)gestures.shift();},true);
+addEventListener('mousemove',e=>{if(replaying||!gesture||gesture.length>=MAX_POINTS)return;const point=canvasPoint(e);if(point)gesture.push(point);},true);
+addEventListener('mouseup',e=>{if(replaying)return;gesture=null;},true);
+// Start over (machines, every setup) and give the recorded input again, quickly: at most ~200 frames are drawn.
+function replayHistory(){
+  if(!gestures.length||pinned||typeof rulegenSetup!=='function')return false;
+  // The input was given while the sketch had focus (sketches may stop on blur): it is focused again for the replay.
+  replaying=true;const wasFocused=p.focused;p.focused=true;
+  try{budgetReset();if(hasMachine())rulegenResetStates();if(typeof rulegenInputReset==='function')rulegenInputReset();rulegenSetup();
+    const total=gestures.reduce((n,g)=>n+g.length,0),every=Math.max(1,Math.ceil(total/200));let count=0;
+    const frame=()=>{budgetReset();p.redraw();};
+    for(const g of gestures){if(!g.length)continue;fire('mousemove',g[0]);fire('mousedown',g[0]);frame();
+      for(let i=1;i<g.length;i++){fire('mousemove',g[i]);if(++count%every===0)frame();}
+      const last=g[g.length-1];if(gesture!==g){fire('mouseup',last);fire('click',last);}frame();}
+  }finally{replaying=false;p.focused=wasFocused;}
+  forceRender=true;p.redraw();capture();return true;
+}
 function fire(type,point){const canvas=document.querySelector('canvas');if(!canvas)return;if(type==='mousedown')pointerDown=true;if(type==='mouseup')pointerDown=false;
   const box=canvas.getBoundingClientRect();canvas.dispatchEvent(new MouseEvent(type,{bubbles:true,cancelable:true,view:window,button:0,buttons:pointerDown?1:0,clientX:box.left+point.x*box.width/(p.width||box.width),clientY:box.top+point.y*box.height/(p.height||box.height)}));}
 function replay(points){if(!points.length)return;
@@ -116,10 +139,11 @@ function replay(points){if(!points.length)return;
 // Draw the pinned step: its state is put back, drawn once, and put back again, so the sketch's own draw cannot move it on.
 function showPinned(){rulegenRestore(pinned);forceRender=true;p.redraw();rulegenRestore(pinned);}
 function capture(){const canvas=document.querySelector('canvas');if(canvas)parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},image:canvas.toDataURL('image/png'),states:hasMachine()?Object.fromEntries(Object.keys(rulegenState).map(id=>[id,rulegenState[id].id])):null},'*');}
-function rerender(){budget=0;if(typeof rulegenSetup==='function')rulegenSetup();else setup();forceRender=true;p.redraw();capture();}
+// changed: the value keys that just changed; only setups that read one of them run again (older programs run every setup).
+function rerender(changed){budgetReset();if(typeof rulegenSetup==='function'){if(!changed||changed.size)rulegenSetup(changed);}else setup();forceRender=true;p.redraw();capture();}
 window.addEventListener('message',event=>{
   if(event.source!==parent || event.data?.channel!=='rulegen-control' || event.data.token!==${JSON.stringify(token)})return;
-  try{budget=0;
+  try{budgetReset();
     if(event.data.type==='control'){
       if(hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.stateId==='string')rulegenJumpState(event.data.nodeId,event.data.stateId);
       const playing=event.data.playing===true;lastPlaying=playing;
@@ -134,19 +158,25 @@ window.addEventListener('message',event=>{
       else if(pinned){pinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;if(lastPlaying&&wasLooping)p.loop();}
     }else if(event.data.type==='event' && hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
+      const before=Object.assign({},rulegenParams);
       Object.assign(rulegenBase,event.data.params||{});
       const machines=event.data.machines||{};for(const id of Object.keys(machines)){if(rulegenMachines[id])Object.assign(rulegenMachines[id],machines[id]);else{rulegenMachines[id]=machines[id];rulegenState[id]={id:machines[id].initialState,elapsed:0};}}
       for(const id of Object.keys(rulegenMachines))if(!machines[id]){delete rulegenMachines[id];delete rulegenState[id];}
       if(Array.isArray(event.data.instances)&&typeof rulegenInstances!=='undefined'){rulegenInstances.splice(0,rulegenInstances.length,...event.data.instances);rulegenSync();}
-      rulegenApply();if(pinned){showPinned();return;}rerender();return;
+      rulegenApply();if(pinned){showPinned();return;}
+      const changed=new Set(Object.keys(rulegenParams).filter(key=>rulegenParams[key]!==before[key]));
+      // Modules that derive from m.history() adjust in place; only programs that keep what they made from input need it given again.
+      if(changed.size&&!pointerDown&&(typeof rulegenNeedsReplay!=='function'||rulegenNeedsReplay())&&replayHistory())return;
+      rerender(changed);return;
     }
     forceRender=true;p.redraw();
   }catch(error){${send}}
 });
-p.setup=()=>{budget=0;setup();wasLooping=typeof p.isLooping==='function'?p.isLooping():true;capture();parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},ready:true},'*');};
-p.draw=()=>{budget=0;try{
-  if(hasMachine() && !rulegenPlaying && !forceRender)return;
+p.setup=()=>{budgetReset();setup();wasLooping=typeof p.isLooping==='function'?p.isLooping():true;capture();parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},ready:true},'*');};
+p.draw=()=>{budgetReset();try{
+  if(hasMachine() && !rulegenPlaying && !forceRender && !replaying)return;
   if(draw)draw();
+  if(replaying)return;
   flushTrace();
   if(forceRender || performance.now()-lastCapture>150){capture();lastCapture=performance.now();}
   forceRender=false;

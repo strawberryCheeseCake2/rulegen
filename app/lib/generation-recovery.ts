@@ -1,3 +1,4 @@
+import { applyHandles, handleSuggestionsSchema } from "./scene/handles";
 import { z } from "zod";
 import { projectSchema } from "./project";
 import { annotationSchema, imageSchema, requestSchema, generatedSchema, compositionPromptSchema, clarificationSchema, machineRefineResultSchema } from "./schema";
@@ -62,7 +63,8 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
     case "compose-prompt": panel.composePrompt = compositionPromptSchema.parse(result).prompt; break;
     case "clarification": recovery.revisionInstruction = clarificationSchema.parse(result).clarification; break;
     case "revision": recovery.proposal = sceneProposalSchema.parse(result); break;
-    case "inspect": break; // An inspection does not change the project.
+    case "inspect": case "concern": break; // An inspection (or a suggested concern) does not change the project.
+    case "handles": if (input.scene) { panel.scene = applyHandles(sceneSchema.parse(input.scene), input.targetNodeId, handleSuggestionsSchema.parse(result).handles); panel.selectedNodeIds = [input.targetNodeId]; } break;
   }
   project.activeSketchId = owner;
   if (owner === "source") project.workspace = showWorkspaceFrame(project.workspace, "source");

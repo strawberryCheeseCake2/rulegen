@@ -21,13 +21,23 @@ export type InspectionStep = {
 };
 /** What an overlay, row or recommendation points at (a transformation only from recommendations). */
 export type InspectionFocus = { kind: "constraint" | "state" | "transition" | "transformation"; nodeId: string; id: string };
+/** How an annotation mark is drawn: color, width (canvas pixels of the 900×600 frame) and opacity. */
+export const markStyleSchema = z.object({ color: z.string().regex(/^#[0-9a-fA-F]{6}$/), width: z.number().min(1).max(30), opacity: z.number().min(.1).max(1) });
+export type MarkStyle = z.infer<typeof markStyleSchema>;
+export const DEFAULT_MARK_STYLE: MarkStyle = { color: "#7c3aed", width: 6, opacity: .85 };
+/** How many strokes one inspection annotation (and a targeted tool) keeps; the oldest go first. */
+export const MAX_MARKS = 128;
+export const MARK_COLORS = ["#7c3aed", "#e0457b", "#e07b00", "#1f8a5b", "#2563eb", "#1f2328"];
 export type InspectionState = {
   brushId: string; steps: InspectionStep[]; cursor: number | null;
   /** The inspection annotation being drawn (normalized 0..1) and its concern; they become a targeted tool. */
   marks: { x: number; y: number }[][]; concern: string;
+  /** The style of each mark, by index (a missing one is the default). */
+  markStyles: MarkStyle[];
   focus: InspectionFocus | null;
 };
-export const emptyInspection = (brushId = ""): InspectionState => ({ brushId, steps: [], cursor: null, marks: [], concern: "", focus: null });
+export const emptyInspection = (brushId = ""): InspectionState => ({ brushId, steps: [], cursor: null, marks: [], markStyles: [], concern: "", focus: null });
+export const markStyleAt = (styles: MarkStyle[] | undefined, index: number) => styles?.[index] ?? DEFAULT_MARK_STYLE;
 
 /** Keep the newest MAX_STEPS steps. */
 export function addStep(state: InspectionState, step: Omit<InspectionStep, "id">): InspectionState {
@@ -81,19 +91,44 @@ export const overlaySchema = z.object({
   each: z.string().max(200).default(""),
 });
 const change = z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: scalar });
+/** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
+const recommendationSchema = z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
+  /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
+  targetIds: z.array(z.string().max(80)).max(6).default([]),
+  title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) });
 export const inspectResultSchema = z.object({
   summary: z.string().min(1).max(1500),
   overlays: z.array(overlaySchema).max(12),
   /** Value-only fixes for the concern, applied with one click. */
   valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
   /** Other ways to resolve it: values, or changing a transformation, state or transition. */
-  /** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
-  recommendations: z.array(z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
-    /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
-    targetIds: z.array(z.string().max(80)).max(6).default([]),
-    title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) })).max(6),
+  recommendations: z.array(recommendationSchema).max(6),
 });
-export type InspectResult = z.infer<typeof inspectResultSchema>;
+/**
+ * A targeted tool's stored result. A new-transformation recommendation that was
+ * applied remembers the transformation it added (`addedId`), so it then reads as
+ * that transformation (while it exists).
+ */
+export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional() })).max(6) });
+export type InspectResult = z.infer<typeof targetedResultSchema>;
+export type Recommendation = InspectResult["recommendations"][number];
+/** A recommendation as it reads in `scene`: a new transformation that was added (and is still there) is that transformation. */
+export function currentRecommendation(item: Recommendation, scene: Scene): Recommendation {
+  if (item.kind !== "add-transformation" || !item.addedId || !findNode(scene, item.nodeId)?.transformations.some(entry => entry.id === item.addedId)) return item;
+  return { ...item, kind: "transformation", targetId: item.addedId, targetIds: [] };
+}
+/**
+ * Concern autocomplete: from the inspection annotation (and what the user has
+ * typed so far), AI suggests up to three concerns to inspect. Each is a whole
+ * concern; one that starts with the typed text completes it.
+ */
+export const concernSuggestionsSchema = z.object({ suggestions: z.array(z.string().min(1).max(300)).min(1).max(3) });
+export type ConcernSuggestions = z.infer<typeof concernSuggestionsSchema>;
+/** What a suggestion adds after the typed text (empty when it does not continue it). */
+export function concernCompletion(typed: string, suggestion: string) {
+  if (!typed.trim() || typed.length >= suggestion.length) return "";
+  return suggestion.startsWith(typed) ? suggestion.slice(typed.length) : "";
+}
 /** Every transformation a recommendation changes (the main target first); none for other kinds. */
 export const recommendationTransformations = (item: Pick<InspectResult["recommendations"][number], "kind" | "targetId" | "targetIds">) =>
   item.kind === "transformation" ? [...new Set([item.targetId, ...(item.targetIds ?? [])].filter(Boolean))] : [];
@@ -112,7 +147,7 @@ export type OverlayContext = {
   stores: Record<string, unknown>; states: Record<string, { id: string; elapsed: number }>;
   step: number; steps: number; item?: unknown; itemIndex?: number;
 };
-type Runtime = { stores?: Record<string, unknown>; states?: Record<string, { id: string; elapsed: number }> };
+type Runtime = { stores?: Record<string, unknown>; states?: Record<string, { id: string; elapsed: number }>; history?: unknown[] };
 const runtimeOf = (step: InspectionStep | undefined): Runtime => step?.runtime && typeof step.runtime === "object" ? step.runtime as Runtime : {};
 
 type Token = { type: "num"; value: number } | { type: "str"; value: string } | { type: "id"; value: string } | { type: "op"; value: string };
@@ -142,11 +177,24 @@ const numeric = (value: unknown) => typeof value === "number" ? value : typeof v
 /** Follow "a.b.0.c" into plain data ("" is the value itself). */
 export function pathValue(value: unknown, path: string): unknown {
   for (const part of path.split(".").filter(Boolean)) {
+    if (part.startsWith("@") && Array.isArray(value)) { value = pointsBox(value)?.[part as keyof PointsBox]; continue; }
     if (value === null || typeof value !== "object") return undefined;
     value = (value as Record<string, unknown>)[part];
   }
   return value;
 }
+// A list of points ({ x, y }) — a drawn outline, a path, a gesture — read as its box:
+// "@x", "@y" (top-left), "@w", "@h", "@cx", "@cy" (center) and "@n" (how many points).
+type PointsBox = { "@x": number; "@y": number; "@w": number; "@h": number; "@cx": number; "@cy": number; "@n": number };
+const isPoint = (item: unknown): item is { x: number; y: number } => Boolean(item && typeof item === "object" && Number.isFinite((item as { x: unknown }).x) && Number.isFinite((item as { y: unknown }).y));
+export function pointsBox(list: unknown[]): PointsBox | undefined {
+  if (!list.length || !list.every(isPoint)) return undefined;
+  const xs = list.map(point => point.x), ys = list.map(point => point.y);
+  const x = Math.min(...xs), y = Math.min(...ys), w = Math.max(...xs) - x, h = Math.max(...ys) - y;
+  return { "@x": x, "@y": y, "@w": w, "@h": h, "@cx": x + w / 2, "@cy": y + h / 2, "@n": list.length };
+}
+/** The recorded input (m.history() gestures) is read by overlays as the store of this pseudo root. */
+export const INPUT_ROOT = "@input";
 
 /** Evaluate an overlay expression at one step; NaN when a value is missing or not a number. */
 export function evaluate(source: string, input: Record<string, Scalar> | OverlayContext): number {
@@ -230,12 +278,14 @@ export function fillLabel(template: string, input: Record<string, Scalar> | Over
 /** The context of step `index` (live values when there is no step yet). */
 export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}): OverlayContext {
   const step = steps[index], runtime = runtimeOf(step);
-  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: runtime.stores ?? {}, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
+  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: { ...(runtime.stores ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
 }
 
 /** Shorten plain data for AI: arrays keep their first items (and say how long they were). */
 function trimData(value: unknown, items: number, depth = 0): unknown {
-  if (value === null || typeof value !== "object") return typeof value === "string" ? value.slice(0, 120) : value;
+  if (value === null || typeof value !== "object") return typeof value === "string" ? value.slice(0, 120) : typeof value === "number" ? Math.round(value * 10) / 10 : value;
+  // A long list of points is sent as where it is (its box, read the same way with "@x" … in overlays).
+  if (Array.isArray(value) && value.length > 4) { const box = pointsBox(value); if (box) return { ...Object.fromEntries(Object.entries(box).map(([key, number]) => [key, Math.round(number * 10) / 10])), "@points": "…" }; }
   if (depth > 6) return "…";
   if (Array.isArray(value)) { const head = value.slice(0, items).map(item => trimData(item, items, depth + 1)); return value.length > items ? [...head, `…(${value.length} items)`] : head; }
   return Object.fromEntries(Object.entries(value).slice(0, 40).map(([key, item]) => [key, trimData(item, items, depth + 1)]));
@@ -244,7 +294,7 @@ function trimData(value: unknown, items: number, depth = 0): unknown {
 export function runtimeForAI(step: InspectionStep, nodeIds: string[]) {
   const runtime = runtimeOf(step), ids = new Set(nodeIds);
   const states = Object.fromEntries(Object.entries(runtime.states ?? {}).filter(([id]) => ids.has(id)).map(([id, state]) => [id, { id: String(state.id), elapsed: Math.round(Number(state.elapsed) || 0) }]));
-  const own = Object.fromEntries(Object.entries(runtime.stores ?? {}).filter(([id]) => ids.has(id)));
+  const own = { ...Object.fromEntries(Object.entries(runtime.stores ?? {}).filter(([id]) => ids.has(id))), ...(runtime.history?.length ? { [INPUT_ROOT]: runtime.history } : {}) };
   for (const items of [6, 2, 0]) { const stores = trimData(own, items) as Record<string, unknown>; if (JSON.stringify(stores).length < 4000 || !items) return { states, stores }; }
   return { states, stores: {} };
 }
@@ -385,6 +435,16 @@ export function machineInspection(state: InspectionState, result: InspectResult 
   return { state: own ? step!.to : runtime, from: own ? step!.from : null, transition: own ? step!.transitionId : null, states: [...states], transitions: [...transitions] };
 }
 
+/** Add a mark drawn with `style` (the oldest go beyond `max`). */
+export function addMark(state: Pick<InspectionState, "marks" | "markStyles">, mark: { x: number; y: number }[], style: MarkStyle, max = MAX_MARKS) {
+  const styles = state.marks.map((_, i) => markStyleAt(state.markStyles, i));
+  return { marks: [...state.marks, mark].slice(-max), markStyles: [...styles, style].slice(-max) };
+}
+/** The marks (and their styles) left after an eraser passes these canvas points; a mark's own width widens what touches it. */
+export function eraseStyledMarks(state: Pick<InspectionState, "marks" | "markStyles">, points: { x: number; y: number }[], radius = 14) {
+  const kept = state.marks.map((_, i) => i).filter(i => eraseMarks([state.marks[i]], points, radius + markStyleAt(state.markStyles, i).width / 2).length);
+  return { marks: kept.map(i => state.marks[i]), markStyles: kept.map(i => markStyleAt(state.markStyles, i)) };
+}
 /** Annotation marks (normalized) left after an eraser passes these canvas points: a mark within `radius` canvas pixels goes as a whole. */
 export function eraseMarks<T extends { x: number; y: number }[]>(marks: T[], points: { x: number; y: number }[], radius = 14, size = { w: 900, h: 600 }) {
   return marks.filter(mark => !mark.some(at => points.some(point => Math.hypot(at.x * size.w - point.x, at.y * size.h - point.y) < radius)));

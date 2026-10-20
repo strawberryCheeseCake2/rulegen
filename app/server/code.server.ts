@@ -4,7 +4,8 @@ import generateImport from "@babel/generator";
 import * as t from "@babel/types";
 const traverse = (traverseImport as unknown as { default?: typeof traverseImport }).default || traverseImport;
 const generate = (generateImport as unknown as { default?: typeof generateImport }).default || generateImport;
-export function prepareCode(source: string) {
+/** Generated code made safe to run: no browser globals or reflection, and every loop and function call counted by `__rulegenGuard`. */
+export function guardCode(source: string) {
   const ast = parse(source, { sourceType: "script" });
   const blocked = new Set(["window", "document", "fetch", "XMLHttpRequest", "WebSocket", "localStorage", "sessionStorage", "parent", "top", "opener", "location", "navigator", "eval", "Function", "importScripts", "setTimeout", "setInterval", "Worker", "globalThis", "constructor", "__proto__", "prototype"]);
   const reserved = new Set(["eval", "Function", "constructor", "__proto__", "prototype"]);
@@ -48,6 +49,16 @@ export function prepareCode(source: string) {
       else if (t.isArrowFunctionExpression(path.node)) path.node.body = t.blockStatement([guard(), t.returnStatement(path.node.body)]);
     },
   });
-  if (!/p\.setup\s*=/.test(source) || !source.includes("createCanvas")) throw new Error("p.setup과 p.createCanvas가 있는 p5 코드를 입력해주세요.");
   return generate(ast).code;
+}
+export function prepareCode(source: string) {
+  const code = guardCode(source);
+  if (!/p\.setup\s*=/.test(source) || !source.includes("createCanvas")) throw new Error("p.setup과 p.createCanvas가 있는 p5 코드를 입력해주세요.");
+  return code;
+}
+/** A direct manipulation widget: one `rulegenHandle(…)` registration, guarded like sketch code. */
+export function prepareHandle(source: string) {
+  if (!/rulegenHandle\s*\(/.test(source)) throw new Error("rulegenHandle(function (h) { … })로 widget을 등록해야 합니다.");
+  if (/createCanvas|p\.setup\s*=|p\.draw\s*=/.test(source)) throw new Error("widget은 캔버스를 만들거나 p.setup/p.draw를 바꾸지 않습니다.");
+  return guardCode(source);
 }

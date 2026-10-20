@@ -1,4 +1,5 @@
-import type { Algorithm, Effect, NodeState, NodeTransition, Property, ScalarValue, SceneNode, SemanticTransformation } from "../../lib/scene/schema";
+import type { Algorithm, Effect, NodeState, NodeTransition, Property, PropertyHandle, ScalarValue, SceneNode, SemanticTransformation } from "../../lib/scene/schema";
+import { handleFits, handleLeaves, type HandleTarget } from "../../lib/scene/handles";
 import { MAX_NODE_PROPERTIES, MAX_PROPERTIES, MAX_TRANSFORMATIONS } from "../../lib/scene/schema";
 import type { SlotChoice } from "../../lib/scene/panel-ops";
 import { useEffect, useState } from "react";
@@ -43,6 +44,14 @@ export type PropertyInspectorProps = {
   clipFor: (propertyId: string, path: string[]) => AlgorithmClip | null;
   onGenerateMachine: () => void;
   onRemoveMachine: () => void;
+  /** A property's direct manipulation handle changed (its hint) or removed (null). */
+  onHandle?: (propertyId: string, handle: PropertyHandle | null) => void;
+  /** AI makes the interface for one property, a transformation's properties, or (empty) every property of the node; `instruction` says how. */
+  onDesignHandles?: (target: HandleTarget, instruction?: string) => void;
+  /** Open (or create) this node's proxy frame, where its handles run. */
+  onOpenProxy?: () => void;
+  /** Runtime errors of handles in the proxy frame, by property id. */
+  handleErrors?: Record<string, string>;
 };
 
 const effects: Effect[] = ["spatial", "stylistic", "temporal"];
@@ -112,6 +121,31 @@ function NewSocket({ library, busy, onAdd, onDrop }: { library: Algorithm[]; bus
   </div>;
 }
 
+/** The property's direct manipulation interface: what it does, what it drives, its code, and how to change it with AI. */
+function HandleEditor({ property, props }: { property: Property; props: PropertyInspectorProps }) {
+  const handle = property.handle!, error = props.handleErrors?.[property.id], fits = handleFits(property);
+  const [instruction, setInstruction] = useState("");
+  const redesign = (text: string) => { props.onDesignHandles?.({ propertyId: property.id }, error ? fixInstruction(error, text) : text); setInstruction(""); };
+  return <div className={`handle-editor ${error || !fits ? "stale" : ""}`} role="group" aria-label={`${property.label} handle`}>
+    <div className="handle-editor-row">
+      <span className="handle-editor-kicker">◎ PROXY HANDLE</span>
+      <span className="handle-editor-drives" title="Scalars this interface drives">{handle.paths.map(path => path.join(" › ") || property.label).join(", ")}</span>
+      {props.onOpenProxy && <button type="button" title="Open the proxy frame where this handle runs" onClick={props.onOpenProxy}>Open proxy</button>}
+      <button type="button" className="remove-control" aria-label={`Remove ${property.label} handle`} title="Remove this handle" onClick={() => props.onHandle?.(property.id, null)}><Icon name="close" size={11} /></button>
+    </div>
+    <input aria-label={`${property.label} handle hint`} maxLength={120} placeholder="What the gesture does, e.g. 끌어서 가지를 벌리기" value={handle.hint} onChange={e => props.onHandle?.(property.id, { ...handle, hint: e.target.value })} />
+    {!fits && <p className="handle-editor-error">값의 구조가 바뀌어 이 handle이 조절하던 값이 없습니다. 다시 만들어주세요.</p>}
+    {error && <p className="handle-editor-error" role="alert">⚠ {error}</p>}
+    <form className="handle-editor-row" onSubmit={e => { e.preventDefault(); redesign(instruction); }}>
+      <input aria-label={`How to change the ${property.label} handle`} maxLength={600} placeholder="어떻게 바꿀지 (선택) 예: 꽃잎을 직접 잡아 돌리게" value={instruction} onChange={e => setInstruction(e.target.value)} />
+      <button type="submit" disabled={props.busy}><Icon name="spark" size={11} />{error || !fits ? "Fix with AI" : "Redesign"}</button>
+    </form>
+    <details className="handle-code"><summary>Widget code</summary><pre>{handle.code}</pre></details>
+  </div>;
+}
+// The fix request carries the error, so the model sees what went wrong.
+const fixInstruction = (error: string, instruction: string) => `${instruction.trim() ? `${instruction.trim()}\n` : ""}The current widget fails at runtime: ${error}. Fix it.`;
+
 function PropertyCard({ property, props, openMenu }: { property: Property; props: PropertyInspectorProps; openMenu: ReturnType<typeof useContextMenu>[1] }) {
   const { state, library } = props;
   return <article className={`property-card effect-${property.effect} ${props.highlightPropertyId === property.id ? "inspection-highlight" : ""}`} data-property-id={property.id}>
@@ -119,10 +153,12 @@ function PropertyCard({ property, props, openMenu }: { property: Property; props
       <input aria-label={`${property.label} property name`} maxLength={80} value={property.label} disabled={Boolean(state)} onChange={e => { if (e.target.value.trim()) props.onProperty(property.id, { label: e.target.value }); }} />
       <select className="effect-select" aria-label={`${property.label} effect`} value={property.effect} disabled={Boolean(state)} onChange={e => props.onProperty(property.id, { effect: e.target.value as Effect })}>{effects.map(effect => <option key={effect} value={effect}>{effect}</option>)}</select>
       {!state && <button className="subfeature-regenerate" aria-label={`Regenerate ${property.label}`} title="Regenerate this property with AI" onClick={() => props.onRegenerate({ propertyId: property.id })}><Icon name="spark" size={12} /></button>}
+      {!state && props.onDesignHandles && !property.handle && handleLeaves(property).length > 0 && <button className="subfeature-regenerate handle-create" aria-label={`Design a direct manipulation handle for ${property.label}`} title="AI makes a direct manipulation interface for this property (runs in the proxy frame)" disabled={props.busy} onClick={() => props.onDesignHandles!({ propertyId: property.id })}><Icon name="target" size={12} /></button>}
       {!state && <button className="remove-control" aria-label={`Delete ${property.label} property`} title="Delete property" onClick={() => props.onRemoveProperty(property.id)}><Icon name="close" size={13} /></button>}
     </div>
     {props.draft && sameTarget(props.draft.target, { propertyId: property.id }) && <RegenerateComposer props={props} what={property.label} />}
     {property.description && <p className="property-description">{property.description}</p>}
+    {property.handle && props.onHandle && !state && <HandleEditor property={property} props={props} />}
     <ValueSocket value={property.value} label={property.label} path={[]} library={library} clip={props.clip} allowSwap={!state} root openMenu={openMenu} clipFor={path => props.clipFor(property.id, path)}
       onScalar={(path, value) => props.onScalar(property.id, path, value)} onSwap={(path, choice) => props.onSwap(property.id, path, choice)}
       onCopy={path => props.onCopy(property.id, path)} onPaste={(path, dropped) => props.onPaste(property.id, path, dropped)} onMakePen={path => props.onMakePen(property.id, path)} />
@@ -146,6 +182,11 @@ function TransformationCard({ transformation, index, count, roomInNode, props, o
     {props.draft && sameTarget(props.draft.target, { transformationId: transformation.id }) && <RegenerateComposer props={props} what={name} />}
     {!state && props.onMinimalExample && <button className="minimal-example-button" disabled={busy || !transformation.properties.length} title="Open a new sketch frame that renders only this transformation, to try it in isolation"
       onClick={() => props.onMinimalExample!(transformation.id)}><Icon name="play" size={11} />Create Minimal Example</button>}
+    {!state && props.onDesignHandles && transformation.properties.some(property => handleLeaves(property).length > 0) && <div className="handle-actions" role="group" aria-label={`${name} direct manipulation handles`}>
+      <span><Icon name="target" size={11} />Proxy handles · {transformation.properties.filter(property => property.handle).length}/{transformation.properties.filter(property => handleLeaves(property).length > 0).length}</span>
+      <button type="button" disabled={busy} title="AI makes a direct manipulation interface for each property of this transformation" onClick={() => props.onDesignHandles!({ transformationId: transformation.id })}><Icon name="spark" size={11} />{transformation.properties.some(property => property.handle) ? "Redesign with AI" : "Design with AI"}</button>
+      {props.onOpenProxy && transformation.properties.some(property => property.handle) && <button type="button" onClick={props.onOpenProxy}>Open proxy</button>}
+    </div>}
     <textarea aria-label={`${name} transformation description`} maxLength={1000} rows={2} value={transformation.description} disabled={Boolean(state)} onChange={e => props.onTransformation(transformation.id, { description: e.target.value })} />
     <fieldset disabled={busy} className="property-list">
       {transformation.properties.map(property => <PropertyCard key={property.id} property={property} props={props} openMenu={openMenu} />)}
@@ -180,6 +221,7 @@ export function PropertyInspector(props: PropertyInspectorProps) {
       {canStack && <button className="alternative-button" disabled={busy} onClick={() => props.onRegenerate({})}><Icon name="spark" size={14} />Add transformation with AI</button>}
       <button className="alternative-button" disabled={busy} onClick={props.onGenerateMachine}><Icon name="grid" size={14} />{node.machine ? "Refine state machine" : "Generate state machine"}</button>
       {node.machine && <button className="copy-button" disabled={busy} onClick={props.onRemoveMachine}>Remove state machine</button>}
+      {props.onOpenProxy && <button className="alternative-button" onClick={props.onOpenProxy} title="A frame beside this one with a direct manipulation interface for each property; using it changes this node live"><Icon name="target" size={14} />Open proxy frame</button>}
     </div>
   </div>;
 }

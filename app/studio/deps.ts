@@ -40,6 +40,8 @@ export type StudioDeps = {
   addSubBrush?: (owner: string, nodeId: string, frameId: string, scene: Scene, name: string) => Brush | null;
   /** The running result of a frame, if it is mounted. */
   preview: (owner: string) => CodePreviewHandle | undefined;
+  /** Show (creating if needed) the proxy frame of node `nodeId` of frame `owner`. */
+  openProxy?: (owner: string, nodeId: string) => void;
   /** Save the code module of each brush that comes from this frame. */
   refreshBrushCode?: (frameId: string, code: string) => void;
 };

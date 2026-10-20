@@ -4,19 +4,22 @@ import { pointSchema, imageSchema, semanticPenSchema, type Stroke } from "./sche
 import { createInteractionPen } from "./algorithm-pens";
 import { ensureFramePositions, workspaceSchema } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
+import { MAX_PROXY_FRAMES, proxyFrameSchema } from "./proxy-frames";
 const strokeSchema = z.object({ points: z.array(pointSchema).max(6000), color: z.string(), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), tool: z.enum(["pen", "eraser"]), semanticPen: semanticPenSchema.optional() });
 const artworkSchema = z.object({ strokes: z.array(strokeSchema).max(500), photo: imageSchema.nullable(), name: z.string(), revision: z.number() });
 export const sketchFrameSchema = z.object({ id: z.string().regex(/^sketch-[a-zA-Z0-9-]+$/).max(80), artwork: artworkSchema });
 export type SketchFrame = z.infer<typeof sketchFrameSchema>;
-export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(24).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
+export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(24).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), proxyFrames: z.array(proxyFrameSchema).max(MAX_PROXY_FRAMES).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
   const ids = project.sketchFrames.map(f => f.id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "스케치 프레임 ID와 위치를 확인해주세요." });
   if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Interaction pen을 확인해주세요." });
 }).transform(project => {
   const ids = ["source", ...project.sketchFrames.map(f => f.id)];
   const sketchPanels = Object.fromEntries(ids.map(id => [id, project.sketchPanels[id] || sketchPanelSchema.parse({})]));
-  return { ...project, sketchPanels, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
-    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(project.workspace.frames, ids) } };
+  // A proxy frame goes with its target frame.
+  const proxyFrames = [...new Map(project.proxyFrames.filter(frame => ids.includes(frame.targetFrameId)).map(frame => [frame.id, frame])).values()];
+  return { ...project, sketchPanels, proxyFrames, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
+    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(project.workspace.frames, [...ids, ...proxyFrames.map(frame => frame.id)]) } };
 });
 export function exampleStrokes(): Stroke[] {
   const strokes: Stroke[] = [];

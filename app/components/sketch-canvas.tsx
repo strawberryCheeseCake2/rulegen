@@ -8,7 +8,9 @@ type Props = { artwork: Artwork; tool: string; color: string; width: number; opa
   /** Live progress of a gesture (canvas pixels), before onGesture reports the whole path. */
   onGestureStep?: (tool: string, point: { x: number; y: number }, phase: "start" | "move") => void;
   /** Whether a gesture draws its path while it is made (default yes). */
-  showGesture?: (tool: string) => boolean };
+  showGesture?: (tool: string) => boolean;
+  /** The stroke style of the gesture path while drawing with a tool (none: the default dashed path). */
+  gestureStyle?: (tool: string) => { color: string; width: number; opacity: number } | undefined };
 export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanvas(props, ref) {
   const host = useRef<HTMLDivElement>(null), surface = useRef<HTMLDivElement>(null), instance = useRef<P5 | null>(null);
   const current = useRef(props); current.current = props;
@@ -111,7 +113,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     active.last = point; instance.current?.redraw();
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div ref={host} className="p5-host" />
-    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{gesturePath.length > 0 && (props.showGesture?.(props.tool) ?? true) && <polyline className="gesture-path" points={gesturePath.map(p => `${p.x},${p.y}`).join(" ")} />}{props.children}</g></svg>
+    <svg className="artwork-overlay" viewBox={`0 0 ${W} ${H}`}><g transform={`translate(${props.viewport.x} ${props.viewport.y}) scale(${props.viewport.zoom})`}>{selection.length > 1 && <polygon className="lasso-region" points={selection.map(p => `${p.x},${p.y}`).join(" ")} />}{gesturePath.length > 0 && (props.showGesture?.(props.tool) ?? true) && <polyline className="gesture-path" points={gesturePath.map(p => `${p.x},${p.y}`).join(" ")} style={(style => style ? { stroke: style.color, strokeWidth: style.width, opacity: style.opacity, strokeDasharray: "none" } : undefined)(props.gestureStyle?.(props.tool))} />}{props.children}</g></svg>
     {!ready && <div className="engine-loading">Loading p5.js…</div>}
   </div>;
 });

@@ -70,6 +70,8 @@ export function ToolRail(props: Props) {
             aria-pressed={inGroup} aria-expanded={open} onClick={() => props.onBrushGroup?.(brush.id)}><Icon name={info.icon} size={18} /><span className="semantic-pen-dot" style={{ background: brush.color }} /><span className="brush-group-corner" /></button>
           {open && <div className="pencil-popover brush-group-popover" role="group" aria-label={`${brush.name} brush tools`}>
             <div className="pencil-popover-heading"><span><i className="brush-swatch" style={{ background: brush.color }} />{brush.name}</span><button aria-label="Close brush tools" onClick={props.onBrushGroupClose}><Icon name="close" size={14} /></button></div>
+            {/* The panel keeps one height; its tools scroll (targeted tools and sub brushes can be many). */}
+            <div className="brush-group-body">
             <div className="brush-group-tools">{BRUSH_TOOLS.map(tool => {
               const active = own && selected!.kind === tool;
               return <button key={tool} className={active ? "active" : ""} aria-pressed={active} title={BRUSH_TOOL_INFO[tool].hint} onClick={() => props.onBrushTool?.(brush.id, brushTool(tool, brush.id))}><Icon name={BRUSH_TOOL_INFO[tool].icon} size={15} /><span>{BRUSH_TOOL_INFO[tool].label}</span></button>;
@@ -94,6 +96,7 @@ export function ToolRail(props: Props) {
                 {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">Master가 있던 프레임이 삭제되었습니다. Instance에서 Make master로 지정할 수 있습니다.</span>}</div>; })()}
             <label className="brush-name-field"><span>Name</span><input maxLength={100} value={brush.name} onChange={e => { if (e.target.value.trim()) props.onBrushChange?.({ ...brush, name: e.target.value }); }} /></label>
             {props.onBrushRemove && <button className="brush-remove" onClick={() => props.onBrushRemove!(brush)}><Icon name="trash" size={13} />Remove brush</button>}
+            </div>
           </div>}
         </div>;
       })}</div>}

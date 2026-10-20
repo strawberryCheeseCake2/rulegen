@@ -1,3 +1,4 @@
+import { keepHandles } from "./handles";
 import type { ResultAnnotation } from "../schema";
 import type { Scene } from "./schema";
 import { describeValue } from "./values";
@@ -37,7 +38,7 @@ export function sceneChanges(before: Scene, after: Scene): SceneChange[] {
 
 /** Retained nodes keep their sketch regions: they locate evidence in the original drawing. */
 export function settleProposal(current: Scene, proposed: Scene): Scene {
-  return { ...proposed, nodes: proposed.nodes.map(node => { const old = current.nodes.find(item => item.id === node.id); return old ? { ...node, region: old.region } : node; }) };
+  return { ...proposed, nodes: proposed.nodes.map(node => { const old = current.nodes.find(item => item.id === node.id); return old ? keepHandles(old, { ...node, region: old.region }) : node; }) };
 }
 export function validateSceneProposal(current: Scene, proposed: Scene) {
   if (!sceneChanges(current, proposed).length) throw new Error("실제 변경 제안이 없습니다. 수정 요청을 구체적으로 입력해주세요.");

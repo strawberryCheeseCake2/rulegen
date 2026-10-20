@@ -53,7 +53,8 @@ export async function runAI(input: z.infer<typeof requestSchema>, signal: AbortS
 
 function userContent(input: AIInput) {
   const intent = intents[input.intent as keyof typeof intents];
-  const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input)) }];
+  // Properties' direct manipulation widgets are UI: their code never goes to the model with the scene.
+  const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input), (key, value) => key === "handle" && value && typeof value === "object" && "prepared" in value ? undefined : value) }];
   if (input.intent === "clarification" && input.resultImage) content.push({ type: "input_text", text: "Clean generated result before annotation:" }, { type: "input_image", image_url: input.resultImage, detail: "high" }, { type: "input_text", text: "Same result with the user's coral annotation sketch:" });
   if (input.image) content.push({ type: "input_image", image_url: input.image, detail: "high" });
   if (input.intent === "machine-refine" && input.machineImage) content.push({ type: "input_text", text: "The target node's state machine graph as the user sees it (attached item outlined in orange, the user's annotation strokes in coral):" }, { type: "input_image", image_url: input.machineImage, detail: "high" });

@@ -1,5 +1,5 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
-import { changedKeys, constraintRows, recommendationTransformations, formatScalar, MAX_STEPS, type InspectionFocus, type InspectionState, type InspectResult } from "../lib/inspection";
+import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import type { Scene } from "../lib/scene/schema";
 import { useRef, useState } from "react";
@@ -16,7 +16,8 @@ type Props = {
   onFocus: (focus: InspectionFocus | null) => void; onConcern: (text: string) => void; onClearMarks: () => void;
   /** Inspection annotation: make a new targeted tool from the annotation and concern. Targeted: run its concern again. */
   onInspect: () => void;
-  onApplyChanges: (changes: Change[]) => void; onApplyRecommendation: (recommendation: InspectResult["recommendations"][number]) => void;
+  onApplyChanges: (changes: Change[]) => void; /** Apply a recommendation as it reads now (an added transformation is that transformation); `index` in the list, `listed` as stored. */
+  onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
   /** Switch to another tool of the group (a toolbar tool id). */
   onTool: (toolId: string) => void;
   /** Recommendations applied in this frame (newest last), undone ones to redo, and whether the frame is still as each left it. */
@@ -24,8 +25,12 @@ type Props = {
   onUndoApplied?: () => void; onRedoApplied?: () => void;
   /** Inspection annotation: drawing (false) or erasing marks (true). */
   eraser?: boolean; onEraser?: (on: boolean) => void;
+  /** The pen the next marks are drawn with. */
+  pen?: MarkStyle; onPen?: (pen: MarkStyle) => void;
+  /** Autocomplete: concerns AI suggested from the inspection annotation (and the typed start), asked with onSuggest; the first that continues the text is shown as its completion (Tab). */
+  suggestions?: { items: string[]; loading: boolean; error: string }; onSuggest?: () => void;
   /** Which recommendation an applied entry was (its key). */
-  recommendationKey?: (item: InspectResult["recommendations"][number]) => string;
+  recommendationKey?: (item: Recommendation) => string;
 };
 
 const sameFocus = (a: InspectionFocus | null, b: InspectionFocus) => Boolean(a && a.kind === b.kind && a.nodeId === b.nodeId && a.id === b.id);
@@ -82,6 +87,19 @@ function StepTimeline({ steps, cursor, label, onCursor }: { steps: Step[]; curso
   </div>;
 }
 
+/** Color, width and opacity of the inspection annotation pen, with a preview of the stroke. */
+function MarkPen({ pen, onPen }: { pen: MarkStyle; onPen: (pen: MarkStyle) => void }) {
+  return <div className="inspection-pen" role="group" aria-label="Inspection annotation pen">
+    <div className="inspection-pen-colors">
+      {MARK_COLORS.map(color => <button key={color} type="button" aria-label={`Pen color ${color}`} aria-pressed={pen.color.toLowerCase() === color} className={pen.color.toLowerCase() === color ? "active" : ""} style={{ background: color }} onClick={() => onPen({ ...pen, color })} />)}
+      <label className="inspection-pen-custom" title="Other color"><input type="color" aria-label="Pen color" value={pen.color} onChange={e => onPen({ ...pen, color: e.target.value })} /></label>
+      <svg className="inspection-pen-preview" viewBox="0 0 60 24" aria-hidden="true"><path d="M4 16C16 4 26 22 38 10S52 8 56 12" style={{ stroke: pen.color, strokeWidth: Math.min(16, pen.width * .8), opacity: pen.opacity }} /></svg>
+    </div>
+    <label><span>굵기</span><input type="range" aria-label="Pen width" min={1} max={30} step={1} value={pen.width} onChange={e => onPen({ ...pen, width: e.currentTarget.valueAsNumber })} /><b>{pen.width}px</b></label>
+    <label><span>투명도</span><input type="range" aria-label="Pen opacity" min={10} max={100} step={5} value={Math.round(pen.opacity * 100)} onChange={e => onPen({ ...pen, opacity: e.currentTarget.valueAsNumber / 100 })} /><b>{Math.round(pen.opacity * 100)}%</b></label>
+  </div>;
+}
+
 /**
  * Inspection of one brush: step through the recorded states and transitions
  * (up to MAX_STEPS) and see every constraint value change. With the inspection
@@ -113,7 +131,7 @@ export function InspectionPanel(props: Props) {
   };
   const result = targeted?.result ?? null;
   /** The node and part a recommendation changes, named as the user sees them. */
-  const recommendationTargets = (item: InspectResult["recommendations"][number]): { node: string; label: string; focus: InspectionFocus }[] => {
+  const recommendationTargets = (item: Recommendation): { node: string; label: string; focus: InspectionFocus }[] => {
     if (item.kind === "value") return item.changes.flatMap(change => {
       const row = rows.find(entry => entry.key === change.key); if (!row) return [];
       return [{ node: row.node, label: `${row.transformation ? `${row.transformation} · ` : ""}${row.property}${row.path ? ` › ${row.path}` : ""}`, focus: { kind: "constraint" as const, nodeId: row.binding.nodeId, id: row.binding.path[0] } }];
@@ -171,18 +189,39 @@ export function InspectionPanel(props: Props) {
         </div>}
         {annotating && <form className="inspection-concern" onSubmit={e => { e.preventDefault(); props.onInspect(); }}>
           <span className="section-kicker">INSPECTION ANNOTATION</span>
-          <span className="inspection-muted">프레임에 보라색으로 알고 싶은 곳을 표시하고(동그라미·메모) concern을 적으면, 그 concern 전용 Targeted inspection 도구가 이 brush 그룹에 생깁니다.</span>
+          <span className="inspection-muted">프레임에 알고 싶은 곳을 표시하고(동그라미·메모) concern을 적으면, 그 concern 전용 Targeted inspection 도구가 이 brush 그룹에 생깁니다.</span>
           {props.onEraser && <div className="inspection-draw-mode" role="radiogroup" aria-label="Inspection annotation mode">
             <button type="button" role="radio" aria-checked={!props.eraser} className={!props.eraser ? "active" : ""} onClick={() => props.onEraser!(false)}><Icon name="inspect-pen" size={12} />Pen</button>
             <button type="button" role="radio" aria-checked={Boolean(props.eraser)} className={props.eraser ? "active" : ""} title="Drag over marks on the frame to erase them (E)" onClick={() => props.onEraser!(true)}><Icon name="eraser" size={12} />Eraser</button>
             {props.eraser && <span className="inspection-muted">프레임에서 지울 자국 위를 문지르세요.</span>}</div>}
+          {props.pen && props.onPen && !props.eraser && <MarkPen pen={props.pen} onPen={props.onPen} />}
           <div className="inspection-chips">
             {state.marks.length > 0 ? <span className="machine-attachment machine-attachment-annotation inspection-mark-chip"><Icon name="inspect-pen" size={12} /><b>Inspection annotation</b>{state.marks.length}획 첨부됨
               <button type="button" aria-label="Clear inspection annotation" onClick={props.onClearMarks}><Icon name="close" size={11} /></button></span>
               : <span className="inspection-muted">아직 annotation이 없습니다.</span>}
           </div>
-          <textarea aria-label="Concern" rows={2} maxLength={2000} value={state.concern} placeholder="예: 별 크기가 단계마다 어떻게 바뀌는지 알고 싶어" onChange={e => props.onConcern(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); props.onInspect(); } }} />
+          {(() => {
+            // The typed text, then (in grey) how the best suggestion completes it; Tab takes it.
+            const items = props.suggestions?.items ?? [], completion = items.map(item => concernCompletion(state.concern, item)).find(Boolean) ?? "";
+            const placeholder = !state.concern && items[0] ? items[0] : "예: 별 크기가 단계마다 어떻게 바뀌는지 알고 싶어";
+            return <>
+              <div className="concern-input">
+                <div className="concern-ghost" aria-hidden="true"><span className="concern-typed">{state.concern}</span><span className="concern-rest">{completion}</span></div>
+                <textarea aria-label="Concern" rows={2} maxLength={2000} value={state.concern} placeholder={placeholder} onChange={e => props.onConcern(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Tab" && !e.shiftKey && (completion || (!state.concern && items[0]))) { e.preventDefault(); props.onConcern(completion ? state.concern + completion : items[0]); return; }
+                    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); props.onInspect(); }
+                  }} />
+              </div>
+              {props.suggestions && props.onSuggest && <div className="concern-suggestions" aria-label="Suggested concerns">
+                <span className="concern-suggestions-head">
+                  <button type="button" className="concern-autocomplete" disabled={busy || props.suggestions.loading || !(state.marks.length || state.concern.trim())} title="AI reads the inspection annotation (and what you typed) and suggests concerns" onClick={props.onSuggest}>
+                    <Icon name="spark" size={11} />{props.suggestions.loading ? "Autocompleting…" : "Autocomplete"}</button>
+                  {!props.suggestions.loading && (items.length ? (completion || (!state.concern && items[0])) && <span><kbd>Tab</kbd> 으로 넣기</span> : props.suggestions.error && <span>{props.suggestions.error}</span>)}</span>
+                {items.map(item => <button type="button" key={item} className={`concern-suggestion ${item === state.concern ? "chosen" : ""}`} onClick={() => props.onConcern(item)}>{item}</button>)}
+              </div>}
+            </>;
+          })()}
           <button type="submit" className="primary" disabled={busy || !(state.concern.trim() || state.marks.length)}><Icon name="target" size={13} />{busy ? "Creating…" : "Create targeted inspection"}</button>
         </form>}
         {targeted && <div className="inspection-concern">
@@ -211,13 +250,17 @@ export function InspectionPanel(props: Props) {
                   onClick={() => props.applied!.undoClean ? props.onUndoApplied?.() : setConfirmStep("undo")}><Icon name="undo" size={12} />Undo apply</button>
                 <button disabled={busy || !props.applied.future.length} title={props.applied.future.length ? `Redo 「${props.applied.future.at(-1)!.title}」` : "Nothing to redo"}
                   onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>)}</div>
-            {result.recommendations.map((item, i) => <div key={i} className={`inspection-recommendation ${props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) ? "applied" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? "Transformation" : item.kind === "add-transformation" ? "새 Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
+            {result.recommendations.map((listed, i) => {
+              // A new transformation it already added reads as that transformation (back to "new" if it is undone).
+              const item = currentRecommendation(listed, scene), added = item !== listed, applied = props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(listed));
+              return <div key={i} className={`inspection-recommendation ${applied ? "applied" : ""} ${added ? "added" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? (added ? "Transformation · 추가됨" : "Transformation") : item.kind === "add-transformation" ? "새 Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
               {/* What it changes: click to highlight it (the transformation card, the property, or the state/transition in the graph). */}
               <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
                 aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
               <span>{item.detail}</span>
-              <button disabled={busy} onClick={() => props.onApplyRecommendation(item)}>{item.kind === "value" ? "Apply values" : item.kind === "add-transformation" ? "Add with AI" : "Apply with AI"}</button>
-              {props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(item)) && <small className="inspection-applied-mark">✓ 적용됨 · Undo apply로 되돌릴 수 있습니다</small>}</div>)}
+              <button disabled={busy} title={added ? "Refine the transformation this recommendation added" : undefined} onClick={() => props.onApplyRecommendation(item, i, listed)}>{item.kind === "value" ? "Apply values" : item.kind === "add-transformation" ? "Add with AI" : "Apply with AI"}</button>
+              {applied && <small className="inspection-applied-mark">✓ 적용됨{added ? " · 위 transformation으로 추가되었습니다" : ""} · Undo apply로 되돌릴 수 있습니다</small>}</div>;
+            })}
           </div>}
         </div>}
       </section>

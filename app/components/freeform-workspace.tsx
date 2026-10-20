@@ -1,9 +1,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
-import { ensureFramePositions, fitFrames, zoomAt, type FrameId, type WorkspaceLayout } from "../lib/workspace";
+import { ensureFramePositions, fitFrames, FRAME_HEIGHT, FRAME_WIDTH, zoomAt, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { Icon } from "./icons";
 export type WorkspaceHandle = { fit: () => void; focus: (id: FrameId) => void; zoom: (amount: number) => void };
 type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode };
-type Props = { layout: WorkspaceLayout; onChange: (layout: WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void };
+/** A relation drawn between two frames (a proxy frame → the frame it controls). */
+export type FrameLink = { from: FrameId; to: FrameId; label: string };
+type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; onChange: (layout: WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void };
 export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function FreeformWorkspace(props, ref) {
   const positions = ensureFramePositions(props.layout.frames, props.frames.map(f => f.id));
   const layout = positions === props.layout.frames ? props.layout : { ...props.layout, frames: positions };
@@ -41,8 +43,19 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
     d.x = e.clientX; d.y = e.clientY;
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div className="board-top-hint"><span className="eyebrow">FREEFORM WORKSPACE</span><span>Sketch → features → a new frame</span></div>
-    <div className="world-layer" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>{props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.activeFrame ? "active-frame" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}</div>
-    {props.frames.map(f => <div key={f.id} className={`world-frame-header ${f.id === props.activeFrame ? "active-frame-header" : ""}`} data-frame-handle={f.id} style={{ left: camera.x + positions[f.id].x * camera.zoom, top: camera.y + positions[f.id].y * camera.zoom - 35, width: 900 * camera.zoom }}><div><strong>{f.title}</strong><span>{f.subtitle}</span></div><div className="frame-actions">{f.actions}{props.onDeleteFrame && <button className="delete-frame-button" aria-label={`Delete ${f.title} frame`} title="Delete frame" disabled={props.deleteDisabled} onClick={e => { e.stopPropagation(); props.onDeleteFrame?.(f.id); }}><Icon name="trash" size={13} /></button>}<button aria-label={`Focus ${f.title} frame`} title="Focus frame" onClick={e => { e.stopPropagation(); props.onActivateFrame?.(f.id); fit([f.id]); }}><Icon name="grid" size={13} /></button></div></div>)}
+    <div className="world-layer" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
+      {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
+      {props.links && props.links.length > 0 && <svg className="frame-links" aria-hidden="true"><defs><marker id="frame-link-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" /></marker></defs>
+        {props.links.filter(link => positions[link.from] && positions[link.to]).map(link => {
+          // From the side of one frame that faces the other, to the facing side of the other.
+          const a = positions[link.from], b = positions[link.to], right = b.x >= a.x;
+          const x1 = right ? a.x + FRAME_WIDTH : a.x, y1 = a.y + FRAME_HEIGHT / 2, x2 = right ? b.x : b.x + FRAME_WIDTH, y2 = b.y + FRAME_HEIGHT / 2, bend = Math.max(60, Math.abs(x2 - x1) / 2) * (right ? 1 : -1);
+          const on = props.highlight === link.to || props.highlight === link.from;
+          return <g key={`${link.from}-${link.to}`} className={`frame-link ${on ? "highlighted" : ""}`}>
+            <path d={`M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`} markerEnd="url(#frame-link-arrow)" />
+            <text x={(x1 + x2) / 2} y={(y1 + y2) / 2 - 14} textAnchor="middle">{link.label}</text></g>;
+        })}</svg>}</div>
+    {props.frames.map(f => <div key={f.id} className={`world-frame-header ${f.id === props.activeFrame ? "active-frame-header" : ""} ${f.id === props.highlight ? "link-highlight-header" : ""}`} data-frame-handle={f.id} style={{ left: camera.x + positions[f.id].x * camera.zoom, top: camera.y + positions[f.id].y * camera.zoom - 35, width: 900 * camera.zoom }}><div><strong>{f.title}</strong><span>{f.subtitle}</span></div><div className="frame-actions">{f.actions}{props.onDeleteFrame && <button className="delete-frame-button" aria-label={`Delete ${f.title} frame`} title="Delete frame" disabled={props.deleteDisabled} onClick={e => { e.stopPropagation(); props.onDeleteFrame?.(f.id); }}><Icon name="trash" size={13} /></button>}<button aria-label={`Focus ${f.title} frame`} title="Focus frame" onClick={e => { e.stopPropagation(); props.onActivateFrame?.(f.id); fit([f.id]); }}><Icon name="grid" size={13} /></button></div></div>)}
     <div className="board-bottom-hint"><span>Space + drag to pan · ⌘ / Ctrl + scroll to zoom</span><button onClick={e => { e.stopPropagation(); fit(); }}>Fit frames <Icon name="grid" size={12} /></button></div>
   </div>;
 });

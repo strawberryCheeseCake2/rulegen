@@ -225,6 +225,66 @@ test("targeted overlays are rules over the history: each step recomputes them fr
   assert.equal(evaluate("if(3 > 2, 7, 9) + !0", {}), 8);
 });
 
+test("overlays can sit on drawn items: a point list reads as its box, the input history is readable, and AI gets item boxes instead of raw points", async () => {
+  const { runtimeForAI, stepContext, pointsBox, INPUT_ROOT } = await import("../app/lib/inspection");
+  const outline = (x: number, y: number) => Array.from({ length: 40 }, (_, i) => ({ x: x + 30 + 30 * Math.cos(i / 40 * Math.PI * 2), y: y + 20 + 20 * Math.sin(i / 40 * Math.PI * 2) }));
+  const polygons = [outline(100, 300), outline(140, 300), outline(180, 300)];
+  const gesture = { points: [{ x: 100, y: 320, t: 0 }, { x: 160, y: 330, t: 40 }, { x: 240, y: 318, t: 90 }], done: true };
+  const steps = [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { "bush/spacing": 40 }, runtime: { states: {}, stores: { bush: { polygons } }, history: [gesture] } }];
+  assert.deepEqual(pointsBox(polygons[0]), { "@x": 100, "@y": 300, "@w": 60, "@h": 40, "@cx": 130, "@cy": 320, "@n": 40 });
+  // One rectangle around each drawn bush, wherever it is (not at a fixed spot).
+  const overlay = { id: "each-bush", kind: "rect" as const, name: "", x: "item(\"@x\")", y: "item(\"@y\")", w: "item(\"@w\")", h: "item(\"@h\")", label: "", color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "spacing" }, when: "", each: "bush:polygons" };
+  assert.deepEqual(placeOverlays([overlay], stepContext(steps, 0)).map(item => [item.x, item.y, item.w, item.h]), [[100, 300, 60, 40], [140, 300, 60, 40], [180, 300, 60, 40]]);
+  const gap = evaluate("s(\"bush\", \"polygons.1.@cx\") - s(\"bush\", \"polygons.0.@cx\")", stepContext(steps, 0));
+  assert.equal(gap, 40, "the gap between two items");
+  assert.equal(evaluate(`s("${INPUT_ROOT}", "0.points.@w")`, stepContext(steps, 0)), 140, "the recorded drag path");
+  assert.equal(placeOverlays([{ ...overlay, x: "item(\"points.@x\")", y: "item(\"points.@y\")", w: "item(\"points.@w\")", h: "item(\"points.@h\")", each: `${INPUT_ROOT}:` }], stepContext(steps, 0)).length, 1);
+  // AI sees where each item is (a box) and the input, small.
+  const sent = runtimeForAI(steps[0] as never, ["bush"]) as { stores: Record<string, unknown> };
+  assert.deepEqual((sent.stores.bush as { polygons: unknown[] }).polygons[0], { "@x": 100, "@y": 300, "@w": 60, "@h": 40, "@cx": 130, "@cy": 320, "@n": 40, "@points": "…" });
+  assert.ok(INPUT_ROOT in sent.stores, "the input history goes too");
+  assert.ok(JSON.stringify(sent).length < 1200);
+  assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:` }], valueFixes: [], recommendations: [] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
+});
+
+test("Autocomplete: on request, AI reads the inspection annotation and suggests concerns; one that continues the typed text completes it with Tab", async () => {
+  const { concernCompletion } = await import("../app/lib/inspection");
+  const scene = sampleScene(), [brush] = makeBrushes(scene);
+  const marks = [[{ x: .4, y: .2 }, { x: .5, y: .3 }]];
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks, constraints: [], steps: [], markStyles: [{ color: "#e0457b", width: 12, opacity: .6 }] };
+  const output = { suggestions: ["가지 끝이 왜 겹치는지 궁금해", "가지 끝 간격이 단계마다 어떻게 바뀌는지 알고 싶어", "가지 끝 간격이 단계마다 어떻게 바뀌는지 알고 싶어"] };
+  await withMockedAI(() => output, async calls => {
+    const result = await runAI(requestSchema.parse({ intent: "concern", scene, image: "data:image/png;base64,AAAA", instruction: "가지 끝 간격이", inspection }), new AbortController().signal) as { suggestions: string[] };
+    assert.deepEqual(result.suggestions, ["가지 끝 간격이 단계마다 어떻게 바뀌는지 알고 싶어", "가지 끝이 왜 겹치는지 궁금해"], "distinct, the one continuing the typed text first");
+    const context = JSON.parse(calls[0].input[0].content[0].text);
+    assert.equal(context.typed, "가지 끝 간격이"); assert.deepEqual(context.annotationMarks, marks); assert.equal(context.annotationMarkStyles[0].color, "#e0457b");
+    assert.deepEqual(context.brushNodes.map((node: { name: string }) => node.name), scene.nodes.map(node => node.name));
+    assert.ok(context.brushNodes[0].transformations[0].properties[0].label, "named in the user's terms");
+    assert.doesNotMatch(JSON.stringify(context), /"value":/, "no values or code: only what the marked things are");
+    assert.match(calls[0].instructions, /reusable tool for one concern/);
+  });
+  await withMockedAI(() => output, async calls => {
+    await assert.rejects(runAI(requestSchema.parse({ intent: "concern", scene, inspection: { ...inspection, marks: [] } }), new AbortController().signal), /Inspection annotation/);
+    assert.equal(calls.length, 0, "nothing to read: no AI call");
+  });
+  assert.equal(concernCompletion("가지 끝 간격이", "가지 끝 간격이 단계마다 바뀌나요"), " 단계마다 바뀌나요");
+  assert.equal(concernCompletion("", "가지"), ""); assert.equal(concernCompletion("나무", "가지 끝"), "");
+  const props = { brush, kind: "inspect-annotate", scene, nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), marks, concern: "가지 끝 간격이" }, busy: false, running: true,
+    suggestions: { items: ["가지 끝 간격이 단계마다 바뀌나요", "가지 끝이 왜 겹치는지 궁금해"], loading: false, error: "" }, onSuggest: noop,
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, props as never));
+  assert.match(html, /<span class="concern-typed">가지 끝 간격이<\/span><span class="concern-rest"> 단계마다 바뀌나요<\/span>/, "the completion in grey after the typed text");
+  assert.match(html, /<kbd>Tab<\/kbd>/); assert.match(html, /class="concern-suggestion ">가지 끝이 왜 겹치는지 궁금해<\/button>/);
+  assert.match(html, /class="concern-autocomplete"[^>]*>.*?Autocomplete<\/button>/, "suggestions come only from the Autocomplete button");
+  assert.doesNotMatch(html, /type="checkbox"/, "no automatic suggesting");
+  const loading = renderToStaticMarkup(createElement(InspectionPanel, { ...props, suggestions: { items: [], loading: true, error: "" } } as never));
+  assert.match(loading, /disabled=""[^>]*>.*?Autocompleting…/);
+  const nothing = renderToStaticMarkup(createElement(InspectionPanel, { ...props, state: { ...props.state, marks: [], concern: "" }, suggestions: { items: [], loading: false, error: "" } } as never));
+  assert.match(nothing, /class="concern-autocomplete" disabled=""/, "nothing marked or typed: nothing to read");
+  const empty = renderToStaticMarkup(createElement(InspectionPanel, { ...props, state: { ...props.state, concern: "" } } as never));
+  assert.match(empty, /placeholder="가지 끝 간격이 단계마다 바뀌나요"/, "with nothing typed the best suggestion shows as the placeholder (Tab takes it)");
+});
+
 test("overlay labels never overlap: each takes the first free spot beside its shape, else farther away with a leader, else none", () => {
   const shape = { x: 100, y: 100, w: 40, h: 40 };
   const labels = layoutLabels(Array.from({ length: 6 }, (_, i) => ({ key: `k${i}`, text: `크기 ${i}px`, anchor: { x: 100, y: 96 }, shape })), 12);
@@ -327,4 +387,71 @@ test("a recommendation can add a new transformation instead of forcing an unrela
   assert.match(html, /<em>새 Transformation<\/em>꼬리 추가/);
   assert.match(html, /<span>Orb<\/span><b>\+ 새 transformation<\/b>/);
   assert.match(html, />Add with AI<\/button>/);
+});
+
+test("an applied new-transformation recommendation reads as the transformation it added, and the overlays are rebuilt for it", async () => {
+  const { currentRecommendation, targetedResultSchema } = await import("../app/lib/inspection");
+  const { targetedToolSchema } = await import("../app/lib/brushes");
+  const scene = sampleScene(), [brush] = makeBrushes(scene), orb = scene.nodes.find(node => node.id === "orb")!, added = orb.transformations[0];
+  const listed = { kind: "add-transformation" as const, nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [], addedId: added.id };
+  // Stored tools from before keep parsing; addedId survives storage and the id translation between frames.
+  assert.equal(targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: [], result: { summary: "s", overlays: [], valueFixes: [], recommendations: [{ ...listed, addedId: undefined }] } }).result.recommendations[0].addedId, undefined);
+  const stored = targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [listed] });
+  assert.equal(remapResult(stored, new Map([["orb", "orb-2"]])).recommendations[0].addedId, added.id);
+  assert.deepEqual(currentRecommendation(stored.recommendations[0], scene), { ...listed, kind: "transformation", targetId: added.id, targetIds: [] });
+  const undone = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, transformations: node.transformations.slice(1) } : node) };
+  assert.equal(currentRecommendation(stored.recommendations[0], undone).kind, "add-transformation", "undone: it is a new transformation again");
+  const tool = { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: stored };
+  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, recommendationKey: (item: { kind: string; title: string }) => `${item.kind}:${item.title}`,
+    applied: { past: [{ id: "a", title: "꼬리 추가", key: "add-transformation:꼬리 추가" }], future: [], undoClean: true, redoClean: false },
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene } as never));
+  assert.match(html, /<em>Transformation · 추가됨<\/em>꼬리 추가/);
+  assert.match(html, new RegExp(`<span>Orb</span><b>${added.label}</b>`), "its chip is the added transformation");
+  assert.match(html, />Apply with AI<\/button>/); assert.match(html, /✓ 적용됨 · 위 transformation으로 추가되었습니다/, "still marked as applied");
+  assert.match(renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene: undone } as never)), /<em>새 Transformation<\/em>꼬리 추가/);
+  // Rebuilding the overlays: AI gets what was applied and the overlays so far.
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints: [], steps: [],
+    update: { title: "꼬리 추가", detail: "d", nodeId: "orb", transformationId: added.id, summary: "전", overlays: [{ id: "size", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "constraint", nodeId: "orb", id: "radius" } }] } };
+  await withMockedAI(() => ({ summary: "후", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+    await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "꼬리가 궁금해", inspection }), new AbortController().signal);
+    const context = JSON.parse(calls[0].input[0].content[0].text);
+    assert.deepEqual(context.appliedRecommendation, { title: "꼬리 추가", detail: "d", nodeId: "orb", addedTransformationId: added.id });
+    assert.equal(context.previousSummary, "전"); assert.deepEqual(context.previousOverlays.map((item: { id: string }) => item.id), ["size"]);
+    assert.match(calls[0].instructions, /After a recommendation added a transformation/);
+  });
+  await withMockedAI(() => ({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+    await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", inspection: { ...inspection, update: null } }), new AbortController().signal);
+    assert.equal(JSON.parse(calls[0].input[0].content[0].text).appliedRecommendation, undefined, "a plain inspection has no update");
+  });
+});
+
+test("inspection annotation marks keep their own color, width and opacity; the pen sets the next ones and the tool panel scrolls", async () => {
+  const { addMark, eraseStyledMarks, DEFAULT_MARK_STYLE, markStyleAt } = await import("../app/lib/inspection");
+  const red = { color: "#e0457b", width: 20, opacity: .4 };
+  let state = { marks: [] as { x: number; y: number }[][], markStyles: [] as typeof red[] };
+  state = addMark(state, [{ x: .1, y: .1 }, { x: .2, y: .1 }], DEFAULT_MARK_STYLE);
+  state = addMark(state, [{ x: .5, y: .5 }, { x: .6, y: .5 }], red);
+  assert.deepEqual(state.markStyles, [DEFAULT_MARK_STYLE, red]);
+  assert.deepEqual(markStyleAt([], 3), DEFAULT_MARK_STYLE, "older marks without a style draw as before");
+  const { MAX_MARKS } = await import("../app/lib/inspection");
+  let many = { marks: [] as { x: number; y: number }[][], markStyles: [] as typeof red[] };
+  for (let i = 0; i < MAX_MARKS + 5; i++) many = addMark(many, [{ x: i / 200, y: .5 }], i % 2 ? red : DEFAULT_MARK_STYLE);
+  assert.equal(MAX_MARKS, 128); assert.equal(many.marks.length, 128, "an annotation keeps 128 strokes, the oldest go first"); assert.equal(many.marks[0][0].x, 5 / 200);
+  const { targetedToolSchema } = await import("../app/lib/brushes");
+  assert.equal(targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: many.marks, markStyles: many.markStyles, result: { summary: "s", overlays: [], valueFixes: [], recommendations: [] } }).marks.length, 128);
+  assert.equal(requestSchema.parse({ intent: "inspect", inspection: { brushName: "b", nodeIds: ["orb"], constraints: [], steps: [], cursor: null, marks: many.marks, markStyles: many.markStyles } }).inspection!.marks.length, 128);
+  // A thick mark is erased from further away, and the styles stay with the marks that are left.
+  const erased = eraseStyledMarks(state, [{ x: 450, y: 322 }]);
+  assert.deepEqual(erased.markStyles, [DEFAULT_MARK_STYLE]);
+  assert.equal(eraseStyledMarks(addMark({ marks: [], markStyles: [] }, [{ x: .5, y: .5 }], DEFAULT_MARK_STYLE), [{ x: 450, y: 322 }]).marks.length, 1, "a thin mark is not");
+  const scene = sampleScene(), [brush] = makeBrushes(scene), base = emptyInspection(brush.id);
+  const overlay = renderToStaticMarkup(createElement(InspectionOverlay, { state: base, marks: state.marks, markStyles: state.markStyles, result: null, liveValues: {}, clickable: false, zoom: 1, onFocus: noop }));
+  assert.match(overlay, /stroke:#e0457b;stroke-width:20;opacity:0.4/);
+  const panel = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "inspect-annotate", scene, nodeIds: ["tree", "orb"], state: base, busy: false, running: true, onEraser: noop, eraser: false, pen: red, onPen: noop,
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop } as never));
+  assert.match(panel, /aria-label="Pen width"[^>]*value="20"/); assert.match(panel, /40%/); assert.match(panel, /aria-pressed="true" class="active" style="background:#e0457b"/);
+  const props = { tool: brushTool("inspect", brush.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
+    busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [brush], groupTools: {}, openGroup: brush.id } as Record<string, unknown>;
+  assert.match(renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never)), /class="brush-group-body"><div class="brush-group-tools">/, "the group panel's tools sit in a scrolling body");
 });

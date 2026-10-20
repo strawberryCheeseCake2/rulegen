@@ -4,6 +4,7 @@ import type { InspectionState } from "./inspection";
 import { emptyAnnotationHistory, type AnnotationHistory } from "./annotation-history";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
+import { refreshProgram } from "./scene/machines";
 import { liveSceneSource } from "./scene/live";
 import type { SceneProposal } from "./scene/revisions";
 
@@ -64,7 +65,10 @@ export function clearedResultAnnotations(): Partial<SketchPanel> {
   return { annotating: false, annotationImage: "", annotationSource: "", annotationHistory: emptyAnnotationHistory(), clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null };
 }
 export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<typeof sketchPanelSchema>): SketchPanel {
-  return { ...sketchPanelSchema.parse(saved || {}), hovered: null, executable: "", preparedCode: "", runtimeError: "", renderRevision: 0,
+  const parsed = sketchPanelSchema.parse(saved || {});
+  // Saved programs get the current host runtime (it is prepared again on load anyway).
+  const generated = parsed.generated && { ...parsed.generated, code: refreshProgram(parsed.generated.code) };
+  return { ...parsed, generated, codeDraft: parsed.codeDraft && refreshProgram(parsed.codeDraft), hovered: null, executable: "", preparedCode: "", runtimeError: "", renderRevision: 0,
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",

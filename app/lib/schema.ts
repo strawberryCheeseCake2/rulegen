@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { algorithmCallSchema, algorithmSchema, idSchema, sceneBindingSchema } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
+import { markStyleSchema, MAX_MARKS, overlaySchema } from "./inspection";
 export const pointSchema = z.object({ x: z.number(), y: z.number() });
 export type Point = z.infer<typeof pointSchema>;
 export const MAX_CODE_LENGTH = 120000;
@@ -26,7 +27,7 @@ export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(
 /** machine-refine result: the scene with the refined machine plus the updated Compose prompt. */
 export const machineRefineResultSchema = z.object({ scene: sceneSchema, composePrompt: z.string().max(2000) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
-export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect"] as const;
+export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern"] as const;
 const inspectScalar = z.union([z.number(), z.string().max(200), z.boolean()]);
 /** Targeted inspection input: the brush's nodes, its constraint rows and the recorded steps. */
 export const inspectionInputSchema = z.object({
@@ -36,7 +37,11 @@ export const inspectionInputSchema = z.object({
     /** Machine states and the brush roots' m.store at that step. */
     runtime: z.object({ states: z.record(z.string().max(80), z.object({ id: z.string().max(80), elapsed: z.number() })), stores: z.record(z.string().max(80), z.unknown()) }).nullable().default(null) })).max(20),
   cursor: z.number().int().nullable(),
-  marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(64),
+  marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(MAX_MARKS),
+  /** Each mark's color, width and opacity, by index. */
+  markStyles: z.array(markStyleSchema).max(MAX_MARKS).default([]),
+  /** Rebuilding a targeted inspection after one of its recommendations added a transformation: what was applied, and the summary and overlays so far. */
+  update: z.object({ title: z.string().max(160), detail: z.string().max(800), nodeId: idSchema, transformationId: idSchema, summary: z.string().max(1500), overlays: z.array(overlaySchema).max(12) }).nullable().default(null),
 });
 export type InspectionInput = z.infer<typeof inspectionInputSchema>;
 /** The state or transition a machine refinement is focused on (none = the whole machine). */

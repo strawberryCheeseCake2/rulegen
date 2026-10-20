@@ -25,6 +25,8 @@ test("every AI output restores to its own sketch and leaves other sketches intac
     "machine-refine": { scene: withMachine, composePrompt: "- refined prompt" },
     clarification: { clarification: "가지를 키워줘" },
     revision: { summary: "가지를 키웁니다", scene: renamed },
+    concern: { suggestions: ["잎 끝 개수가 궁금해"] },
+    handles: { handles: [{ propertyId: "ink", handle: { code: "rulegenHandle(function (h) { return {}; });", prepared: "rulegenHandle(function (h) { __rulegenGuard(); return {}; });", paths: [[]], hint: "먹색 고르기" } }] },
   };
   for (const intent of requestSchema.shape.intent.options) {
     const input = requestSchema.parse({ intent, scene, targetNodeId: "tree", previous: code.code, instruction: "new prompt" });
@@ -42,8 +44,16 @@ test("every AI output restores to its own sketch and leaves other sketches intac
     if (intent === "compose-prompt") assert.equal(panel.composePrompt, "new prompt");
     if (intent === "machine-refine") { assert.equal(panel.scene.nodes[0].machine?.initialState, "a"); assert.equal(panel.composePrompt, "- refined prompt"); }
     if (intent === "clarification") { assert.equal(restored.revisionInstruction, "가지를 키워줘"); assert.deepEqual(restored.annotations, annotations); }
+    if (intent === "handles") { assert.equal(panel.scene.nodes[0].transformations[1].properties[0].handle?.hint, "먹색 고르기"); assert.deepEqual(panel.selectedNodeIds, ["tree"]); }
     if (intent === "revision") { assert.equal(restored.proposal?.scene.nodes[0].name, "Grown tree"); assert.equal(panel.scene.nodes[0].name, "Tree", "proposals are not applied"); }
   }
+});
+
+test("a restored generation brings the board back as it was: frame positions and the view", () => {
+  const board = { ...project, workspace: { ...project.workspace, camera: { x: -812, y: 140, zoom: .42 }, frames: { ...project.workspace.frames, "sketch-owner": { x: 3310, y: 920 } } } };
+  const restored = recoverGeneration(requestSchema.parse({ intent: "code", scene }), code, recoveryContextSchema.parse({ ...context, project: board }));
+  assert.deepEqual(restored.project.workspace.frames["sketch-owner"], { x: 3310, y: 920 });
+  assert.deepEqual(restored.project.workspace.camera, { x: -812, y: 140, zoom: .42 });
 });
 
 test("a confirmed revision restores the whole proposed scene along with its code", () => {

@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Viewport } from "./schema";
 
-// Every frame on the board is a sketch frame: it can be drawn on and renders its
-// own generated result.
+// Frames on the board are sketch frames (drawn on, rendering their own result)
+// and proxy frames (running the direct manipulation handles of a node of a sketch frame).
 
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const defaultFrames = () => ({ source: { x: 0, y: 0 } });
@@ -12,7 +12,7 @@ export const workspaceSchema = z.object({
   frames: z.object({ source: position.default(() => defaultFrames().source) }).catchall(position).default(defaultFrames),
 });
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
-export type FrameId = "source" | `sketch-${string}`;
+export type FrameId = "source" | `sketch-${string}` | `proxy-${string}`;
 export const FRAME_WIDTH = 900, FRAME_HEIGHT = 600, FRAME_GAP_X = 140, FRAME_GAP_Y = 140;
 
 export function removeWorkspaceFrame(layout: WorkspaceLayout, id: FrameId): WorkspaceLayout {
