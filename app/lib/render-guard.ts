@@ -6,7 +6,7 @@
 // starts the clock again (budgetReset).
 
 /** How long one frame, input event or message may run. */
-export const FRAME_LIMIT_MS = 2000;
+export const FRAME_LIMIT_MS = 10000;
 export const BUDGET_ERROR = `Rendering budget exceeded: one frame ran over ${FRAME_LIMIT_MS / 1000}s (an endless loop or recursion?). Make each frame lighter or bound its loops: compute what each gesture of m.history() makes once with m.memo (keyed by its id, rev and values), never redo all of the input every frame.`;
 /** Sandbox source defining `budgetReset()` and `__rulegenGuard()`. */
 export const GUARD_RUNTIME = `let budget=0,budgetAt=performance.now();function budgetReset(){budget=0;budgetAt=performance.now();}

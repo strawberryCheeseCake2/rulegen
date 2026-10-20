@@ -225,11 +225,12 @@ function rulegenKey(inst, key) {
 function rulegenInstance(entry) {
   // reads: value keys read while setup runs (setup re-runs only when one of them changes).
   // memo: results a module computes once per key (not part of m.store, so not copied into inspection steps).
-  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map() };
+  // memoStack: the m.memo computations running now; each records the values it reads (a value change recomputes it).
+  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [] };
   const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
   const m = {
     p,
-    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k); return rulegenParams[k]; },
+    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k); for (const deps of inst.memoStack) deps.set(k, rulegenParams[k]); return rulegenParams[k]; },
     box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
@@ -238,9 +239,17 @@ function rulegenInstance(entry) {
       const k = typeof key === 'string' ? key : JSON.stringify(key);
       if (k.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
       const hit = inst.memo.get(k);
-      if (hit) { hit.used = rulegenFrameNo; return hit.value; }
-      const value = compute();
-      inst.memo.set(k, { value, used: rulegenFrameNo });
+      // A value read while computing (m.v) that changed since makes the entry stale, even if the key does not name it.
+      if (hit && hit.deps.every(([dk, dv]) => rulegenParams[dk] === dv)) {
+        hit.used = rulegenFrameNo;
+        for (const outer of inst.memoStack) for (const [dk, dv] of hit.deps) outer.set(dk, dv);
+        return hit.value;
+      }
+      const deps = new Map(); inst.memoStack.push(deps);
+      let value;
+      try { value = compute(); } finally { inst.memoStack.pop(); }
+      for (const outer of inst.memoStack) for (const [dk, dv] of deps) outer.set(dk, dv);
+      inst.memo.set(k, { value, used: rulegenFrameNo, deps: [...deps] });
       if (inst.memo.size > RULEGEN_MEMO_MAX) inst.memo.delete(inst.memo.keys().next().value);
       return value;
     },
@@ -248,6 +257,20 @@ function rulegenInstance(entry) {
   };
   inst.handlers = rulegenModules[entry.module](m) || {};
   return inst;
+}
+/**
+ * A module was replaced in place (its code edited, e.g. a constant exposed as a
+ * property): its running instances take the new code and keep their m.store, so
+ * nothing drawn or held is lost; cached results (m.memo) start over.
+ */
+function rulegenRefreshModule(key) {
+  rulegenLive = rulegenLive.map(inst => {
+    if (inst.entry.module !== key) return inst;
+    const fresh = rulegenInstance(inst.entry);
+    Object.assign(fresh.store, inst.store);
+    fresh.usesHistory = inst.usesHistory; fresh.setupReads = inst.setupReads;
+    return fresh;
+  });
 }
 /** Create instances for new root nodes, keep running ones, drop removed ones. */
 function rulegenSync() {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema } from "./hidden-parameters";
 import { findNode } from "./scene/graph";
 import type { Scene, SceneBinding } from "./scene/schema";
 import { findProperty, propertyOwner } from "./scene/transformations";
@@ -103,15 +104,23 @@ export const inspectResultSchema = z.object({
   valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
   /** Other ways to resolve it: values, or changing a transformation, state or transition. */
   recommendations: z.array(recommendationSchema).max(6),
+  /** Constants the code hard-codes that the concern depends on, suggested as new properties (accept / reject). */
+  parameters: z.array(parameterSuggestionSchema).max(MAX_PARAMETER_SUGGESTIONS).default([]),
+  /** Fields added to the module's item records so overlays can read a per-item quantity it computes but did not keep (applied with the result). */
+  records: recordingSchema.nullable().default(null),
 });
 /**
  * A targeted tool's stored result. A new-transformation recommendation that was
  * applied remembers the transformation it added (`addedId`), so it then reads as
  * that transformation (while it exists).
  */
-export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional() })).max(6) });
+export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional() })).max(6),
+  /** A suggested parameter the user turned down keeps `rejected`. */
+  parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
 export type Recommendation = InspectResult["recommendations"][number];
+/** A result as given (older results have no `parameters` or `records`). */
+export type InspectResultInput = Omit<InspectResult, "parameters" | "records"> & { parameters?: InspectResult["parameters"]; records?: InspectResult["records"] };
 /** A recommendation as it reads in `scene`: a new transformation that was added (and is still there) is that transformation. */
 export function currentRecommendation(item: Recommendation, scene: Scene): Recommendation {
   if (item.kind !== "add-transformation" || !item.addedId || !findNode(scene, item.nodeId)?.transformations.some(entry => entry.id === item.addedId)) return item;
@@ -187,6 +196,9 @@ export function pathValue(value: unknown, path: string): unknown {
 // "@x", "@y" (top-left), "@w", "@h", "@cx", "@cy" (center) and "@n" (how many points).
 type PointsBox = { "@x": number; "@y": number; "@w": number; "@h": number; "@cx": number; "@cy": number; "@n": number };
 const isPoint = (item: unknown): item is { x: number; y: number } => Boolean(item && typeof item === "object" && Number.isFinite((item as { x: unknown }).x) && Number.isFinite((item as { y: unknown }).y));
+// A bare point (only the x, y and the input's time t) is geometry: a list of them is an
+// outline or a path. A record with more fields (an item's size, speed, count, …) is not.
+const isBarePoint = (item: unknown) => isPoint(item) && Object.keys(item).every(key => key === "x" || key === "y" || key === "t");
 export function pointsBox(list: unknown[]): PointsBox | undefined {
   if (!list.length || !list.every(isPoint)) return undefined;
   const xs = list.map(point => point.x), ys = list.map(point => point.y);
@@ -268,26 +280,39 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
   return value;
 }
 
-/** Fill ${expression} parts of a label. */
+/** Fill ${expression} parts of a label; "" when one cannot be read there (a value or field that step does not have), never a "?". */
 export function fillLabel(template: string, input: Record<string, Scalar> | OverlayContext) {
-  return template.replace(/\$\{([^}]*)\}/g, (_, source: string) => {
-    try { const value = evaluate(source, input); return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : "?"; } catch { return "?"; }
+  let missing = false;
+  const text = template.replace(/\$\{([^}]*)\}/g, (_, source: string) => {
+    let value = NaN;
+    try { value = evaluate(source, input); } catch { /* unreadable */ }
+    if (!Number.isFinite(value)) { missing = true; return ""; }
+    return String(Math.round(value * 10) / 10);
   });
+  return missing ? "" : text;
 }
 
 /** The context of step `index` (live values when there is no step yet). */
-export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}): OverlayContext {
+export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): OverlayContext {
   const step = steps[index], runtime = runtimeOf(step);
-  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: { ...(runtime.stores ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
+  // `drawn`: the stores as the running code draws this step now (restored), newer than the recording (e.g. after the code records more per item).
+  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: { ...(runtime.stores ?? {}), ...(drawn ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
 }
 
 /** Shorten plain data for AI: arrays keep their first items (and say how long they were). */
 function trimData(value: unknown, items: number, depth = 0): unknown {
   if (value === null || typeof value !== "object") return typeof value === "string" ? value.slice(0, 120) : typeof value === "number" ? Math.round(value * 10) / 10 : value;
-  // A long list of points is sent as where it is (its box, read the same way with "@x" … in overlays).
-  if (Array.isArray(value) && value.length > 4) { const box = pointsBox(value); if (box) return { ...Object.fromEntries(Object.entries(box).map(([key, number]) => [key, Math.round(number * 10) / 10])), "@points": "…" }; }
+  const round = (box: PointsBox) => Object.entries(box).map(([key, number]) => [key, Math.round(number * 10) / 10] as const);
+  // A long outline or path is sent as where it is (its box, read the same way with "@x" … in overlays).
+  if (Array.isArray(value) && value.length > 4 && value.every(isBarePoint)) return { ...Object.fromEntries(round(pointsBox(value)!)), "@points": "…" };
   if (depth > 6) return "…";
-  if (Array.isArray(value)) { const head = value.slice(0, items).map(item => trimData(item, items, depth + 1)); return value.length > items ? [...head, `…(${value.length} items)`] : head; }
+  // Records keep their fields (the first ones are shown), so per-item values can be read with item("…").
+  if (Array.isArray(value)) {
+    const head = value.slice(0, items).map(item => trimData(item, items, depth + 1));
+    if (value.length <= items) return head;
+    const box = pointsBox(value);
+    return [...head, box ? `…(${value.length} items; all in box ${round(box).filter(([key]) => key !== "@n").map(([key, number]) => `${key}=${number}`).join(" ")})` : `…(${value.length} items)`];
+  }
   return Object.fromEntries(Object.entries(value).slice(0, 40).map(([key, item]) => [key, trimData(item, items, depth + 1)]));
 }
 /** A step's runtime for AI: machine states and the m.store of the brush's own roots, kept small. */
@@ -297,6 +322,13 @@ export function runtimeForAI(step: InspectionStep, nodeIds: string[]) {
   const own = { ...Object.fromEntries(Object.entries(runtime.stores ?? {}).filter(([id]) => ids.has(id))), ...(runtime.history?.length ? { [INPUT_ROOT]: runtime.history } : {}) };
   for (const items of [6, 2, 0]) { const stores = trimData(own, items) as Record<string, unknown>; if (JSON.stringify(stores).length < 4000 || !items) return { states, stores }; }
   return { states, stores: {} };
+}
+
+/** Whether a label template reads the item it is drawn for (item(…) or i); one that does not says the same on every item. */
+export function labelReadsItem(template: string) {
+  return [...template.matchAll(/\$\{([^}]*)\}/g)].some(([, source]) => {
+    try { return tokenize(source).some(token => token.type === "id" && (token.value === "item" || token.value === "i")); } catch { return false; }
+  });
 }
 
 export const MAX_EACH = 200;
@@ -312,11 +344,13 @@ export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar>
       const cut = overlay.each?.indexOf(":") ?? -1;
       const each = overlay.each ?? "", list = cut > 0 ? pathValue(context.stores[each.slice(0, cut)], each.slice(cut + 1)) : undefined;
       const items: (OverlayContext | null)[] = cut > 0 ? (Array.isArray(list) ? list.slice(0, maxItems).map((item, itemIndex) => ({ ...context, item, itemIndex })) : []) : [null];
+      // A label that is the same for every item (property values, thresholds) is shown once, on the first.
+      const perItem = cut <= 0 || labelReadsItem(overlay.label);
       return items.flatMap((itemContext, n) => {
         const scope = itemContext ?? context;
         const [x, y, w, h] = [overlay.x, overlay.y, overlay.w, overlay.h].map(source => evaluate(source || "0", scope));
         if (![x, y, w, h].every(Number.isFinite)) return [];
-        return [{ overlay, key: `${overlay.id}:${ghost}:${n}`, x, y, w, h, label: ghost ? "" : fillLabel(overlay.label, scope), step: context.step, ghost }];
+        return [{ overlay, key: `${overlay.id}:${ghost}:${n}`, x, y, w, h, label: ghost || (n > 0 && !perItem) ? "" : fillLabel(overlay.label, scope), step: context.step, ghost }];
       });
     } catch { return []; }
   });
@@ -330,8 +364,8 @@ const where = (item: PlacedOverlay) => `${item.overlay.id}|${item.key.split(":")
  * values and stores. A ghost that would sit exactly where a nearer step already
  * draws is left out. Ghosts come first, farthest first, so nearer ones are on top.
  */
-export function historyOverlays(overlays: Overlay[], steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}): PlacedOverlay[] {
-  const current = placeOverlays(overlays, stepContext(steps, index, live));
+export function historyOverlays(overlays: Overlay[], steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): PlacedOverlay[] {
+  const current = placeOverlays(overlays, stepContext(steps, index, live, drawn));
   const taken = new Set(current.map(where)), ghosts: PlacedOverlay[] = [];
   const order = steps.map((_, j) => j).filter(j => j !== index).sort((a, b) => Math.abs(a - index) - Math.abs(b - index) || a - b);
   for (const j of order) for (const item of placeOverlays(overlays, stepContext(steps, j, live), j - index, GHOST_ITEMS)) {
@@ -391,7 +425,7 @@ export function remapExpression(source: string, map: (id: string) => string) {
   return source.replace(READERS, (_all, name: string, quote: string, arg: string) => `${name}(${quote}${name === "p" || name === "prev" || name === "delta" ? remapKey(arg, map) : map(arg)}${quote}`);
 }
 /** The same result with every node id passed through `map` (ids it does not know stay as they are). */
-export function remapResult(result: InspectResult, ids: Map<string, string>, suffix = ""): InspectResult {
+export function remapResult(result: InspectResultInput, ids: Map<string, string>, suffix = ""): InspectResult {
   const map = (id: string) => ids.get(id) ?? id, expression = (source: string) => remapExpression(source, map);
   return {
     summary: result.summary,
@@ -402,14 +436,17 @@ export function remapResult(result: InspectResult, ids: Map<string, string>, suf
     }),
     valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
     recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })) })),
+    // The edits are module code: it uses the code's node ids, the same in every frame.
+    parameters: (result.parameters ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
+    records: result.records ? { ...result.records, nodeId: map(result.records.nodeId) } : null,
   };
 }
 /**
  * A stored (shared-id) result shown in one frame: overlays for every root of the
  * brush there (master or instances), fixes and recommendations for `primary`.
  */
-export function resultInFrame(result: InspectResult, rootIds: Map<string, string>[], primary = 0): InspectResult {
-  if (!rootIds.length) return result;
+export function resultInFrame(result: InspectResultInput, rootIds: Map<string, string>[], primary = 0): InspectResult {
+  if (!rootIds.length) return { ...result, parameters: result.parameters ?? [], records: result.records ?? null };
   const main = remapResult(result, rootIds[Math.min(primary, rootIds.length - 1)]);
   return { ...main, overlays: rootIds.length === 1 ? main.overlays : rootIds.flatMap((ids, i) => remapResult(result, ids, i ? `~${i + 1}` : "").overlays) };
 }

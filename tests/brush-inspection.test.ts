@@ -107,7 +107,8 @@ test("overlay expressions read step values safely", () => {
   assert.equal(evaluate("max(2, min(10, 3)) * -2 + PI * 0", values), -6);
   assert.ok(Number.isNaN(evaluate("p(\"missing\") + 1", values)));
   for (const bad of ["alert(1)", "p(orb)", "constructor", "1 +", "window.top", "\"a\"[0]"]) assert.throws(() => evaluate(bad, values), bad);
-  assert.equal(fillLabel("w=${p(\"orb/radius\") * 2}px h=${nope(1)}", values), "w=48px h=?");
+  assert.equal(fillLabel("w=${p(\"orb/radius\") * 2}px", values), "w=48px");
+  assert.equal(fillLabel("w=${p(\"orb/radius\") * 2}px h=${nope(1)}", values), "", "a part that cannot be read hides the label (no \"?\")");
   const placed = placeOverlays([
     { id: "a", kind: "rect", x: "p(\"orb/@x\")", y: "10", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "r=${p(\"orb/radius\")}", color: "#ff0000", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
     { id: "b", kind: "rect", x: "p(\"missing\")", y: "0", w: "1", h: "1", label: "", color: "#00ff00", link: { kind: "state", nodeId: "orb", id: "idle" } },
@@ -245,6 +246,24 @@ test("overlays can sit on drawn items: a point list reads as its box, the input 
   assert.ok(INPUT_ROOT in sent.stores, "the input history goes too");
   assert.ok(JSON.stringify(sent).length < 1200);
   assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:` }], valueFixes: [], recommendations: [] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
+});
+
+test("per-item values stay readable: records keep their fields for AI, and an each label that is the same for every item is shown once", async () => {
+  const { runtimeForAI, stepContext, labelReadsItem } = await import("../app/lib/inspection");
+  const outline = Array.from({ length: 30 }, (_, i) => ({ x: 10 + i, y: 20 + (i % 3) }));
+  const items = Array.from({ length: 8 }, (_, i) => ({ x: 100 + 60 * i, y: 300, w: 50, h: 30, speed: 100 + 120 * i, tips: 12 - i, poly: outline }));
+  const steps = [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { "bush/tips": 12, "bush/slow": 100, "bush/fast": 1000 }, runtime: { states: {}, stores: { bush: { items } } } }];
+  const sent = (runtimeForAI(steps[0] as never, ["bush"]).stores.bush as { items: unknown[] }).items;
+  assert.deepEqual(Object.keys(sent[0] as object), ["x", "y", "w", "h", "speed", "tips", "poly"], "an item record is not mistaken for a path: its fields are seen");
+  assert.equal((sent[0] as { poly: { "@n": number } }).poly["@n"], 30, "its outline (bare points) is still sent as a box");
+  assert.match(String(sent.at(-1)), /^…\(8 items; all in box @x=100 @y=300 @w=420 @h=0 @cx=310 @cy=300\)$/, "how many, and where they all are");
+  // A label reading the item says that item's value; one that does not is the same everywhere: shown once.
+  assert.ok(labelReadsItem("잎 끝 ${item(\"tips\")}개")); assert.ok(labelReadsItem("#${i + 1}")); assert.ok(!labelReadsItem("${p(\"bush/slow\")}→${p(\"bush/fast\")}px/s"));
+  const overlay = (label: string) => ({ id: "o", kind: "label" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "0", h: "0", label, color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" });
+  assert.deepEqual(placeOverlays([overlay("잎 끝 ${item(\"tips\")}개")], stepContext(steps, 0)).slice(0, 3).map(item => item.label), ["잎 끝 12개", "잎 끝 11개", "잎 끝 10개"]);
+  const shared = placeOverlays([overlay("${p(\"bush/slow\")}→${p(\"bush/fast\")}px/s")], stepContext(steps, 0));
+  assert.equal(shared.length, 8, "the overlay is still placed on every item");
+  assert.deepEqual(shared.map(item => item.label).filter(Boolean), ["100→1000px/s"], "but its item-independent label only once");
 });
 
 test("Autocomplete: on request, AI reads the inspection annotation and suggests concerns; one that continues the typed text completes it with Tab", async () => {

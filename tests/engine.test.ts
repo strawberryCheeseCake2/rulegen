@@ -24,7 +24,7 @@ test("the sandbox guard stops a frame by time: heavy but finite frames run, runa
   const runaway = prepareCode("p.setup=()=>{p.createCanvas(900,600)};p.draw=()=>{while(true){}};");
   vm.runInContext(runaway, context); vm.runInContext("budgetReset()", context);
   now = FRAME_LIMIT_MS + 1;
-  assert.throws(() => (p.draw as () => void)(), /one frame ran over 2s/);
+  assert.throws(() => (p.draw as () => void)(), /one frame ran over 10s/);
   // Each frame (and input event) starts the clock again.
   vm.runInContext("budgetReset()", context); vm.runInContext(heavy, context); (p.draw as () => void)();
   assert.equal(p.done, 1000 * (699 * 700 / 2));

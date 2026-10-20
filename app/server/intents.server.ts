@@ -4,12 +4,14 @@ import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSche
 import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema } from "../lib/scene/ai-schema";
 import { convertMachine, convertScene, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
 import { descendantIds, findNode, updateNode } from "../lib/scene/graph";
-import { conformMachine, validateMachine } from "../lib/scene/machines";
+import { conformMachine, programModules, validateMachine } from "../lib/scene/machines";
 import { settleProposal, validateSceneProposal } from "../lib/scene/revisions";
 import { canAddTransformation, placeTransformation } from "../lib/scene/transformations";
 import { validateScene } from "../lib/scene/validate";
 import { sceneBindings, sceneValues } from "../lib/scene/values";
+import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
+import { moduleKeyOf, parameterProblem, recordingProblem } from "../lib/hidden-parameters";
 import { concernSuggestionsSchema, inspectResultSchema, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
@@ -32,6 +34,16 @@ const canvas = { width: 900, height: 600 };
 const strokeContext = (input: AIInput) => ({ compositionPens: input.compositionPens, compositionStrokes: input.compositionStrokes, canvas });
 const targetNode = (input: AIInput) => input.scene && findNode(input.scene, input.targetNodeId);
 const handleTarget = (input: AIInput) => ({ transformationId: input.targetTransformationId || undefined, propertyId: input.targetPropertyId || undefined });
+/** The code of the modules that draw the inspected brush (by module key). */
+function brushModules(input: AIInput) {
+  if (!input.previous || !input.scene || !input.inspection) return {};
+  const all = programModules(input.previous), keys = new Set(input.inspection.nodeIds.map(id => moduleKeyOf(input.scene!, id)).filter((key): key is string => Boolean(key)));
+  return Object.fromEntries([...keys].filter(key => all.has(key)).map(key => [key, all.get(key)!]));
+}
+/** Edited module text (with its markers) is still valid JavaScript. */
+function parsesModule(module: string) {
+  try { parse(module, { sourceType: "script" }); return true; } catch { return false; }
+}
 const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
 /** The modules the code must define: one per root node, with the node ids it draws. */
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
@@ -98,6 +110,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     check: input => !input.scene || !input.inspection ? "검사할 brush와 기록이 필요합니다." : !input.instruction.trim() && !input.inspection.marks.length ? "알고 싶은 점을 적거나 Inspection annotation으로 표시해주세요." : undefined,
     context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
       algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
+      // The modules that draw the brush, to find constants the concern depends on (hidden parameters).
+      code: brushModules(input),
       // A recommendation was applied and added a transformation: the overlays are rebuilt to show it too.
       ...(input.inspection!.update ? { appliedRecommendation: { title: input.inspection!.update.title, detail: input.inspection!.update.detail, nodeId: input.inspection!.update.nodeId, addedTransformationId: input.inspection!.update.transformationId },
         previousSummary: input.inspection!.update.summary, previousOverlays: input.inspection!.update.overlays } : {}) }),
@@ -113,6 +127,11 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       };
       const change = (item: { key: string; stateId: string; nodeId?: string }) => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(node => node.machine?.states.some(state => state.id === item.stateId)));
       return { ...output, overlays: output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)), valueFixes: output.valueFixes.filter(change),
+        // A hidden parameter is kept only if its edits apply to the module and the result is valid code.
+        parameters: (output.parameters ?? []).filter((item, i, all) => all.findIndex(other => other.nodeId === item.nodeId && other.id === item.id) === i
+          && nodes.has(item.nodeId) && !parameterProblem(input.scene!, input.previous, item, parsesModule)),
+        // Fields added to the item records: kept only if the edits apply to the brush's module and the result is valid code.
+        records: output.records && nodes.has(output.records.nodeId) && !recordingProblem(input.scene!, input.previous, output.records, parsesModule) ? output.records : null,
         recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : item.kind === "add-transformation" ? (nodes.get(item.nodeId)?.transformations.length ?? MAX_TRANSFORMATIONS) < MAX_TRANSFORMATIONS : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
           targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [] })) };
     },

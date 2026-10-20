@@ -564,3 +564,33 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 /* Frame JSON: one frame's state machines, constraints and code, to copy. */
 .frame-json-modal .frame-json-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .frame-json-modal .frame-json-note { color: #a0563a; font-size: 12px; margin: 0; }
+/* Hidden parameters a targeted inspection suggests (accept / reject), then adjusted in place. */
+.inspection-parameters { display: flex; flex-direction: column; gap: 6px; }
+.inspection-records { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px dashed #c9d6ce; border-radius: 6px; background: #fbfcfb; font-size: 11px; color: #5c6e63; }
+.inspection-records.applied { border-style: solid; border-color: #cfe3d8; }
+.inspection-records button { align-self: flex-start; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #397461; background: #397461; color: #fff; }
+.inspection-records button:disabled { opacity: .5; }
+.inspection-records details { font-size: 10.5px; color: #6c7e73; }
+.inspection-records pre { margin: 4px 0 0; padding: 5px 7px; background: #f5f7f6; border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 10px; }
+.inspection-records pre del { color: #a0563a; }
+.inspection-records pre ins { color: #23684f; text-decoration: none; }
+.inspection-parameter { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px dashed #b9cfc3; border-radius: 6px; background: #fbfcfb; }
+.inspection-parameter.accepted { border-style: solid; border-color: #9fc4b0; background: #f3f9f5; }
+.inspection-parameter.rejected { opacity: .65; flex-direction: row; align-items: center; justify-content: space-between; }
+.inspection-parameter b { font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.inspection-parameter b span { font-weight: 400; font-size: 10.5px; color: #7a8b81; }
+.inspection-parameter em { font-style: normal; font-size: 9.5px; padding: 1px 5px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
+.inspection-parameter.accepted em { background: #e3f1ea; color: #23684f; }
+.inspection-parameter > span { font-size: 11px; color: #5c6e63; }
+.inspection-parameter code { font-size: 10.5px; color: #4a6656; }
+.inspection-parameter-actions { display: flex; gap: 6px; }
+.inspection-parameter-actions button, .inspection-parameter-restore { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #c9d6ce; background: #fff; color: #5c6e63; }
+.inspection-parameter-actions button.accept { border-color: #397461; background: #397461; color: #fff; }
+.inspection-parameter-actions button:disabled { opacity: .5; }
+.inspection-parameter details { font-size: 10.5px; color: #6c7e73; }
+.inspection-parameter pre { margin: 4px 0 0; padding: 5px 7px; background: #f5f7f6; border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 10px; }
+.inspection-parameter pre del { color: #a0563a; }
+.inspection-parameter pre ins { color: #23684f; text-decoration: none; }
+.inspection-parameter-control { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.inspection-parameter-control input[type=range] { flex: 1; min-width: 0; }
+.inspection-parameter-control output { min-width: 52px; text-align: right; color: #34493e; font-variant-numeric: tabular-nums; }

@@ -6,6 +6,8 @@ type Props = {
   state: InspectionState;
   /** The inspection annotation being drawn (only while annotating; a targeted tool keeps its marks for AI but does not draw them) and the tool's overlays. */
   marks: InspectionState["marks"]; result: InspectResult | null;
+  /** The stores as the held step is drawn now by the running code (newer than its recording), when the held step is the one looked at. */
+  drawn?: Record<string, unknown> | null;
   /** Each mark's color, width (canvas pixels) and opacity, by index. */
   markStyles?: MarkStyle[];
   /** Values when following the running result (no step selected). */
@@ -30,11 +32,11 @@ const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props
   : kind === "ellipse" ? <ellipse cx={x + w / 2} cy={y + h / 2} rx={Math.abs(w / 2)} ry={Math.abs(h / 2)} {...props} />
   : kind === "line" ? <line x1={x} y1={y} x2={x + w} y2={y + h} {...props} /> : null;
 
-export function InspectionOverlay({ state, marks, markStyles, result, liveValues, clickable, zoom, onFocus, onStep, stepName }: Props) {
+export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName }: Props) {
   const step = state.cursor !== null ? state.steps[state.cursor] : undefined;
   // The step being looked at (the latest while following the result): overlays are recomputed from its values and stores; the other steps show as ghosts.
   const index = state.cursor ?? state.steps.length - 1;
-  const placed = result ? historyOverlays(result.overlays, state.steps, index, liveValues) : [];
+  const placed = result ? historyOverlays(result.overlays, state.steps, index, liveValues, drawn) : [];
   const text = 12 / Math.max(.2, zoom);
   const uid = useId().replace(/:/g, ""), badge = 7 / Math.max(.2, zoom);
   // One number per step and overlay (an overlay drawn per item numbers its first item only), and the path through those spots in step order.

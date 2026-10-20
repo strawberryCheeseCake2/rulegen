@@ -1,4 +1,5 @@
 import { frameIds, type TargetedTool } from "./brushes";
+import { parameterStatus, recordingApplied } from "./hidden-parameters";
 import { currentRecommendation, markStyleAt, resultInFrame } from "./inspection";
 import type { GeneratedCode } from "./schema";
 import { stateTransformations } from "./scene/machines";
@@ -44,7 +45,7 @@ export type FrameExportInput = {
   brushes?: { id: string; name: string; roots: string[]; targeted: TargetedTool[] }[];
 };
 /** A targeted tool as it reads in this frame: its result in this frame's node ids (overlays on every stamp, fixes and recommendations for the first). */
-function exportTargeted(scene: Scene, roots: string[], tool: TargetedTool) {
+function exportTargeted(scene: Scene, roots: string[], tool: TargetedTool, code = "") {
   const result = roots.length ? resultInFrame(tool.result, roots.map(root => frameIds(scene, root))) : tool.result;
   const px = (point: { x: number; y: number }) => ({ x: Math.round(point.x * CANVAS.width * 10) / 10, y: Math.round(point.y * CANVAS.height * 10) / 10 });
   return {
@@ -52,6 +53,10 @@ function exportTargeted(scene: Scene, roots: string[], tool: TargetedTool) {
     /** The inspection annotation it was made from, in canvas pixels, with each mark's color, width and opacity. */
     annotation: tool.marks.map((mark, i) => ({ style: markStyleAt(tool.markStyles, i), points: mark.map(px) })),
     summary: result.summary, overlays: result.overlays, valueFixes: result.valueFixes,
+    /** Hard-coded constants suggested as parameters, with whether they were accepted (on the node now), rejected or are still open. */
+    hiddenParameters: result.parameters.map(item => ({ ...item, status: parameterStatus(item, scene) })),
+    /** Fields the code was made to record on each drawn item for these overlays, and whether the code has them now. */
+    itemRecords: result.records ? { ...result.records, applied: recordingApplied(scene, code, result.records) } : null,
     /** As listed; `current` is how it reads now (a new transformation it added reads as that transformation). */
     recommendations: result.recommendations.map(item => { const current = currentRecommendation(item, scene); return current === item ? item : { ...item, current: { kind: current.kind, targetId: current.targetId } }; }),
   };
@@ -81,7 +86,7 @@ export function frameExport({ id, name, scene, generated, brushOf, brushes = [] 
       };
     }),
     algorithms: usedAlgorithms(scene),
-    brushes: brushes.map(brush => ({ id: brush.id, name: brush.name, roots: brush.roots, targetedInspections: brush.targeted.map(tool => exportTargeted(scene, brush.roots, tool)) })),
+    brushes: brushes.map(brush => ({ id: brush.id, name: brush.name, roots: brush.roots, targetedInspections: brush.targeted.map(tool => exportTargeted(scene, brush.roots, tool, generated?.code)) })),
     code: code ? { title: generated?.title ?? "", explanation: generated?.explanation ?? "", source: code } : null,
   };
 }

@@ -1,7 +1,9 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
 import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
-import type { Scene } from "../lib/scene/schema";
+import type { ScalarValue, Scene } from "../lib/scene/schema";
+import { parameterStatus, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
+import { findProperty } from "../lib/scene/transformations";
 import { useRef, useState } from "react";
 import { Icon } from "./icons";
 
@@ -20,6 +22,11 @@ type Props = {
   onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
   /** Switch to another tool of the group (a toolbar tool id). */
   onTool: (toolId: string) => void;
+  /** Hidden parameters the targeted inspection suggests (by index in its list): accept exposes it, reject (or bring back) marks it; an accepted one is adjusted here. */
+  onAcceptParameter?: (item: ParameterSuggestion, index: number) => void; onRejectParameter?: (index: number, rejected: boolean) => void;
+  onParameterValue?: (nodeId: string, propertyId: string, value: ScalarValue["value"]) => void;
+  /** The frame's program, and applying the result's item records again (it is applied with the result; Undo apply may take it back). */
+  code?: string; onApplyRecording?: (item: Recording) => void;
   /** Recommendations applied in this frame (newest last), undone ones to redo, and whether the frame is still as each left it. */
   applied?: { past: { id: string; title: string; key: string }[]; future: { id: string; title: string; key: string }[]; undoClean: boolean; redoClean: boolean };
   onUndoApplied?: () => void; onRedoApplied?: () => void;
@@ -32,6 +39,54 @@ type Props = {
   /** Which recommendation an applied entry was (its key). */
   recommendationKey?: (item: Recommendation) => string;
 };
+
+/**
+ * Constants the code hard-codes that the concern depends on, suggested as new
+ * properties. Pending: accept (exposes it, no regeneration) or reject. Accepted:
+ * a control right here to try values. Rejected: folded, can be brought back.
+ */
+function HiddenParameters({ items, scene, busy, onAccept, onReject, onValue }: { items: (ParameterSuggestion & { rejected?: boolean })[]; scene: Scene; busy: boolean;
+  onAccept?: Props["onAcceptParameter"]; onReject?: Props["onRejectParameter"]; onValue?: Props["onParameterValue"] }) {
+  const range = (value: ScalarValue) => value.type === "number" ? `${formatScalar(value.value)}${value.unit} (${formatScalar(value.min)}–${formatScalar(value.max)})` : value.type === "toggle" ? (value.value ? "켜짐" : "꺼짐") : String(value.value);
+  return <div className="inspection-parameters"><span className="section-kicker">HIDDEN PARAMETERS</span>
+    <span className="inspection-muted">코드에 고정된 값 중 이 concern에 관련된 것입니다. Accept하면 property로 추가되어 바로 조절할 수 있습니다(코드 재생성 없음).</span>
+    {items.map((item, i) => {
+      const status = parameterStatus(item, scene), node = findNode(scene, item.nodeId), transformation = node?.transformations.find(entry => entry.id === item.transformationId);
+      const property = node ? findProperty(node, item.id) : undefined, value = property && property.value.type !== "algorithm" ? property.value : null;
+      return <div key={`${item.nodeId}:${item.id}`} className={`inspection-parameter ${status}`}>
+        <b><em>{status === "accepted" ? "추가됨" : status === "rejected" ? "거절됨" : "제안"}</em>{item.label}<span>{node?.name ?? item.nodeId} · {transformation?.label ?? item.transformationId}</span></b>
+        {status !== "rejected" && <span>{item.reason}</span>}
+        {status === "pending" && <>
+          <code>지금 코드의 값 {range(item.value)}</code>
+          <div className="inspection-parameter-actions">
+            <button type="button" className="accept" disabled={busy || !onAccept} onClick={() => onAccept?.(item, i)}><Icon name="plus" size={11} />Accept</button>
+            <button type="button" disabled={busy || !onReject} onClick={() => onReject?.(i, true)}>Reject</button>
+          </div>
+          <details><summary>코드 변경 보기</summary>{item.edits.map((edit, k) => <pre key={k}><del>{edit.find}</del>{"\n"}<ins>{edit.replace}</ins></pre>)}</details>
+        </>}
+        {status === "accepted" && value && <ParameterControl label={item.label} value={value} disabled={!onValue} onChange={next => onValue?.(item.nodeId, item.id, next)} />}
+        {status === "accepted" && <small className="inspection-applied-mark">✓ property로 추가됨 · Undo apply로 되돌릴 수 있습니다</small>}
+        {status === "rejected" && onReject && <button type="button" className="inspection-parameter-restore" onClick={() => onReject(i, false)}>다시 보기</button>}
+      </div>;
+    })}
+  </div>;
+}
+/** Per-item fields the inspection made the code record, so its overlays can show them on each item. */
+function ItemRecords({ item, applied, busy, onApply }: { item: Recording; applied: boolean; busy: boolean; onApply?: Props["onApplyRecording"] }) {
+  return <div className={`inspection-records ${applied ? "applied" : ""}`}><span className="section-kicker">ITEM RECORDS</span>
+    <span>{applied ? `✓ 그려진 항목마다 ${item.fields.join(", ")}을(를) 기록합니다. overlay가 항목별 값을 보여줍니다.` : `항목별 ${item.fields.join(", ")} 기록이 지금 코드에 없습니다. overlay의 항목별 값이 나오지 않습니다.`}</span>
+    {item.reason && <span className="inspection-muted">{item.reason}</span>}
+    {!applied && onApply && <button type="button" disabled={busy} onClick={() => onApply(item)}>기록 추가</button>}
+    <details><summary>코드 변경 보기</summary>{item.edits.map((edit, k) => <pre key={k}><del>{edit.find}</del>{"\n"}<ins>{edit.replace}</ins></pre>)}</details>
+  </div>;
+}
+/** A control for one scalar (number slider, color, toggle, select). */
+function ParameterControl({ label, value, disabled, onChange }: { label: string; value: ScalarValue; disabled: boolean; onChange: (value: ScalarValue["value"]) => void }) {
+  if (value.type === "number") return <label className="inspection-parameter-control"><input type="range" aria-label={label} min={value.min} max={value.max} step={value.step} value={value.value} disabled={disabled} onChange={e => onChange(Number(e.target.value))} /><output>{formatScalar(value.value)}{value.unit}</output></label>;
+  if (value.type === "color") return <label className="inspection-parameter-control"><input type="color" aria-label={label} value={value.value} disabled={disabled} onChange={e => onChange(e.target.value)} /><output>{value.value}</output></label>;
+  if (value.type === "toggle") return <label className="inspection-parameter-control"><input type="checkbox" aria-label={label} checked={value.value} disabled={disabled} onChange={e => onChange(e.target.checked)} /><output>{value.value ? "켜짐" : "꺼짐"}</output></label>;
+  return <label className="inspection-parameter-control"><select aria-label={label} value={value.value} disabled={disabled} onChange={e => onChange(e.target.value)}>{value.options.map(option => <option key={option}>{option}</option>)}</select></label>;
+}
 
 const sameFocus = (a: InspectionFocus | null, b: InspectionFocus) => Boolean(a && a.kind === b.kind && a.nodeId === b.nodeId && a.id === b.id);
 
@@ -239,6 +294,8 @@ export function InspectionPanel(props: Props) {
               <button disabled={busy} onClick={() => props.onApplyChanges([fix])}>Apply</button></div>)}
             {result.valueFixes.length > 1 && <button className="inspection-apply-all" disabled={busy} onClick={() => props.onApplyChanges(result.valueFixes)}>Apply all values</button>}
           </div>}
+          {result.records && <ItemRecords item={result.records} applied={recordingApplied(scene, props.code ?? "", result.records)} busy={busy} onApply={props.onApplyRecording} />}
+          {result.parameters.length > 0 && <HiddenParameters items={result.parameters} scene={scene} busy={busy} onAccept={props.onAcceptParameter} onReject={props.onRejectParameter} onValue={props.onParameterValue} />}
           {result.recommendations.length > 0 && <div className="inspection-recommendations"><div className="inspection-applied-bar"><span className="section-kicker">RECOMMENDATIONS</span>
             {/* Undo / redo a whole applied recommendation: scene, code and prompt together. */}
             {props.applied && (props.applied.past.length > 0 || props.applied.future.length > 0) && (confirmStep ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm undo">

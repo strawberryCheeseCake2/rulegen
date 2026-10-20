@@ -1,7 +1,13 @@
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
 import { concernSuggestionsSchema, constraintRows, emptyInspection, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { exposeParameter, moduleKeyOf, recordFields, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
+import type { GeneratedCode } from "../lib/schema";
+import type { Scene } from "../lib/scene/schema";
+import { preparedFor, prepareProgram } from "../lib/prepared";
 import { findNode } from "../lib/scene/graph";
+import { liveSceneSource } from "../lib/scene/live";
+import { programModules } from "../lib/scene/machines";
 import * as ops from "../lib/scene/panel-ops";
 import type { ScalarValue } from "../lib/scene/schema";
 import type { InspectionInput } from "../lib/schema";
@@ -52,7 +58,8 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
     const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
     const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
     const rows = constraintRows(panel.scene, nodeIds);
-    const result = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image,
+    // The code, so hard-coded constants the concern depends on can be suggested as parameters.
+    const result = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
       inspection: { brushName: brush.name, nodeIds, cursor: state.cursor,
         constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: item.values, runtime: runtimeForAI(item, nodeIds) })),
@@ -60,6 +67,8 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
     if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("검사 중 장면이 변경되었습니다. 다시 시도해주세요.");
     out.result = result;
   }, owner);
+  // The overlays read a per-item quantity the module computes but did not keep on its items: it now records it (code only, nothing drawn changes).
+  if (out.result?.records) await applyRecording(deps, owner, out.result.records);
   return out.result ?? null;
 }
 
@@ -123,6 +132,58 @@ export async function applyRecommendation(deps: StudioDeps, owner: string, recom
   if (sameSnapshot(before, after)) return null;
   deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: recommendation.title, key, before, after: snapshot(panel) }].slice(-20), future: [] } }));
   return recommendation.kind === "add-transformation" ? findNode(after.scene, recommendation.nodeId)?.transformations.find(item => !existing.has(item.id)) ?? null : null;
+}
+
+/**
+ * Accept a suggested hidden parameter: the constant becomes a property of its
+ * transformation and the module reads it, with no regeneration. The new program
+ * is prepared first and the module is swapped into the running result in place
+ * (nothing drawn is lost); scene and code are then committed together as one
+ * applied entry, so Undo apply takes both back. Returns whether it was added.
+ */
+export async function acceptParameter(deps: StudioDeps, owner: string, item: ParameterSuggestion) {
+  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `「${item.label}」을(를) 추가하지 못했습니다: ${why}` }); return false; };
+  if (!panel.generated) return fail("이 프레임에 코드가 없습니다");
+  const result = exposeParameter(panel.scene, panel.generated, item);
+  if ("error" in result) return fail(`${result.error}. 코드가 바뀌었으면 Inspect again을 해주세요`);
+  return swapModule(deps, owner, result, moduleKeyOf(panel.scene, item.nodeId)!, { title: `${item.label} 노출`, key: `parameter:${item.nodeId}:${item.id}` }, fail);
+}
+
+/**
+ * Apply an inspection's recorded fields: the module also keeps the per-item
+ * quantity on each item record, so overlays can show it per item. Only the code
+ * changes (in place, one applied entry). Returns whether it was applied now.
+ */
+export async function applyRecording(deps: StudioDeps, owner: string, item: Recording) {
+  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `항목 기록(${item.fields.join(", ")})을 추가하지 못했습니다: ${why}` }); return false; };
+  if (!panel.generated) return fail("이 프레임에 코드가 없습니다");
+  if (recordingApplied(panel.scene, panel.generated.code, item)) return false;
+  const result = recordFields(panel.scene, panel.generated, item);
+  if ("error" in result) return fail(`${result.error}. 코드가 바뀌었으면 Inspect again을 해주세요`);
+  return swapModule(deps, owner, { scene: panel.scene, generated: result.generated }, moduleKeyOf(panel.scene, item.nodeId)!, { title: `항목 기록: ${item.fields.join(", ")}`, key: `records:${item.nodeId}:${item.fields.join(",")}` }, fail);
+}
+
+/**
+ * Put a program with one module edited in place: it is prepared first, the module
+ * is swapped into the running result (nothing drawn is lost), and scene and code
+ * are committed together as one applied entry, so Undo apply takes both back.
+ */
+async function swapModule(deps: StudioDeps, owner: string, next: { scene: Scene; generated: GeneratedCode }, moduleKey: string, entry: { title: string; key: string }, fail: (why: string) => boolean) {
+  const panel = deps.panel(owner), before = snapshot(panel), code = next.generated.code, previous = panel.generated?.code;
+  let executable: string;
+  try { executable = preparedFor(code) ?? await prepareProgram(code); }
+  catch (error) { return fail(error instanceof Error ? error.message : "코드 검사를 통과하지 못했습니다"); }
+  if (deps.panel(owner).generated?.code !== previous) return fail("그 사이 코드가 바뀌었습니다");
+  const preview = deps.preview(owner), text = programModules(executable).get(moduleKey);
+  if (text && panel.executable && preview?.isReadyFor(panel.executable)) preview.inject(text, executable, moduleKey);
+  deps.updatePanel(owner, current => {
+    const patch = { ...ops.commitScene(current, next.scene), generated: next.generated, codeDraft: liveSceneSource(next.generated, next.scene), executable, preparedCode: code, runtimeError: "", error: "" };
+    const applied = { id: crypto.randomUUID(), ...entry, before, after: snapshot({ ...current, ...patch } as SketchPanel) };
+    return { ...patch, applied: { past: [...current.applied.past, applied].slice(-20), future: [] } };
+  });
+  // A brush made from this frame keeps running the module as it is now.
+  deps.refreshBrushCode?.(owner, code);
+  return true;
 }
 
 /** Undo (or redo) the last applied recommendation: the frame's scene, code and prompt go back (or forward) together. */
