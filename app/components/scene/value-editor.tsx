@@ -19,7 +19,6 @@ export type SocketActions = {
   onSwap: (path: string[], choice: SlotChoice) => void;
   onCopy: (path: string[]) => void;
   onPaste: (path: string[], dropped?: AlgorithmClip) => void;
-  onMakePen: (path: string[]) => void;
   /** The block plugged at `path`, as something that can be dragged elsewhere. */
   clipFor: (path: string[]) => AlgorithmClip | null;
   openMenu: (event: React.MouseEvent, items: MenuItem[], title?: string) => void;
@@ -61,7 +60,6 @@ function AlgorithmBlock(props: SocketProps & { value: AlgorithmCall }) {
     { label: "Copy block", hint: "with its arguments", onSelect: () => props.onCopy(path) },
     ...pasteItem(props),
     "separator",
-    { label: "Make pen", onSelect: () => props.onMakePen(path) },
     { label: "Unplug (use a number)", disabled: !props.allowSwap, onSelect: () => props.onSwap(path, { type: "number" }) },
   ], name);
   return <div className={`algorithm-block depth-${Math.min(depth, 3)}`} style={blockStyle(value.algorithmId)} onContextMenu={menu} data-algorithm-id={value.algorithmId}>

@@ -12,11 +12,11 @@ test("editing each sketch's panel and undo data leaves other panels intact", () 
   const source = panels.source;
   panels = updateSketchPanel(panels, "sketch-a", "scene", sampleScene());
   panels = updateSketchPanel(panels, "sketch-a", "instruction", previous => `${previous}파란색`);
-  panels = updateSketchPanel(panels, "sketch-a", "annotationHistory", { present: [{ id: "stroke", points: [{ x: .1, y: .1 }, { x: .5, y: .5 }] }], past: [[]], future: [] });
+  panels = updateSketchPanel(panels, "sketch-a", "role", "example");
   assert.equal(panels.source, source);
   assert.equal(panels.source.instruction, "");
-  assert.equal(panels["sketch-a"].annotationHistory.past.length, 1);
-  assert.equal(panels.source.annotationHistory.past.length, 0);
+  assert.equal(panels["sketch-a"].role, "example");
+  assert.equal(panels.source.role, "sketch");
   const sketch = panels["sketch-a"];
   panels = updateSketchPanel(panels, "source", "codeDraft", "independent unsaved code");
   assert.equal(panels["sketch-a"], sketch);

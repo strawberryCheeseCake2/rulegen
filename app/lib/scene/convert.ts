@@ -1,8 +1,9 @@
-import type { AIAlgorithm, AIArgValue, AIMachine, AINode, AITransformation, AIValue } from "./ai-schema";
+import type { AIAlgorithm, AIArgValue, AICompose, AIMachine, AINode, AITransformation, AIValue } from "./ai-schema";
+import type { SemanticPen } from "../schema";
 import type { Algorithm, NodeMachine, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
-import { importAlgorithms, instantiate, normalizeCall } from "./algorithms";
+import { importAlgorithms, instantiate, normalizeCall, remapValue } from "./algorithms";
 import { clampNesting, clampRegion, fitCollections } from "./graph";
-import { MAX_NESTING_DEPTH } from "./schema";
+import { MAX_NESTING_DEPTH, MAX_NODE_PROPERTIES, MAX_TRANSFORMATIONS } from "./schema";
 import { conformMachine } from "./machines";
 import { validateScene } from "./validate";
 
@@ -59,13 +60,40 @@ export function convertNodes(nodes: AINode[], library: Algorithm[], ids: Ids): S
   }));
 }
 
-/** A complete scene from an extraction, composition or revision response. */
+/** A complete scene from a model response. */
 export function convertScene(output: { algorithms: AIAlgorithm[]; nodes: AINode[] }, library: Algorithm[] = []): Scene {
   const { library: algorithms, ids } = mergeAIAlgorithms(library, output.algorithms);
-  // Deeper than allowed: the extra levels are flattened into their level-4 ancestor.
-  const scene = fitCollections(clampNesting({ algorithms, nodes: breakCycles(convertNodes(output.nodes, algorithms, ids)) }, MAX_NESTING_DEPTH));
-  // Unused definitions stay: they are alternatives the user can swap in elsewhere.
-  return validateScene(scene);
+  return settle({ algorithms, nodes: convertNodes(output.nodes, algorithms, ids) });
+}
+// Deeper than allowed: the extra levels are flattened into their level-4 ancestor. Unused definitions stay (alternatives to swap in).
+const settle = (scene: Scene) => validateScene(fitCollections(clampNesting({ ...scene, nodes: breakCycles(scene.nodes) }, MAX_NESTING_DEPTH)));
+
+/**
+ * A composed scene: each node takes the transformations of the pens it lists
+ * (exact copies of what their minimal examples show, with their algorithms and an
+ * `origin` pointing back), then its own. Ids that collide on a node are renamed.
+ */
+export function convertComposition(output: AICompose, pens: SemanticPen[]): Scene {
+  let { library, ids } = mergeAIAlgorithms([], output.algorithms);
+  // Machines are taken after the pens are in, so their states can set the pens' properties.
+  const nodes = convertNodes(output.nodes.map(node => ({ ...node, machine: null })), library, ids).map((node, i) => {
+    // The pens' ids win (machine states address their properties); the node's own ones are renamed on a collision.
+    const taken = new Set<string>(), properties = new Set<string>();
+    const unique = (seen: Set<string>, id: string) => { let next = id, suffix = 2; while (seen.has(next)) next = `${id.slice(0, 70)}-${suffix++}`; seen.add(next); return next; };
+    const added: SemanticTransformation[] = [];
+    for (const penId of [...new Set(output.nodes[i].pens)]) {
+      const source = pens.find(pen => pen.id === penId)?.transformation;
+      if (!source || added.length >= MAX_TRANSFORMATIONS || properties.size + source.transformation.properties.length > MAX_NODE_PROPERTIES) continue;
+      const imported = importAlgorithms(library, source.library); library = imported.library;
+      const transformation = source.transformation;
+      added.push({ ...transformation, id: unique(taken, transformation.id), origin: { frameId: source.frameId, transformationId: transformation.id, label: transformation.label },
+        properties: transformation.properties.map(property => ({ ...property, id: unique(properties, property.id), value: remapValue(property.value, imported.ids) })) });
+    }
+    const own = node.transformations.map(transformation => ({ ...transformation, id: unique(taken, transformation.id), properties: transformation.properties.map(property => ({ ...property, id: unique(properties, property.id) })) }));
+    const machine = output.nodes[i].machine;
+    return conformMachine({ ...node, transformations: [...added, ...own].slice(0, MAX_TRANSFORMATIONS), machine: machine ? convertMachine(machine, library, ids) : null });
+  });
+  return settle({ algorithms: library, nodes });
 }
 function breakCycles(nodes: SceneNode[]): SceneNode[] {
   const byId = new Map(nodes.map(node => [node.id, node]));

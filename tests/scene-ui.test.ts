@@ -1,4 +1,3 @@
-import { emptyMachineDraft } from "../app/lib/sketch-panels";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
@@ -15,14 +14,14 @@ const handlers = new Proxy({}, { get: () => noop }) as Record<string, () => void
 
 test("the layer panel shows the collection/object tree with machine badges and grouping actions", () => {
   const scene = sampleScene();
-  const html = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene, selected: ["orb"], hovered: null, busy: false, canUndo: true, canRedo: false, title: "Sketch", canExtract: true } as unknown as LayerPanelProps));
+  const html = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene, selected: ["orb"], hovered: null, busy: false, canUndo: true, canRedo: false, title: "Sketch", canDecompose: true } as unknown as LayerPanelProps));
   assert.match(html, /role="tree"/);
   assert.match(html, /aria-level="1"[^>]*>.*Tree/);
   assert.match(html, /aria-selected="true" aria-level="2"[^>]*>.*Orb/);
   assert.match(html, /2S/, "machine badge");
-  for (const label of ["New brush stamp", "New object", "Group selection", "Ungroup brush stamp", "Delete selected layers", "Undo layer change"]) assert.match(html, new RegExp(`aria-label="${label}"`));
-  const empty = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene: { nodes: [], algorithms: [] }, selected: [], hovered: null, busy: false, canUndo: false, canRedo: false, title: "Sketch", canExtract: true } as unknown as LayerPanelProps));
-  assert.match(empty, /Extract brush stamps/);
+  for (const label of ["New collection", "New object", "Group selection", "Ungroup collection", "Delete selected layers", "Undo layer change"]) assert.match(html, new RegExp(`aria-label="${label}"`));
+  const empty = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene: { nodes: [], algorithms: [] }, selected: [], hovered: null, busy: false, canUndo: false, canRedo: false, title: "Sketch", canDecompose: true, onDecompose: () => {} } as unknown as LayerPanelProps));
+  assert.match(empty, /Decompose sketch/);
 });
 
 test("the inspector shows a node's stack of semantic transformations with nested algorithm sliders and state-linked values", () => {
@@ -54,14 +53,14 @@ test("the inspector shows a node's stack of semantic transformations with nested
 
 test("the bottom panel shows only the selected node's machine graph; constraints live in the inspector", () => {
   const scene = sampleScene();
-  const html = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[1], editingStateId: "moving", runtimeStateId: "idle", playing: true, busy: false, hasCode: true, target: { kind: "state", id: "moving" }, draft: emptyMachineDraft() } as never));
+  const html = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[1], editingStateId: "moving", runtimeStateId: "idle", playing: true, busy: false, hasCode: true, target: { kind: "state", id: "moving" } } as never));
   assert.match(html, /class="machine-state selected-state attached-state[^"]*"[^>]*aria-label="Select state 이동" aria-pressed="true"/);
   assert.doesNotMatch(html, /machine-refine-composer/, "the refine composer opens only on request");
   assert.match(html, /원 클릭/); assert.match(html, /정착 후 대기/);
   assert.doesNotMatch(html, /State constraints/);
-  const none = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[0], editingStateId: null, runtimeStateId: null, playing: true, busy: false, hasCode: true, target: null, draft: emptyMachineDraft() } as never));
+  const none = renderToStaticMarkup(createElement(NodeMachinePanel, { ...handlers, scene, node: scene.nodes[0], editingStateId: null, runtimeStateId: null, playing: true, busy: false, hasCode: true, target: null } as never));
   assert.match(none, /Tree has no state machine/);
-  assert.match(none, /Generate state machine for Tree/);
+  assert.doesNotMatch(none, /Generate state machine/, "machines come from Compose (interaction marks), not a separate AI step");
 });
 
 test("the algorithm library shows shared definitions, their users and import sources", () => {

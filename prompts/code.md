@@ -6,7 +6,7 @@ Generate a complete working p5.js 1.11 sketch, as one independent module per roo
 - Each node's `transformations` apply IN ORDER, each building on the result of the previous one. Collections apply their transformations to all members; nested collections compose (outer transformations wrap the inner ones). Objects draw their primitive inside their region.
 - Nodes with a `machine` must react to their states as described in each state description; follow the transitions exactly (timed transitions are applied by the host, event transitions are emitted by your input handling).
 - If `previous` code is supplied, preserve its visual composition and algorithms while applying the current scene; if an error is supplied, fix it.
-- If `confirmedRevisionSummary` and `annotations` are supplied, the coral freehand strokes over the supplied generated image are user feedback describing desired changes, not part of the result. Implement the confirmed changes and their region-specific requests following the text clarification in `instruction`; do not copy the coral feedback layer.
+- `references` (when supplied): working code of the MINIMAL EXAMPLES some transformations were taken from (`transformationId` = the transformation in this scene, `label`, `code` = that example's module). Those transformations are exactly what the examples show and the user tuned there: reuse each example's implementation (its helper functions and the way it reads its values), adapted to this scene's node ids, keys and boxes, instead of writing new logic. Apply them in the node's transformation order.
 - Visibly implement every node, in its module. The page behind the canvas is light; draw a backdrop only as part of a node.
 - Explain the resulting rendering in Korean.
 

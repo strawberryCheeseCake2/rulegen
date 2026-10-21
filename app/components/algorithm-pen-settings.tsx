@@ -2,18 +2,25 @@ import type { SemanticPen } from "../lib/schema";
 import { describeValue, valueLeaves } from "../lib/scene/values";
 import { Icon } from "./icons";
 
-export function AlgorithmPenSettings({ pen, onChange, onClose, onRemove }: { pen: SemanticPen; onChange: (pen: SemanticPen) => void; onClose: () => void; onRemove?: () => void }) {
-  const interaction = pen.kind === "interaction";
-  const call = pen.algorithm?.call, names = (id: string) => pen.algorithm?.library.find(item => item.id === id)?.name || id;
-  return <div className="algorithm-pen-popover" role="group" aria-label={interaction ? "Interaction pen settings" : "Algorithm pen settings"}>
-    <div className="pencil-popover-heading"><span>{pen.name}</span><button aria-label={interaction ? "Close Interaction pen settings" : "Close algorithm pen settings"} onClick={onClose}><Icon name="close" size={14} /></button></div>
-    <p className="algorithm-pen-hint">{interaction ? "클릭할 곳, 호버 영역, 드래그 방향과 놓을 위치를 스케치로 표시하세요. 펜 의미에 원하는 동작을 적으면 AI prompt와 state machine이 사용자 입력과 반응을 함께 해석합니다." : "색이 다른 일반 연필처럼 자유롭게 그리세요. 각 선에 이 알고리즘의 의미가 담기며, Compose할 때 다른 자국과 함께 해석됩니다."}</p>
-    <div className="algorithm-origin"><strong>{call ? names(call.algorithmId) : "User interaction"}</strong><span>{interaction ? "DEFAULT PEN" : "ALGORITHM BLOCK"}</span></div>
-    <p className="algorithm-source">{pen.source.label}</p>
-    <label className="semantic-meaning"><span>{interaction ? "INTERACTION SEMANTIC" : "PEN SEMANTIC"}</span><textarea aria-label={interaction ? "Interaction pen semantic" : "Algorithm pen semantic"} rows={4} maxLength={2000} value={pen.meaning} onChange={e => onChange({ ...pen, meaning: e.target.value })} /></label>
-    {call && call.args.length > 0 && <dl className="semantic-parameter-snapshot">{valueLeaves(call).slice(0, 8).map(leaf => <div key={leaf.path.join("/")}><dt>{leaf.path.join(" · ")}</dt><dd>{describeValue(leaf.value, names)}</dd></div>)}</dl>}
-    <label className="semantic-color"><span>Pen color</span><input aria-label={interaction ? "Interaction pen ink color" : "Algorithm pen ink color"} type="color" value={pen.color} onChange={e => onChange({ ...pen, color: e.target.value })} /></label>
-    <p className="algorithm-pen-hint">{interaction ? "이미 그린 annotation은 그릴 때의 의미를 유지합니다. 이 색과 자국은 사용자 동작을 설명하며 최종 작품에 그대로 그려지지 않습니다." : "이미 그린 자국은 그릴 때의 의미를 유지합니다. 펜 색은 알고리즘을 구분하는 표시입니다."}</p>
+/** Settings of the pen in use: the interaction pen's meaning, or what a transformation pen carries (from its minimal example). */
+export function AlgorithmPenSettings({ pen, onChange, onClose, onRemove, onExample }: { pen: SemanticPen; onChange: (pen: SemanticPen) => void; onClose: () => void; onRemove?: () => void; onExample?: () => void }) {
+  const interaction = pen.kind === "interaction", source = pen.transformation;
+  const names = (id: string) => source?.library.find(item => item.id === id)?.name || id;
+  return <div className="algorithm-pen-popover" role="group" aria-label={interaction ? "Interaction pen settings" : "Transformation pen settings"}>
+    <div className="pencil-popover-heading"><span>{pen.name}</span><button aria-label={interaction ? "Close Interaction pen settings" : "Close transformation pen settings"} onClick={onClose}><Icon name="close" size={14} /></button></div>
+    <p className="algorithm-pen-hint">{interaction ? "클릭할 곳, 호버 영역, 드래그 방향과 놓을 위치를 스케치로 표시하세요. 펜 의미에 원하는 동작을 적으면 Compose가 사용자 입력과 반응을 함께 해석합니다."
+      : "이 펜으로 그린 자국은 \"이 transformation을 여기에\"라는 뜻입니다. 연필로 형태와 배치를 그리고, 이 펜으로 그 transformation이 적용될 곳을 표시한 뒤 Compose하세요."}</p>
+    {source && <>
+      <div className="algorithm-origin"><strong>{source.transformation.label || source.transformation.id}</strong><span>{source.subject.kind === "collection" ? "COLLECTION" : "OBJECT"} · {source.subject.name}</span></div>
+      {source.transformation.description && <p className="algorithm-source">{source.transformation.description}</p>}
+      {source.transformation.properties.length > 0 && <dl className="semantic-parameter-snapshot">{source.transformation.properties.flatMap(property => valueLeaves(property.value).slice(0, 3).map(leaf => <div key={`${property.id}/${leaf.path.join("/")}`}>
+        <dt>{[property.label, ...leaf.path].join(" · ")}</dt><dd>{describeValue(leaf.value, names)}</dd></div>)).slice(0, 10)}</dl>}
+      {onExample && <button className="alternative-button" onClick={onExample}><Icon name="arrow" size={13} />최소 예제 프레임 보기</button>}
+      <p className="algorithm-pen-hint">펜은 최소 예제를 따라갑니다. 예제 프레임에서 값이나 transformation을 고치면 Compose할 때 그 최신 상태가 쓰입니다. 예제 프레임을 지우면 마지막 상태가 남습니다.</p>
+    </>}
+    {interaction && <label className="semantic-meaning"><span>INTERACTION SEMANTIC</span><textarea aria-label="Interaction pen semantic" rows={4} maxLength={2000} value={pen.meaning} onChange={e => onChange({ ...pen, meaning: e.target.value })} /></label>}
+    <label className="semantic-color"><span>Pen color</span><input aria-label={interaction ? "Interaction pen ink color" : "Transformation pen ink color"} type="color" value={pen.color} onChange={e => onChange({ ...pen, color: e.target.value })} /></label>
+    {interaction && <p className="algorithm-pen-hint">이미 그린 annotation은 그릴 때의 의미를 유지합니다. 이 색과 자국은 사용자 동작을 설명하며 최종 작품에 그대로 그려지지 않습니다.</p>}
     {onRemove && <button className="copy-button" onClick={onRemove}>Remove pen from toolbar<Icon name="close" size={12} /></button>}
   </div>;
 }

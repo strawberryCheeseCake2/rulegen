@@ -3,8 +3,6 @@ import type { SketchPanel } from "../lib/sketch-panels";
 import type { Region } from "../lib/scene/schema";
 import type { AlgorithmClip } from "../lib/scene/transfer";
 import type { FrameId } from "../lib/workspace";
-import type { Brush } from "../lib/brushes";
-import type { Scene } from "../lib/scene/schema";
 import type { CodePreviewHandle } from "../components/code-preview";
 
 export type PanelPatch = Partial<SketchPanel> | ((panel: SketchPanel) => Partial<SketchPanel>);
@@ -27,21 +25,16 @@ export type StudioDeps = {
   active?: () => string;
   toast: (message: string) => void;
   focus: (frame: FrameId) => void;
-  addPen: (make: (id: string, color: string) => SemanticPen) => void;
+  /** Add a pen to the toolbar (made with a free id and color); null when the toolbar is full. */
+  addPen: (make: (id: string, color: string) => SemanticPen | null) => SemanticPen | null;
+  /** A pen as it reads now (a transformation pen follows its minimal example frame). */
+  resolvePen: (pen: SemanticPen) => SemanticPen;
   /** Studio-wide algorithm clipboard, shared by every sketch. */
   clip: () => AlgorithmClip | null;
   setClip: (clip: AlgorithmClip) => void;
   activate: (owner: string) => void;
-  /** Add a sketch frame beside `fromId` and return its id (no AI involved). */
-  createFrame: (fromId: string, name: string) => string | null;
-  /** Register a brush tool group for each root collection of an AI-generated scene. */
-  addBrushes: (frameId: string, scene: Scene) => Brush[];
-  /** A minimal example frame becomes a sub brush of the brush that node `nodeId` of frame `owner` belongs to. */
-  addSubBrush?: (owner: string, nodeId: string, frameId: string, scene: Scene, name: string) => Brush | null;
+  /** Add frames beside `fromId` (a grid for several) and return their ids; fewer when the board is full. No AI involved. */
+  createFrames: (fromId: string, names: string[]) => string[];
   /** The running result of a frame, if it is mounted. */
   preview: (owner: string) => CodePreviewHandle | undefined;
-  /** Show (creating if needed) the proxy frame of node `nodeId` of frame `owner`. */
-  openProxy?: (owner: string, nodeId: string) => void;
-  /** Save the code module of each brush that comes from this frame. */
-  refreshBrushCode?: (frameId: string, code: string) => void;
 };

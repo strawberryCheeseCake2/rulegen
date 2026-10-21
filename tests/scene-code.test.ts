@@ -95,12 +95,13 @@ test("the module contract: one self-contained module per root, reading only its 
 
 test("modules are stored separately and run as instances: a copy with other node ids draws from the same module", async () => {
   const { programModules, assembleProgram, sceneInstances } = await import("../app/lib/scene/machines");
-  const { transplantNodes } = await import("../app/lib/scene/transfer");
   const scene = sampleScene(), generated = connect(sceneProgram, scene);
   const modules = programModules(generated.code);
   assert.deepEqual([...modules.keys()], ["tree"]);
-  const copy = transplantNodes(scene, "tree", scene, { x: .2, y: .5 });
-  const stamped = copy.scene;
+  // A copy of the tree with its own ids, drawn by the same module (its code ids are the original's).
+  const copy = { rootId: "tree-2", ids: new Map([["tree", "tree-2"], ["orb", "orb-2"]]) };
+  const moved = (region: { x: number; y: number; w: number; h: number }) => ({ ...region, x: Math.max(0, region.x - .25) });
+  const stamped = { ...scene, nodes: [...scene.nodes, ...scene.nodes.map(node => ({ ...node, id: copy.ids.get(node.id)!, parentId: node.parentId ? copy.ids.get(node.parentId)! : null, codeId: node.id, ...(node.parentId ? {} : { codeModule: "tree" }), region: moved(node.region) }))] };
   assert.deepEqual(sceneInstances(stamped).map(item => [item.root, item.module, item.map]), [["tree", "tree", { tree: "tree", orb: "orb" }], [copy.rootId, "tree", { tree: copy.rootId, orb: copy.ids.get("orb") }]]);
   const sketch = run(assembleProgram(stamped, [...modules.values()]));
   sketch.draw();
@@ -184,7 +185,7 @@ test("a value change re-runs only the setups that read it, so trails and drag st
 
 test("modules derive input-made things from m.history(), so a value change adjusts them in place; baking modules fall back to replaying the input", async () => {
   const { assembleProgram, moduleSource } = await import("../app/lib/scene/machines");
-  const { bakesInput } = await import("../app/lib/proxy-frames");
+  const bakesInput = (module: string) => /mouse(Pressed|Dragged|Released)|touch(Started|Moved|Ended)/.test(module) && !/\bm\.history\s*\(/.test(module);
   const scene = sampleScene();
   // Dots along every drag, spaced by the current radius: nothing is stored when the input arrives.
   const derived = `function (m) {

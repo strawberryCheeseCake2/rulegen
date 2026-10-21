@@ -3,7 +3,7 @@ import { ensureFramePositions, fitFrames, FRAME_HEIGHT, FRAME_WIDTH, zoomAt, typ
 import { Icon } from "./icons";
 export type WorkspaceHandle = { fit: () => void; focus: (id: FrameId) => void; zoom: (amount: number) => void };
 type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode };
-/** A relation drawn between two frames (a proxy frame → the frame it controls). */
+/** A relation drawn between two frames (a sketch → the example or composition made from it). */
 export type FrameLink = { from: FrameId; to: FrameId; label: string };
 type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; onChange: (layout: WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void };
 export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function FreeformWorkspace(props, ref) {
@@ -42,7 +42,7 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
     else p.onChange({ ...p.layout, camera: { ...c, x: c.x + dx, y: c.y + dy } });
     d.x = e.clientX; d.y = e.clientY;
   }} onPointerUp={finish} onPointerCancel={finish}>
-    <div className="board-top-hint"><span className="eyebrow">FREEFORM WORKSPACE</span><span>Sketch → features → a new frame</span></div>
+    <div className="board-top-hint"><span className="eyebrow">FREEFORM WORKSPACE</span><span>Sketch → Decompose → minimal examples &amp; pens → Compose</span></div>
     <div className="world-layer" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
       {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
       {props.links && props.links.length > 0 && <svg className="frame-links" aria-hidden="true"><defs><marker id="frame-link-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10z" /></marker></defs>

@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { MachineTarget } from "../../lib/schema";
 import type { NodeMachine } from "../../lib/scene/schema";
 import { curvePath, emptyLayoutOverride, machineLayout, STATE_HEIGHT, STATE_WIDTH, type GraphStroke, type LayoutOverride } from "../../lib/scene/machine-layout";
 
@@ -16,6 +15,8 @@ type Props = {
   /** Inspection: the state (and the transition taken) of the step being looked at, and states/transitions the inspection is about. */
   inspected?: MachineInspection | null;
 };
+/** A state or transition picked in the graph. */
+export type MachineTarget = { kind: "state" | "transition"; id: string };
 export type MachineInspection = { state: string | null; from: string | null; transition: string | null; states: string[]; transitions: string[] };
 type Gesture = { pointer: number; x: number; y: number; moved: boolean } & (
   { mode: "pan"; start: Point; transition?: string } | { mode: "draw"; points: GraphStroke } |

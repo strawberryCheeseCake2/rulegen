@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { aiScene } from "./fixtures/scene";
+import { aiDecomposition } from "./fixtures/scene";
 import { requestSchema } from "../app/lib/schema";
 
 const root = mkdtempSync(path.join(tmpdir(), "rulegen-errors-"));
@@ -16,7 +16,7 @@ after(() => {
 });
 const image = "data:image/png;base64,AAAA";
 const overloaded = () => Response.json({ error: { message: "Our servers are currently overloaded.", type: "service_unavailable_error", code: "server_is_overloaded" } }, { status: 503 });
-const success = () => Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify(aiScene) }] }] });
+const success = () => Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify(aiDecomposition) }] }] });
 const files = (dir: string): string[] => { try { return readdirSync(dir, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile()).map(entry => path.join(entry.parentPath, entry.name)); } catch { return []; } };
 const errorFiles = () => files(path.join(root, "errors")).filter(file => file.endsWith(".json"));
 const read = (file: string) => JSON.parse(readFileSync(file, "utf8"));
@@ -25,8 +25,8 @@ test("an overloaded OpenAI server (503) is retried with backoff and the generati
   const { runAI } = await import("../app/server/ai.server");
   let calls = 0;
   globalThis.fetch = async () => ++calls <= 2 ? overloaded() : success();
-  const result = await runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal) as { nodes: unknown[] };
-  assert.equal(calls, 3); assert.equal(result.nodes.length, 2);
+  const result = await runAI(requestSchema.parse({ intent: "decompose", image }), new AbortController().signal) as { items: unknown[] };
+  assert.equal(calls, 3); assert.equal(result.items.length, 3);
   const generation = files(path.join(root, "ai")).find(file => file.endsWith("log.json"))!;
   assert.deepEqual(read(generation).retries.map((item: { status: number }) => item.status), [503, 503]);
   assert.ok(files(path.dirname(generation)).some(file => file.endsWith("response-1-retry1.txt")), "each failed try is kept");
@@ -37,12 +37,12 @@ test("a persistent 503 fails with a clear message and is written to error-logs w
   let calls = 0;
   globalThis.fetch = async () => { calls++; return overloaded(); };
   const before = errorFiles().length;
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /과부하/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "decompose", image }), new AbortController().signal), /과부하/);
   assert.equal(calls, 4, "first try + 3 retries");
   const entry = read(errorFiles().at(-1)!);
   assert.equal(errorFiles().length, before + 1);
-  assert.equal(entry.source, "ai"); assert.equal(entry.status, 503); assert.equal(entry.providerCode, "server_is_overloaded"); assert.equal(entry.intent, "extract");
-  assert.match(entry.generation, /^\d{4}-\d{2}-\d{2}\/.*-extract-/);
+  assert.equal(entry.source, "ai"); assert.equal(entry.status, 503); assert.equal(entry.providerCode, "server_is_overloaded"); assert.equal(entry.intent, "decompose");
+  assert.match(entry.generation, /^\d{4}-\d{2}-\d{2}\/.*-decompose-/);
   assert.doesNotMatch(readFileSync(errorFiles().at(-1)!, "utf8"), /sk-test-secret/);
 });
 
@@ -50,7 +50,7 @@ test("an exhausted quota is not retried", async () => {
   const { runAI } = await import("../app/server/ai.server");
   let calls = 0;
   globalThis.fetch = async () => { calls++; return Response.json({ error: { code: "insufficient_quota" } }, { status: 429 }); };
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /사용 한도/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "decompose", image }), new AbortController().signal), /사용 한도/);
   assert.equal(calls, 1);
 });
 

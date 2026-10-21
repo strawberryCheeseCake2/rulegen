@@ -978,6 +978,14 @@
                 "type": "null"
               }
             ]
+          },
+          "pens": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
           }
         },
         "required": [
@@ -989,7 +997,8 @@
           "primitive",
           "region",
           "transformations",
-          "machine"
+          "machine",
+          "pens"
         ],
         "additionalProperties": false
       }

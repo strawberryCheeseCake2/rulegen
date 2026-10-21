@@ -6,7 +6,7 @@ import { sceneSchema } from "../app/lib/scene/validate";
 import { sceneBindings, sceneValues, valueAt } from "../app/lib/scene/values";
 import { clickTarget, descendantIds, groupNodes, layerTree, moveNodes, removeNodes, setParent, ungroupNode, updateNode } from "../app/lib/scene/graph";
 import { importAlgorithms, instantiate } from "../app/lib/scene/algorithms";
-import { makeAlgorithmPen, importAlgorithmCall, penAlgorithm } from "../app/lib/scene/pens";
+import { importAlgorithmCall } from "../app/lib/scene/algorithms";
 import { stateProperties } from "../app/lib/scene/machines";
 import * as ops from "../app/lib/scene/panel-ops";
 import { createSketchPanel, sketchPanelSchema } from "../app/lib/sketch-panels";
@@ -76,7 +76,7 @@ test("layer operations group, ungroup, nest and move members together like Figma
   assert.equal(clickTarget(scene, "orb", ["tree"]), "orb");
 });
 
-test("algorithms are reusable: plugged into other properties, imported across sketches, carried by pens", () => {
+test("algorithms are reusable: plugged into other properties and imported across frames with their dependencies", () => {
   const scene = sampleScene();
   const panel = { ...createSketchPanel(), scene };
   // Number slot → algorithm → number again.
@@ -95,14 +95,11 @@ test("algorithms are reusable: plugged into other properties, imported across sk
   const changed = { ...scene.algorithms[0], description: "different" };
   const merged = importAlgorithms(scene.algorithms, [scene.algorithms[0], changed]);
   assert.equal(merged.library.filter(algorithm => algorithm.description === "different")[0].id, "power-decay-2");
-  // Pens carry the call and every definition it depends on.
-  const pen = makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "structure" }, "source", "pen", "#3b73c4");
-  assert.deepEqual(pen.algorithm!.library.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
-  assert.equal(pen.source.label, "Tree · Branching");
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /알고리즘/);
-  const other = importAlgorithmCall({ nodes: [], algorithms: [] }, penAlgorithm(pen)!);
+  // An imported call brings every definition it depends on.
+  const call = instantiate(scene.algorithms, "recursive-branch");
+  const other = importAlgorithmCall({ nodes: [], algorithms: [] }, { call, library: scene.algorithms });
   assert.deepEqual(other.scene.algorithms.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
-  assert.deepEqual(other.call, pen.algorithm!.call);
+  assert.deepEqual(other.call, call);
   assert.deepEqual(instantiate(scene.algorithms, "recursive-branch").args.map(arg => arg.id), ["depth", "length"]);
 });
 

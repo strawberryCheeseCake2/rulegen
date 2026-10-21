@@ -21,7 +21,7 @@ export function sceneLiveStatus(generated: GeneratedCode | null, scene: Scene): 
 export const liveSceneSource = (generated: GeneratedCode | null, scene: Scene) => generated ? syncScene(generated.code, scene) : "";
 
 /**
- * Whole brush stamps (root nodes run by a module of the program) added or removed
+ * Whole roots (root nodes run by a module of the program) added or removed
  * keep a live program live: the module runs a new root as it is, and a removed
  * root's instance simply stops. The program then covers the new scene; any other
  * structural change still needs new code.

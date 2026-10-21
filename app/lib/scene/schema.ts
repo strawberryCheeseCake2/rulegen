@@ -50,29 +50,12 @@ export type Algorithm = z.infer<typeof algorithmSchema>;
 
 export const effectSchema = z.enum(["spatial", "stylistic", "temporal"]);
 export type Effect = z.infer<typeof effectSchema>;
-/**
- * A direct manipulation interface made for one property: a small p5 widget,
- * written for what the property means, shown in a proxy frame. Dragging it
- * sets the property's scalars on the target node. UI only, never seen by the code.
- */
-export const MAX_HANDLE_CODE = 8000;
-export const propertyHandleSchema = z.object({
-  /** The widget as written (`rulegenHandle(function (h) { … })`). */
-  code: z.string().min(1).max(MAX_HANDLE_CODE),
-  /** The same code with the runtime guards in place, as it runs. */
-  prepared: z.string().min(1).max(MAX_HANDLE_CODE * 4),
-  /** The scalars it drives: argument ids leading to each (empty: the property's own scalar). */
-  paths: z.array(z.array(idSchema).max(MAX_VALUE_DEPTH)).min(1).max(8),
-  /** What the gesture does, shown above the widget ("끌어서 가지를 벌리기"). */
-  hint: z.string().max(120).default(""),
-});
-export type PropertyHandle = z.infer<typeof propertyHandleSchema>;
-export const propertySchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: valueSchema,
-  /** Its direct manipulation interface (absent: none; a handle that does not parse, e.g. an older kind, is dropped). */
-  handle: propertyHandleSchema.optional().catch(undefined) });
+export const propertySchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: valueSchema });
 export type Property = z.infer<typeof propertySchema>;
 /** One semantic layer of a node ("Radial growth", "Wave propagation" …). A node stacks several, applied in order. */
-export const transformationSchema = z.object({ id: idSchema, label: z.string().max(100), description: z.string().max(1000), properties: z.array(propertySchema).max(MAX_PROPERTIES) });
+export const transformationSchema = z.object({ id: idSchema, label: z.string().max(100), description: z.string().max(1000), properties: z.array(propertySchema).max(MAX_PROPERTIES),
+  /** Taken from a transformation pen: the minimal example it came from (its code is the reference implementation). */
+  origin: z.object({ frameId: z.string().max(80), transformationId: idSchema, label: z.string().max(100) }).optional() });
 export type SemanticTransformation = z.infer<typeof transformationSchema>;
 
 export const nodeStateSchema = z.object({
@@ -98,8 +81,6 @@ export const sceneNodeSchema = z.object({
   primitive: z.string().max(40).default(""), region: regionSchema,
   transformations: z.array(transformationSchema).max(MAX_TRANSFORMATIONS).default([]),
   visible: z.boolean().default(true), machine: nodeMachineSchema.nullable().default(null),
-  /** The brush (reusable collection) this node is, or was stamped from. */
-  brushId: z.string().max(80).optional(),
   /** The node id its code module uses (a copy stamped from a brush keeps the brush's id). Absent = its own id. */
   codeId: z.string().max(80).optional(),
   /** Root nodes: the code module that draws it. Absent = the module named after its own id. */

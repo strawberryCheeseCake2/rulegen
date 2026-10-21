@@ -1,72 +1,65 @@
-import { applyHandles, handleSuggestionsSchema } from "./scene/handles";
 import { z } from "zod";
-import { projectSchema } from "./project";
-import { annotationSchema, imageSchema, requestSchema, generatedSchema, compositionPromptSchema, clarificationSchema, machineRefineResultSchema } from "./schema";
-import { showWorkspaceFrame } from "./workspace";
+import { MAX_PENS, MAX_SKETCH_FRAMES, projectSchema } from "./project";
+import { compositionPromptSchema, generatedSchema, type requestSchema } from "./schema";
+import { examplePen, semanticPenColors } from "./algorithm-pens";
+import { besideFrameGrid, showWorkspaceFrame } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
-import { sceneProposalSchema, sceneSchema } from "./scene/validate";
+import { decompositionSchema, exampleScene } from "./scene/minimal-example";
+import { sceneSchema } from "./scene/validate";
 
 export const recoveryContextSchema = z.object({
   project: projectSchema, owner: z.string().max(80),
-  region: z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().min(0).max(1), h: z.number().min(0).max(1) }).optional(),
-  annotations: z.array(annotationSchema).max(128).default([]), annotationImage: imageSchema.or(z.literal("")).default(""),
-  revisionInstruction: z.string().max(2000).default(""),
-  proposal: sceneProposalSchema.nullable().default(null),
 }).superRefine((context, ctx) => {
   if (context.owner !== "source" && !context.project.sketchFrames.some(frame => frame.id === context.owner)) ctx.addIssue({ code: "custom", message: "복원할 스케치를 찾지 못했습니다." });
 });
 export type RecoveryContext = z.infer<typeof recoveryContextSchema>;
-export const recoveredGenerationSchema = z.object({ project: projectSchema, owner: z.string(), annotations: z.array(annotationSchema).max(128).default([]), annotationImage: imageSchema.or(z.literal("")).default(""), revisionInstruction: z.string().max(2000).default(""), proposal: sceneProposalSchema.nullable().default(null) });
+export const recoveredGenerationSchema = z.object({ project: projectSchema, owner: z.string() });
 export type RecoveredGeneration = z.infer<typeof recoveredGenerationSchema>;
-
-const offsetRegion = <T extends { region: { x: number; y: number; w: number; h: number } }>(items: T[], region?: RecoveryContext["region"]) => region ? items.map(item => ({ ...item, region: { x: region.x + item.region.x * region.w, y: region.y + item.region.y * region.h, w: Math.max(.01, item.region.w * region.w), h: Math.max(.01, item.region.h * region.h) } })) : items;
 
 /** Rebuild the generated state without calling AI, including logs without project snapshots. */
 export function recoverGeneration(input: z.infer<typeof requestSchema>, result: unknown, context?: RecoveryContext): RecoveredGeneration {
-  const owner = context?.owner || "source";
+  let owner = context?.owner || "source";
   const project = context ? structuredClone(context.project) : projectSchema.parse({
     version: 2, name: "Recovered generation", artwork: { name: "Recovered sketch", strokes: [], photo: input.image || null, revision: 0 },
-    semanticPens: input.compositionPens.filter(pen => pen.kind === "algorithm").slice(0, 32),
     sketchPanels: { source: { scene: input.scene || undefined, generated: input.previous ? { title: "Previous result", explanation: "", code: input.previous } : null } },
   });
   const panel = project.sketchPanels[owner];
   const artwork = owner === "source" ? project.artwork : project.sketchFrames.find(frame => frame.id === owner)!.artwork;
-  const recovery: RecoveredGeneration = { project, owner, annotations: context?.annotations || input.annotations, annotationImage: context?.annotationImage || input.resultImage || "", revisionInstruction: context?.revisionInstruction || input.instruction, proposal: null };
-  const clearAnnotations = () => { recovery.annotations = []; recovery.annotationImage = ""; recovery.revisionInstruction = ""; };
-  const isCode = (value: unknown) => Boolean(value && typeof value === "object" && "code" in value);
   switch (input.intent) {
-    case "extract": {
-      const scene = sceneSchema.parse(result);
-      Object.assign(panel, sketchPanelSchema.parse({ scene: { ...scene, nodes: offsetRegion(scene.nodes, context?.region) }, analysisRevision: artwork.revision }));
-      clearAnnotations(); break;
+    case "decompose": {
+      // Its minimal example frames (without their code yet) and their pens, as the decomposition made them.
+      // (An example split into one piece was already minimal: nothing was made.)
+      const decomposition = decompositionSchema.parse(result), split = Boolean(input.targetTransformationId);
+      const room = split && decomposition.items.length < 2 ? 0 : Math.min(decomposition.items.length, MAX_SKETCH_FRAMES - project.sketchFrames.length);
+      const spots = besideFrameGrid(project.workspace.frames, owner, room);
+      for (const [i, item] of decomposition.items.slice(0, room).entries()) {
+        const { scene, example } = exampleScene(decomposition, item), id = `sketch-${crypto.randomUUID()}` as const, penId = crypto.randomUUID();
+        const pen = project.semanticPens.length < MAX_PENS ? examplePen(scene, id, example, penId, semanticPenColors[project.semanticPens.length % semanticPenColors.length]) : null;
+        project.sketchFrames.push({ id, artwork: { strokes: [], photo: null, name: `${item.transformation.label || "Transformation"} · example`.slice(0, 200), revision: 0 } });
+        project.sketchPanels[id] = sketchPanelSchema.parse({ role: "example", scene, sourceFrameId: owner, analysisRevision: artwork.revision, example: { ...example, sourceFrameId: owner, penId: pen?.id ?? "" } });
+        project.workspace.frames[id] = spots[i];
+        if (pen) project.semanticPens.push(pen);
+      }
+      break;
     }
-    case "compose":
-      if (isCode(result)) { panel.generated = generatedSchema.parse(result); panel.codeDraft = panel.generated.code; }
-      else { panel.scene = sceneSchema.parse(result); panel.selectedNodeIds = []; panel.editingStates = {}; panel.analysisRevision = artwork.revision; }
-      panel.generationMode = "compose"; panel.composePrompt = input.instruction; break;
+    case "compose": {
+      // A new composition frame beside the sketch (its code is generated again from there).
+      if (project.sketchFrames.length >= MAX_SKETCH_FRAMES) throw new Error("프레임이 가득 차 Compose 결과를 복원할 수 없습니다.");
+      const id = `sketch-${crypto.randomUUID()}` as const;
+      project.sketchFrames.push({ id, artwork: { strokes: [], photo: null, name: `${artwork.name} · composed`.slice(0, 200), revision: 0 } });
+      project.sketchPanels[id] = sketchPanelSchema.parse({ role: "composition", scene: sceneSchema.parse(result), sourceFrameId: owner, analysisRevision: artwork.revision, composePrompt: input.instruction });
+      project.workspace.frames[id] = besideFrameGrid(project.workspace.frames, owner, 1)[0];
+      owner = id; break;
+    }
     case "transform": panel.scene = sceneSchema.parse(result); panel.selectedNodeIds = input.targetNodeId ? [input.targetNodeId] : panel.selectedNodeIds; break;
-    case "state-machine": {
-      panel.scene = sceneSchema.parse(result); panel.selectedNodeIds = [input.targetNodeId];
-      const machine = panel.scene.nodes.find(node => node.id === input.targetNodeId)?.machine;
-      if (machine) panel.editingStates = { ...panel.editingStates, [input.targetNodeId]: machine.initialState };
-      break;
-    }
-    case "machine-refine": {
-      const refined = machineRefineResultSchema.parse(result);
-      panel.scene = refined.scene; panel.selectedNodeIds = [input.targetNodeId]; panel.composePrompt = refined.composePrompt;
-      break;
-    }
     case "code":
       panel.generated = generatedSchema.parse(result); panel.codeDraft = panel.generated.code; panel.dirtyNodeIds = [];
-      if (input.scene) panel.scene = context?.proposal && input.revisionSummary ? context.proposal.scene : input.scene;
-      clearAnnotations(); break;
+      if (input.scene) panel.scene = input.scene;
+      break;
     case "compose-prompt": panel.composePrompt = compositionPromptSchema.parse(result).prompt; break;
-    case "clarification": recovery.revisionInstruction = clarificationSchema.parse(result).clarification; break;
-    case "revision": recovery.proposal = sceneProposalSchema.parse(result); break;
-    case "inspect": case "concern": break; // An inspection (or a suggested concern) does not change the project.
-    case "handles": if (input.scene) { panel.scene = applyHandles(sceneSchema.parse(input.scene), input.targetNodeId, handleSuggestionsSchema.parse(result).handles); panel.selectedNodeIds = [input.targetNodeId]; } break;
   }
+  if (!project.sketchPanels[owner]) owner = "source";
   project.activeSketchId = owner;
   if (owner === "source") project.workspace = showWorkspaceFrame(project.workspace, "source");
-  return recoveredGenerationSchema.parse(recovery);
+  return recoveredGenerationSchema.parse({ project, owner });
 }

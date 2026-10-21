@@ -47,7 +47,7 @@ const isP = (node: t.Node) => t.isIdentifier(node, { name: "p" }) || (t.isMember
  * Validate model-written code against the scene and assemble the program.
  * The code is one `rulegenModule("<root id>", function (m) { … })` per root node
  * and nothing else; each module reads only its own nodes through `m`, so any
- * module can be lifted into another frame (a brush stamp) without regenerating.
+ * module can be lifted into another frame without regenerating.
  */
 export function connectScene(result: { title: string; explanation: string; code: string }, scene: Scene): GeneratedCode {
   const bindings = sceneBindings(scene), required = new Set(bindings.map(binding => binding.key));

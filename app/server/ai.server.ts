@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { requestSchema } from "../lib/schema";
 import { AIGenerationLog } from "./ai-log.server";
 import { recoverGeneration, type RecoveryContext } from "../lib/generation-recovery";
-import { intents, isIntent, outputSchema, type AIInput } from "./intents.server";
+import { intents, isIntent, outputSchema, strokeContext, type AIInput } from "./intents.server";
 import { loadPrompt } from "./prompts.server";
 import { errorDetails, logError } from "./error-log.server";
 for (const file of [".env.local", ".env"]) if (existsSync(file)) loadEnvFile(file);
@@ -33,7 +33,7 @@ export const configuration = () => ({ configured: Boolean(process.env.OPENAI_API
 
 /** Instructions = prompts/<intent>.md (+ the interaction contract when interaction marks exist). */
 export function instructionsFor(input: AIInput) {
-  const interaction = input.compositionPens.some(pen => pen.kind === "interaction") && ["compose-prompt", "extract", "compose", "state-machine", "machine-refine", "code"].includes(input.intent);
+  const interaction = input.compositionPens.some(pen => pen.kind === "interaction") && ["compose-prompt", "decompose", "compose", "code"].includes(input.intent);
   return loadPrompt(input.intent) + (interaction ? `\n\n${loadPrompt("contracts/interaction")}` : "");
 }
 
@@ -53,12 +53,9 @@ export async function runAI(input: z.infer<typeof requestSchema>, signal: AbortS
 
 function userContent(input: AIInput) {
   const intent = intents[input.intent as keyof typeof intents];
-  // Properties' direct manipulation widgets are UI: their code never goes to the model with the scene.
-  const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input), (key, value) => key === "handle" && value && typeof value === "object" && "prepared" in value ? undefined : value) }];
-  if (input.intent === "clarification" && input.resultImage) content.push({ type: "input_text", text: "Clean generated result before annotation:" }, { type: "input_image", image_url: input.resultImage, detail: "high" }, { type: "input_text", text: "Same result with the user's coral annotation sketch:" });
+  const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input)) }];
   if (input.image) content.push({ type: "input_image", image_url: input.image, detail: "high" });
-  if (input.intent === "machine-refine" && input.machineImage) content.push({ type: "input_text", text: "The target node's state machine graph as the user sees it (attached item outlined in orange, the user's annotation strokes in coral):" }, { type: "input_image", image_url: input.machineImage, detail: "high" });
-  if (intent.strokes && input.compositionStrokes.length) content.push({ type: "input_text", text: JSON.stringify({ compositionPens: input.compositionPens, compositionStrokes: input.compositionStrokes, canvas: { width: 900, height: 600 } }) });
+  if (intent.strokes && input.compositionStrokes.length) content.push({ type: "input_text", text: JSON.stringify(strokeContext(input)) });
   return content;
 }
 
@@ -67,7 +64,7 @@ type Message = { role: "user" | "assistant"; content: object[] | string };
 async function runGeneration(input: AIInput, signal: AbortSignal, log: AIGenerationLog) {
   if (!process.env.OPENAI_API_KEY) throw new Error("서버의 .env.local에 OPENAI_API_KEY를 설정해주세요.");
   if (!isIntent(input.intent)) throw new Error("알 수 없는 생성 요청입니다.");
-  if (inFlight >= 2) throw new Error("요청이 진행 중입니다. 잠시 후 다시 시도해주세요.");
+  if (inFlight >= 4) throw new Error("요청이 진행 중입니다. 잠시 후 다시 시도해주세요.");
   const intent = intents[input.intent];
   const problem = intent.check?.(input);
   if (problem) throw new Error(problem);

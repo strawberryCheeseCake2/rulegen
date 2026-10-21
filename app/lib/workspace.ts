@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Viewport } from "./schema";
 
-// Frames on the board are sketch frames (drawn on, rendering their own result)
-// and proxy frames (running the direct manipulation handles of a node of a sketch frame).
+// Frames on the board: the original sketch, more sketches, the minimal examples a
+// sketch is decomposed into, and compositions. Each is drawn on and renders its own result.
 
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const defaultFrames = () => ({ source: { x: 0, y: 0 } });
@@ -12,7 +12,7 @@ export const workspaceSchema = z.object({
   frames: z.object({ source: position.default(() => defaultFrames().source) }).catchall(position).default(defaultFrames),
 });
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
-export type FrameId = "source" | `sketch-${string}` | `proxy-${string}`;
+export type FrameId = "source" | `sketch-${string}`;
 export const FRAME_WIDTH = 900, FRAME_HEIGHT = 600, FRAME_GAP_X = 140, FRAME_GAP_Y = 140;
 
 export function removeWorkspaceFrame(layout: WorkspaceLayout, id: FrameId): WorkspaceLayout {
@@ -41,6 +41,19 @@ export function besideFramePosition(frames: WorkspaceLayout["frames"], fromId: s
   const candidate = { x: origin.x + FRAME_WIDTH + FRAME_GAP_X, y: origin.y };
   while (taken.some(f => Math.abs(f.x - candidate.x) < FRAME_WIDTH && Math.abs(f.y - candidate.y) < FRAME_HEIGHT)) candidate.y += FRAME_HEIGHT + FRAME_GAP_Y;
   return candidate;
+}
+/**
+ * Free spots for `count` frames derived from `fromId` (its minimal examples):
+ * a grid of columns of `rows` to its right, past any frame already there.
+ */
+export function besideFrameGrid(frames: WorkspaceLayout["frames"], fromId: string, count: number, rows = 3) {
+  const origin = frames[fromId] || frames.source || { x: 0, y: 0 }, taken = sketchPositions(frames);
+  const free = (spot: { x: number; y: number }) => !taken.some(f => Math.abs(f.x - spot.x) < FRAME_WIDTH && Math.abs(f.y - spot.y) < FRAME_HEIGHT);
+  // The first column right of the origin where the whole grid fits.
+  for (let shift = 1; ; shift++) {
+    const spots = Array.from({ length: count }, (_, i) => ({ x: origin.x + (shift + Math.floor(i / rows)) * (FRAME_WIDTH + FRAME_GAP_X), y: origin.y + (i % rows) * (FRAME_HEIGHT + FRAME_GAP_Y) }));
+    if (spots.every(free) || shift > 60) return spots;
+  }
 }
 export function zoomAt(camera: Viewport, zoom: number, anchor: { x: number; y: number }): Viewport {
   const next = Math.max(.15, Math.min(3, zoom));

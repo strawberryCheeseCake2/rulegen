@@ -1,4 +1,3 @@
-import type { MachineMark, MachineTarget } from "../schema";
 import type { NodeMachine } from "./schema";
 
 // Layout of a node's state machine graph, shared by the panel and the
@@ -80,73 +79,3 @@ export const bezier = ([a, b, c, d]: EdgeLayout["curve"], t: number) => {
   const u = 1 - t, k = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
   return { x: k[0] * a.x + k[1] * b.x + k[2] * c.x + k[3] * d.x, y: k[0] * a.y + k[1] * b.y + k[2] * c.y + k[3] * d.y };
 };
-const near = (p: Point, box: { x: number; y: number; w: number; h: number }, pad: number) => p.x >= box.x - pad && p.x <= box.x + box.w + pad && p.y >= box.y - pad && p.y <= box.y + box.h + pad;
-
-/** The states and transitions an annotation stroke touches, as readable references. */
-export function strokeTargets(layout: MachineLayout, stroke: GraphStroke) {
-  const hits: string[] = [];
-  for (const state of layout.states) if (stroke.some(p => near(p, { x: state.x, y: state.y, w: STATE_WIDTH, h: STATE_HEIGHT }, 16))) hits.push(`state ${state.id} 「${state.label}」`);
-  for (const edge of layout.edges) {
-    const samples = Array.from({ length: 21 }, (_, i) => bezier(edge.curve, i / 20));
-    const label = { x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - 10, w: edge.labelWidth, h: 20 };
-    if (stroke.some(p => near(p, label, 10) || samples.some(s => Math.hypot(s.x - p.x, s.y - p.y) < 14))) hits.push(`transition ${edge.id} 「${edge.fullLabel}」`);
-  }
-  return hits.slice(0, 16);
-}
-
-/** Bounds of the graph plus every annotation stroke (strokes may go past the grid). */
-export function snapshotBounds(layout: MachineLayout, strokes: GraphStroke[]) {
-  // Labels can be dragged above/left of the grid, and self loops rise above their state.
-  const points = [...strokes.flat(), ...layout.edges.flatMap(edge => [{ x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - 10 }, ...edge.curve])];
-  const x = Math.min(0, ...points.map(p => p.x - 12)), y = Math.min(0, ...points.map(p => p.y - 12));
-  const right = Math.max(layout.width, ...points.map(p => p.x + 12)), bottom = Math.max(layout.height, ...points.map(p => p.y + 12));
-  return { x, y, w: right - x, h: bottom - y };
-}
-
-/** Annotation strokes for AI: points normalized to the snapshot image and the items each touches. */
-export function machineMarks(layout: MachineLayout, strokes: GraphStroke[]): MachineMark[] {
-  const box = snapshotBounds(layout, strokes);
-  return strokes.slice(0, 64).map(stroke => {
-    const step = Math.max(1, Math.ceil(stroke.length / 64));
-    const points = stroke.filter((_, i) => i % step === 0).slice(0, 64).map(p => ({ x: Math.min(1, Math.max(0, (p.x - box.x) / box.w)), y: Math.min(1, Math.max(0, (p.y - box.y) / box.h)) }));
-    return { points, targets: strokeTargets(layout, stroke) };
-  });
-}
-
-const escape = (text: string) => text.replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" })[char]!);
-
-/** A standalone SVG of the graph, the attached item and the annotation (rasterized before sending). */
-export function machineSnapshotSvg(layout: MachineLayout, strokes: GraphStroke[], target: MachineTarget | null) {
-  const box = snapshotBounds(layout, strokes), font = "font-family=\"Inter, Arial, 'Apple SD Gothic Neo', sans-serif\"";
-  const picked = (kind: MachineTarget["kind"], id: string) => target?.kind === kind && target.id === id;
-  const edges = layout.edges.map(edge => {
-    const on = picked("transition", edge.id), color = on ? "#e07b00" : "#8fa79a";
-    return `<path d="${curvePath(edge.curve)}" fill="none" stroke="${color}" stroke-width="${on ? 3 : 1.4}"${edge.event ? " stroke-dasharray=\"4 3\"" : ""} marker-end="url(#${on ? "arrow-on" : "arrow"})"/>`
-      + `<g transform="translate(${edge.labelPoint.x},${edge.labelPoint.y})"><rect x="${-edge.labelWidth / 2}" y="-10" width="${edge.labelWidth}" height="20" rx="4" fill="#fffefa" stroke="${on ? "#e07b00" : "#c9d6cd"}" stroke-width="${on ? 2.5 : .8}"/>`
-      + `<text text-anchor="middle" dominant-baseline="central" font-size="10" fill="#4f6b5c" ${font}>${escape(edge.label)}</text></g>`;
-  }).join("");
-  const states = layout.states.map(state => {
-    const on = picked("state", state.id);
-    return `<rect x="${state.x}" y="${state.y}" width="${STATE_WIDTH}" height="${STATE_HEIGHT}" rx="6" fill="#ffffff" stroke="${on ? "#e07b00" : "#b9c9bf"}" stroke-width="${on ? 3.5 : 1}"/>`
-      + `<text x="${state.x + 12}" y="${state.y + 30}" font-size="12" font-weight="600" fill="#24342b" ${font}>${escape(Array.from(state.label).slice(0, 18).join(""))}</text>`
-      + `<text x="${state.x + 12}" y="${state.y + 52}" font-size="9" fill="#7d8e84" ${font}>${escape(state.id)}${state.initial ? " · initial" : ""}</text>`;
-  }).join("");
-  const marks = strokes.map(stroke => `<polyline points="${stroke.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#ff5a4e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>`).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.ceil(box.w)}" height="${Math.ceil(box.h)}" viewBox="${box.x} ${box.y} ${box.w} ${box.h}">`
-    + `<defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="#8fa79a"/></marker><marker id="arrow-on" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="#e07b00"/></marker></defs>`
-    + `<rect x="${box.x}" y="${box.y}" width="${box.w}" height="${box.h}" fill="#fbfcfa"/>${edges}${states}${marks}</svg>`;
-}
-
-/** Browser only: the snapshot SVG as a PNG data URL (at most 1600px wide). */
-export async function rasterizeSnapshot(svg: string) {
-  const size = /width="(\d+)" height="(\d+)"/.exec(svg)!, width = Number(size[1]), height = Number(size[2]);
-  const scale = Math.min(2, 1600 / width, 1600 / height);
-  const image = new Image();
-  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-  await image.decode();
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
-  const ctx = canvas.getContext("2d")!;
-  ctx.scale(scale, scale); ctx.drawImage(image, 0, 0, width, height);
-  return canvas.toDataURL("image/png");
-}

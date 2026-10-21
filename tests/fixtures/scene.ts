@@ -1,5 +1,5 @@
 import vm from "node:vm";
-import type { AIScene } from "../../app/lib/scene/ai-schema";
+import type { AIDecomposition, AIScene } from "../../app/lib/scene/ai-schema";
 import { convertScene } from "../../app/lib/scene/convert";
 import { prepareCode } from "../../app/server/code.server";
 
@@ -40,6 +40,25 @@ export const aiScene: AIScene = {
         { id: "press", from: "idle", to: "moving", label: "원 클릭", trigger: "event", afterMs: 1000 },
         { id: "settle", from: "moving", to: "idle", label: "정착 후 대기", trigger: "after", afterMs: 1200 },
       ] } },
+  ],
+};
+/** A model-style decomposition of a flower: an arrangement (collection) and a shape (object), sharing one algorithm id. */
+export const aiDecomposition: AIDecomposition = {
+  algorithms: [
+    { id: "radial-repeat", name: "Radial repeat", description: "중심 둘레에 같은 간격으로 놓습니다.", params: [{ id: "radius", label: "Radius", description: "거리", value: num(60, 0, 200, 1, "px") }] },
+    { id: "power-decay", name: "Power decay", description: "base·ratio^i", params: [{ id: "base", label: "Base", description: "", value: num(40, 4, 120) }, { id: "ratio", label: "Ratio", description: "", value: num(.85, .3, 1, .01) }] },
+  ],
+  transformations: [
+    { id: "radial-repetition", label: "Radial repetition", description: "꽃잎을 중심 둘레에 반복합니다.", subject: { kind: "collection", name: "Petals", description: "꽃잎들", primitive: "group" }, member: { name: "Petal", description: "꽃잎 하나", primitive: "petal" },
+      region: { x: .3, y: .2, w: .4, h: .6 }, properties: [
+        { id: "count", label: "Count", effect: "spatial", description: "꽃잎 수", value: num(7, 2, 24) },
+        { id: "layout", label: "Layout", effect: "spatial", description: "배치", value: { type: "algorithm", algorithmId: "radial-repeat", args: [] } },
+      ] },
+    { id: "petal-curl", label: "Petal curl", description: "꽃잎 끝이 말립니다.", subject: { kind: "object", name: "Petal", description: "말린 꽃잎", primitive: "petal" }, member: { name: "ignored", description: "", primitive: "" },
+      region: { x: .45, y: .2, w: .1, h: .25 }, properties: [{ id: "curl", label: "Curl", effect: "spatial", description: "", value: num(.4, 0, 1, .01) }] },
+    // The model repeated an id: it is made unique.
+    { id: "petal-curl", label: "Size falloff", description: "사본마다 작아집니다.", subject: { kind: "collection", name: "Petals", description: "", primitive: "group" }, member: null,
+      region: { x: .3, y: .2, w: .4, h: .6 }, properties: [{ id: "size", label: "Size", effect: "spatial", description: "", value: { type: "algorithm", algorithmId: "power-decay", args: [] } }] },
   ],
 };
 export const sampleScene = () => convertScene(structuredClone(aiScene));

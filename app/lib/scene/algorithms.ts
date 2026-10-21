@@ -99,3 +99,9 @@ export function uniqueAlgorithmId(library: Algorithm[], base: string) {
   while (findAlgorithm(library, id)) id = `${root}-${suffix++}`;
   return id;
 }
+
+/** Insert an algorithm from another sketch, returning the remapped call. */
+export function importAlgorithmCall(scene: Scene, source: { call: AlgorithmCall; library: Algorithm[] }) {
+  const { library, ids } = importAlgorithms(scene.algorithms, algorithmClosure(source.library, algorithmRefs(source.call)));
+  return { scene: { ...scene, algorithms: library }, call: remapValue(source.call, ids) as AlgorithmCall };
+}

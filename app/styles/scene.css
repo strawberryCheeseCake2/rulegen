@@ -594,3 +594,42 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-parameter-control { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .inspection-parameter-control input[type=range] { flex: 1; min-width: 0; }
 .inspection-parameter-control output { min-width: 52px; text-align: right; color: #34493e; font-variant-numeric: tabular-nums; }
+
+/* Workflow: sketch → decompose (examples + pens) → draw with pens → compose. */
+.workflow-panel { display: flex; flex-direction: column; gap: 12px; padding: 14px; margin-bottom: 18px; border: 1px solid #dce5d3; border-radius: 7px; background: #f8fbf3; }
+.workflow-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; }
+.workflow-step + .workflow-step { padding-top: 12px; border-top: 1px dashed #dce5d3; }
+.workflow-step-number { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #397461; color: #fff; font-size: 11px; font-weight: 700; }
+.workflow-step strong { font-size: 12.5px; color: #2f5a47; }
+.workflow-step p, .workflow-head p { margin: 5px 0 8px; font-size: 10.5px; line-height: 1.65; color: #7d8d74; }
+.workflow-step .primary-button { font-size: 11px; min-height: 34px; padding: 8px 10px; }
+.workflow-compose .semantic-composition-panel { margin: 0; padding: 0; border: 0; background: none; }
+.workflow-examples { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.workflow-examples li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.workflow-examples button { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 3px 0; border: 0; background: none; color: #3d5d4d; font-size: 11px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-examples button:hover { text-decoration: underline; }
+.workflow-examples i, .workflow-pen i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.workflow-examples small { flex: none; font-size: 9.5px; color: #8b9a80; }
+.workflow-examples small.status-ready { color: #397461; }
+.workflow-examples small.status-error { color: #b2503a; }
+.workflow-depth { color: #a9b5a0; margin-right: -2px; }
+.workflow-split { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d9dfd0; }
+.workflow-split p { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: #6b7a63; }
+.workflow-pens { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.workflow-pen { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid #dce5d3; border-radius: 12px; background: #fff; color: #3d5d4d; font-size: 10.5px; }
+.workflow-pen.active { border-color: #397461; box-shadow: 0 0 0 2px #39746122; }
+.workflow-muted { font-size: 10.5px; color: #9aa792; }
+.workflow-head { gap: 6px; }
+.workflow-head h3 { margin: 0; font-size: 14px; color: #2f5a47; }
+.workflow-head h3 small { font-weight: 400; color: #8b9a80; }
+.workflow-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid #dce5d3; border-radius: 4px; background: #fff; color: #3d6b55; font-size: 10.5px; }
+.workflow-origins { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 10px; color: #8b9a80; }
+.workflow-origins > span { width: 100%; }
+.workflow-origins button { padding: 3px 8px; border: 1px solid #cfdcd3; border-radius: 4px; background: #fff; color: #3d6b55; font-size: 10.5px; }
+.workflow-origins button:disabled { opacity: .5; }
+.workflow-head details { font-size: 10.5px; color: #6c7e73; }
+.workflow-prompt { white-space: pre-wrap; margin: 6px 0 0; }
+.transformation-card .transformation-origin { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; margin: 2px 0 4px; border: 1px solid #cfdcd3; border-radius: 4px; background: #f6faf7; color: #3d6b55; font-size: 10.5px; }
+.transformation-card .transformation-origin:hover { background: #e9f3ec; }
+.frame-pen-chip { display: inline-flex; align-items: center; gap: 5px; }
+.frame-role-example { outline: 2px dashed #39746133; outline-offset: -2px; }
