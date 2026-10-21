@@ -613,6 +613,7 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .workflow-examples small.status-ready { color: #397461; }
 .workflow-examples small.status-error { color: #b2503a; }
 .workflow-depth { color: #a9b5a0; margin-right: -2px; }
+.workflow-object-tag { font-size: 9px; letter-spacing: .04em; text-transform: uppercase; color: #6b7a63; border: 1px solid #c9d2c1; border-radius: 4px; padding: 0 3px; }
 .workflow-split { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #d9dfd0; }
 .workflow-split p { margin: 0 0 8px; font-size: 11px; line-height: 1.5; color: #6b7a63; }
 .workflow-pens { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

@@ -90,7 +90,7 @@ test("AI work keeps running per frame: a composition made after the user moved a
     request: async (intent: string, body: any, owner: string) => { requests.push({ intent, owner }); active = "other"; return intent === "compose" ? convertScene(structuredClone(aiScene)) : connectScene({ title: "Tree", explanation: "", code: sceneProgram }, body.scene); },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => panels[id] ? { name: id, photo: null, strokes: [], revision: 1 } : undefined,
-    createFrames: () => { panels.derived = createSketchPanel(); return ["derived"]; }, addPen: () => null, resolvePen: (pen: unknown) => pen,
+    createFrames: () => { panels.derived = createSketchPanel(); return ["derived"]; }, resolvePen: (pen: unknown) => pen,
     documentId: () => 1, requestId: () => 1, clip: () => null, setClip: () => {}, preview: () => undefined,
   } as any;
   await sceneAI(deps, "source").compose();

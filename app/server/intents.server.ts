@@ -35,7 +35,7 @@ const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 
 /** The modules the code must define: one per root node, with the node ids it draws. */
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치를 Decompose하거나 Compose해주세요." : undefined;
-/** What the model reads of a pen: its transformation and algorithms (the example frame and its stand-in shape are the app's business). */
+/** What the model reads of a pen: its transformation and algorithms (the example frame and the objects it was shown on are the app's business). */
 const penForModel = (pen: AIInput["compositionPens"][number]) => pen.kind === "interaction" ? { id: pen.id, kind: pen.kind, color: pen.color, meaning: pen.meaning }
   : { id: pen.id, kind: pen.kind, color: pen.color, name: pen.name, meaning: pen.meaning, appliesTo: pen.transformation!.target,
     transformation: pen.transformation!.transformation, algorithms: pen.transformation!.library };
@@ -44,9 +44,9 @@ export const strokeContext = (input: AIInput) => ({ compositionPens: input.compo
 function splitContext(input: AIInput) {
   const scene = input.scene, node = scene && targetNode(input), transformation = node?.transformations.find(item => item.id === input.targetTransformationId);
   if (!scene || !node || !transformation) return null;
-  // Its example's structure, as the model wrote it for decompose (the carrier and the plain nodes around it).
+  // Its example's structure, as the model wrote it for decompose (the carrier and the nodes around it), every object a plain stand-in: the pieces keep nothing of the sketch.
   return { transformation, carrier: node.id,
-    nodes: scene.nodes.map(item => ({ id: item.id, kind: item.kind, parentId: item.parentId, shape: item.kind === "collection" ? null : item.primitive === "rect" ? "square" : "circle", count: collectionCount(item) })),
+    nodes: scene.nodes.map(item => ({ id: item.id, kind: item.kind, parentId: item.parentId, shape: item.kind === "collection" ? null : item.primitive === "rect" ? "square" : "circle", count: collectionCount(item), object: null })),
     algorithms: algorithmClosure(scene.algorithms, transformation.properties.flatMap(property => algorithmRefs(property.value))) };
 }
 
@@ -56,7 +56,8 @@ export const intents: Record<"decompose" | "compose" | "compose-prompt" | "trans
     check: input => !input.image ? "분석할 이미지가 없습니다." : input.targetTransformationId && !splitContext(input) ? "나눌 transformation을 찾지 못했습니다." : undefined,
     // A sketch, or (with `split`) a minimal example's one transformation to split into smaller ones.
     context: input => { const split = splitContext(input); return { instruction: input.instruction, ...(split ? { split } : {}) }; },
-    finalize: (_input, output) => convertDecomposition(output),
+    // Splitting an example: no sketch objects, every object a stand-in.
+    finalize: (input, output) => convertDecomposition(output, Boolean(input.targetTransformationId)),
   },
   compose: {
     schema: aiComposeSchema, maxTokens: () => 44000, strokes: true,

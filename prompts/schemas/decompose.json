@@ -184,6 +184,73 @@
         "additionalProperties": false
       }
     },
+    "objects": {
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 600
+          },
+          "primitive": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "region": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "w": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 1
+              },
+              "h": {
+                "type": "number",
+                "minimum": 0.01,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "w",
+              "h"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "primitive",
+          "region"
+        ],
+        "additionalProperties": false
+      }
+    },
     "transformations": {
       "minItems": 1,
       "maxItems": 10,
@@ -552,6 +619,18 @@
                     }
                   ]
                 },
+                "object": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
                 "count": {
                   "anyOf": [
                     {
@@ -570,6 +649,7 @@
                 "kind",
                 "parentId",
                 "shape",
+                "object",
                 "count"
               ],
               "additionalProperties": false
@@ -624,11 +704,17 @@
         ],
         "additionalProperties": false
       }
+    },
+    "minimalReason": {
+      "type": "string",
+      "maxLength": 400
     }
   },
   "required": [
     "algorithms",
-    "transformations"
+    "objects",
+    "transformations",
+    "minimalReason"
   ],
   "additionalProperties": false
 }

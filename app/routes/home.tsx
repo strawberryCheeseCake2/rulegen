@@ -9,7 +9,7 @@ import { FrameRender } from "../components/frame-render";
 import { GenerationHistory } from "../components/generation-history";
 import { RawCodePanel } from "../components/raw-code-panel";
 import { SketchComposition } from "../components/sketch-composition";
-import { CompositionHead, ExampleHead, SketchWorkflow, type ExampleRow } from "../components/workflow-panels";
+import { CompositionHead, ExampleHead, ObjectHead, SketchWorkflow, type ExampleRow } from "../components/workflow-panels";
 import { LayerPanel } from "../components/scene/layer-panel";
 import { SceneOverlay } from "../components/scene/scene-overlay";
 import { PropertyInspector } from "../components/scene/property-inspector";
@@ -20,7 +20,7 @@ import { besideFrameGrid, nextSketchPosition, removeWorkspaceFrame, showWorkspac
 import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile, MAX_PENS, MAX_SKETCH_FRAMES } from "../lib/project";
-import { createInteractionPen, livePen, semanticPenColors } from "../lib/algorithm-pens";
+import { createInteractionPen, examplePen, livePen, semanticPenColors } from "../lib/algorithm-pens";
 import { createSketchPanel, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
 import { emptyScene } from "../lib/scene/schema";
 import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
@@ -164,6 +164,18 @@ export default function Home() {
     setSemanticPens([...pens, next]);
     return next;
   }
+  /** Make a pen from a transformation example frame (Make pen): it follows that example from now on. */
+  function makeExamplePen(id: string) {
+    const frame = panelsRef.current[id], example = frame?.example;
+    if (frame?.role !== "example" || !example || example.kind !== "transformation") return;
+    const existing = semanticPensRef.current.find(pen => pen.id === example.penId);
+    if (existing) { selectAlgorithmPen(existing); return; }
+    if (semanticPensRef.current.length >= MAX_PENS) { setToast(`펜은 최대 ${MAX_PENS}개까지 만들 수 있습니다. 쓰지 않는 펜을 지워주세요.`); return; }
+    const pen = addPen((penId, color) => examplePen(frame.scene, id, example, penId, color));
+    if (!pen) { updatePanel(id, { error: "이 예제의 transformation을 찾지 못해 펜을 만들 수 없습니다." }); return; }
+    updatePanel(id, current => current.example ? { example: { ...current.example, penId: pen.id } } : {});
+    setToast(`펜 「${pen.name}」을 만들었습니다. 이 예제의 지금 상태를 따라갑니다.`);
+  }
   /** New frames beside `fromId` (a grid of columns for several), with empty sketches and panels. */
   function createFrames(fromId: string, names: string[]) {
     const room = Math.max(0, MAX_SKETCH_FRAMES - sketchFramesRef.current.length), count = Math.min(room, names.length);
@@ -203,7 +215,7 @@ export default function Home() {
   }
   const deps: StudioDeps = {
     panel: id => panelsRef.current[id] || createSketchPanel(), updatePanel, request, task,
-    capture: captureFrame, createFrames, addPen, resolvePen,
+    capture: captureFrame, createFrames, resolvePen,
     preview: owner => resultPreviews.current.get(owner),
     artwork: artworkOf, documentId: () => activeDocument.current, requestId: owner => requestNumbers.current.get(owner) ?? 0,
     toast: setToast, focus: setPendingFrameFocus,
@@ -469,11 +481,11 @@ export default function Home() {
   const examplesOf = (frameId: string, depth = 0, seen = new Set([frameId])): ExampleRow[] => frameIds.filter(id => panels[id]?.role === "example" && panels[id].sourceFrameId === frameId && !seen.has(id)).flatMap(id => {
     const item = panels[id], pen = algorithmPens.find(entry => entry.id === item.example?.penId);
     seen.add(id);
-    return [{ id, depth, name: artworkOf(id)?.name.replace(/ · example$/, "") || id, pen, status: item.runtimeError || item.error ? "error" : item.generated ? "ready" : item.pendingResult || item.loading ? "pending" : "empty" } as ExampleRow, ...examplesOf(id, depth + 1, seen)];
+    return [{ id, depth, name: artworkOf(id)?.name.replace(/ · (example|object)$/, "") || id, object: item.example?.kind === "object", pen, status: item.runtimeError || item.error ? "error" : item.generated ? "ready" : item.pendingResult || item.loading ? "pending" : "empty" } as ExampleRow, ...examplesOf(id, depth + 1, seen)];
   });
   const roleLabel = { sketch: "sketch", example: "minimal example", composition: "composition" } as const;
   // Frames made from a sketch are linked to it on the board.
-  const links: FrameLink[] = frameIds.flatMap(id => { const item = panels[id], from = item?.sourceFrameId; return item && item.role !== "sketch" && from && artworkOf(from) ? [{ from: from as FrameId, to: id as FrameId, label: item.role === "composition" ? "composed" : panels[from]?.role === "example" ? "smaller" : "example" }] : []; });
+  const links: FrameLink[] = frameIds.flatMap(id => { const item = panels[id], from = item?.sourceFrameId; return item && item.role !== "sketch" && from && artworkOf(from) ? [{ from: from as FrameId, to: id as FrameId, label: item.role === "composition" ? "composed" : item.example?.kind === "object" ? "object" : panels[from]?.role === "example" ? "smaller" : "example" }] : []; });
 
   // ── Frames on the infinite canvas ──────────────────────────────────────────
   const sketchFrameContent = (id: string, frameArtwork: Artwork, ref: React.Ref<CanvasHandle>, empty: React.ReactNode) => (boardZoom: number) => {
@@ -507,18 +519,19 @@ export default function Home() {
       {/* Each frame shows (and can stop) its own AI work, also while another frame is active. */}
       {frameBusy && <span className="frame-working" role="status" title={frame.loading}><span className="loading-spinner" />AI 작업 중
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
+      {frame.role === "example" && frame.example?.kind === "transformation" && !pen && <button disabled={!splitTarget(frame)} title="Make a pen from this example: drawing with it means this transformation goes here" onClick={e => { e.stopPropagation(); activateSketch(id); makeExamplePen(id); }}><Icon name="pen" size={13} />Make pen</button>}
       {pen && <button className="frame-pen-chip" style={{ color: pen.color }} title={`이 예제로 만든 펜 「${pen.name}」으로 그리기`} onClick={e => { e.stopPropagation(); activateSketch(id); selectAlgorithmPen(pen); }}><span className="semantic-pen-dot" style={{ background: pen.color }} />Pen</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
       {frame.generated && <button aria-pressed={playing === id} title={playing === id ? "Stop interacting (Esc)" : "Use the result with the mouse and keyboard"} disabled={!frame.executable} onClick={() => { activateSketch(id); setPlaying(current => current === id ? null : id); }}><Icon name="hand" size={13} />{playing === id ? "Stop" : "Interact"}</button>}
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
       {frame.role === "sketch" && <button disabled={frameBusy || !present} title="Split this sketch into independent semantic transformations: a minimal example frame and a pen for each" onClick={() => { activateSketch(id); void sceneAI(deps, id).decompose(); }}>Decompose<Icon name="spark" size={13} /></button>}
-      {frame.role === "example" && <button disabled={frameBusy || !splitTarget(frame)} title="Split this example's transformation into smaller ones: a minimal example frame and a pen for each" onClick={() => { activateSketch(id); void sceneAI(deps, id).decompose(); }}>Decompose<Icon name="spark" size={13} /></button>}
+      {frame.role === "example" && frame.example?.kind !== "object" && <button disabled={frameBusy || !splitTarget(frame)} title="Split this example's transformation into smaller ones: a minimal example frame and a pen for each" onClick={() => { activateSketch(id); void sceneAI(deps, id).decompose(); }}>Decompose<Icon name="spark" size={13} /></button>}
     </>;
   };
   const frameSubtitle = (id: string, artwork: Artwork) => {
     const frame = panels[id], from = frame?.sourceFrameId ? artworkOf(frame.sourceFrameId)?.name : null;
-    return [roleLabel[frame?.role ?? "sketch"], artwork.strokes.length ? `${artwork.strokes.length} strokes` : "", frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", playing === id ? "interacting" : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
+    return [frame?.example?.kind === "object" ? "object example" : roleLabel[frame?.role ?? "sketch"], artwork.strokes.length ? `${artwork.strokes.length} strokes` : "", frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", playing === id ? "interacting" : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
   const frames = [
     { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork),
@@ -533,9 +546,11 @@ export default function Home() {
   const statusLabel = liveStatus === "live" ? panel.dirtyNodeIds.length ? "Live · descriptions changed, regenerate to apply" : "Live · controls update code & visual" : liveStatus === "changed" ? "Structure changed · update code to connect" : generated ? "Connect controls to your current code" : "Generate code to enable live controls";
   const compose = <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} onDraft={() => { void ai.draftComposePrompt(); }} onCompose={() => { void ai.compose(); }} busy={busy} drafting={panel.loading === compositionPromptLabel} />;
   const exampleNode = panel.example ? findNode(scene, panel.example.nodeId) : undefined, exampleTransformation = exampleNode && panel.example ? findTransformation(exampleNode, panel.example.transformationId) : undefined;
-  const workflowHead = panel.role === "example"
+  const workflowHead = panel.role === "example" && panel.example?.kind === "object"
+    ? <ObjectHead name={exampleNode?.name || "Object"} description={exampleNode?.description || ""} source={panel.sourceFrameId && artworkOf(panel.sourceFrameId) ? artworkOf(panel.sourceFrameId)!.name : null} onSource={() => panel.sourceFrameId && showFrame(panel.sourceFrameId)} />
+    : panel.role === "example"
     ? <ExampleHead transformation={exampleTransformation?.label || panel.example?.transformationId || "Transformation"} subject={exampleNode?.name || ""} pen={algorithmPens.find(item => item.id === panel.example?.penId)} activePenId={activeSemanticPenId}
-      source={panel.sourceFrameId && artworkOf(panel.sourceFrameId) ? artworkOf(panel.sourceFrameId)!.name : null} onUsePen={selectAlgorithmPen} onSource={() => panel.sourceFrameId && showFrame(panel.sourceFrameId)}
+      source={panel.sourceFrameId && artworkOf(panel.sourceFrameId) ? artworkOf(panel.sourceFrameId)!.name : null} onUsePen={selectAlgorithmPen} onMakePen={() => makeExamplePen(activeSketch)} canMakePen={Boolean(splitTarget(panel))} onSource={() => panel.sourceFrameId && showFrame(panel.sourceFrameId)}
       examples={examplesOf(activeSketch)} busy={busy || !splitTarget(panel)} onDecompose={() => { void ai.decompose(); }} onShowExample={showFrame} />
     : panel.role === "composition"
       ? <CompositionHead source={panel.sourceFrameId && artworkOf(panel.sourceFrameId) ? artworkOf(panel.sourceFrameId)!.name : null} prompt={panel.composePrompt} onSource={() => panel.sourceFrameId && showFrame(panel.sourceFrameId)} onOrigin={id => { showFrame(id); }}

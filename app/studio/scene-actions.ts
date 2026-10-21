@@ -1,6 +1,6 @@
 import { compositionPromptSchema, generatedSchema, type CodeReference } from "../lib/schema";
 import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
-import { compositionContext, examplePen } from "../lib/algorithm-pens";
+import { compositionContext } from "../lib/algorithm-pens";
 import type { SketchPanel } from "../lib/sketch-panels";
 import type { Algorithm, AlgorithmCall, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
 import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
@@ -13,7 +13,7 @@ import { instantiate } from "../lib/scene/algorithms";
 import { isAlgorithm, valueAt } from "../lib/scene/values";
 import { liveSceneSource } from "../lib/scene/live";
 import { ownCodeIds, programModules } from "../lib/scene/machines";
-import { decompositionSchema, exampleInstruction, exampleScene } from "../lib/scene/minimal-example";
+import { decompositionSchema, exampleFrames, exampleInstruction } from "../lib/scene/minimal-example";
 import { findTransformation } from "../lib/scene/transformations";
 import type { FrameId } from "../lib/workspace";
 import type { StudioDeps } from "./deps";
@@ -185,8 +185,11 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     if (!panel.scene.nodes.length) { deps.updatePanel(owner, { error: "먼저 스케치를 Decompose하거나 Compose해주세요." }); return; }
     const snapshot = JSON.stringify(panel.scene), document = deps.documentId();
     await deps.task(repair ? "실행 오류를 수정하고 있습니다…" : panel.role === "example" ? "이 transformation만 보여주는 최소 예제 코드를 만들고 있습니다…" : "장면을 p5.js 코드로 번역하고 있습니다…", async () => {
-      // A composition is coded against the sketch it was composed from; an example only against itself (not the whole sketch).
-      const context = await sketchContext(panel.role === "composition" && panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : owner);
+      // A composition is coded against the sketch it was composed from; an example against itself, except that one drawing the
+      // sketch's elements sees the source sketch's image (to draw them like it; its instruction says to take nothing else).
+      const source = panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : null;
+      const context = await sketchContext(panel.role === "composition" && source ? source : owner);
+      if (panel.role === "example" && panel.example?.elements.length && source) context.image = (await deps.capture(source, true)).image;
       const base = instructionOverride ?? codeInstruction(panel);
       const scene = ownCodeIds(panel.scene);
       const result = generatedSchema.parse(await deps.request("code", { scene, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
@@ -231,12 +234,14 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     generateCode,
     draftComposePrompt,
     /**
-     * Decompose this sketch: AI splits it into semantic transformations, each as
-     * independent as possible. Every one becomes a minimal example frame beside the
-     * sketch (that transformation alone on a plain subject) and a pen made from that
-     * example; then the examples' code is generated, a few at a time.
-     * A minimal example decomposes the same way into smaller examples (and pens) of
-     * its one transformation, unless that is already primitive.
+     * Decompose this sketch: AI splits it into its objects and semantic
+     * transformations, each as independent as possible. Every object becomes a
+     * minimal example frame beside the sketch (that element alone), every
+     * transformation one too (that transformation alone, on the sketch's elements;
+     * the user makes a pen from it with Make pen); then the examples' code is
+     * generated, a few at a time. A minimal example decomposes the same way into
+     * smaller examples of its one transformation, on plain stand-in shapes, unless
+     * that is already primitive.
      */
     async decompose() {
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision, out: { frames: string[] } = { frames: [] };
@@ -247,17 +252,21 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         const decomposition = decompositionSchema.parse(await deps.request("decompose", { image: (await deps.capture(owner)).image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: panel.instruction,
           ...(parent ? { scene: panel.scene, targetNodeId: parent.nodeId, targetTransformationId: parent.transformationId } : {}) }, owner));
         if (!fresh(document, revision) || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error(`분석 중 ${parent ? "예제" : "스케치"}가 변경되었습니다. 다시 Decompose해주세요.`);
-        if (parent && decomposition.items.length < 2) { deps.toast("이 transformation은 이미 최소 단위라 더 나눌 수 없습니다."); return; }
-        const ids = deps.createFrames(owner, decomposition.items.map(item => `${item.transformation.label || item.transformation.id} · example`));
+        if (parent && decomposition.items.length < 2) {
+          const reason = decomposition.minimalReason.trim();
+          deps.toast(`AI가 이 transformation을 이미 최소 단위로 보고 나누지 않았습니다${reason ? `: ${reason}` : "."} 나눌 방향을 Generation direction에 적고 다시 Decompose할 수 있습니다.`);
+          return;
+        }
+        // The sketch's objects, then the transformations: a frame each (a transformation example becomes a pen only when the user makes one).
+        const frames = exampleFrames(decomposition), ids = deps.createFrames(owner, frames.map(frame => frame.name));
         ids.forEach((id, i) => {
-          const { scene, example } = exampleScene(decomposition, decomposition.items[i]);
-          const pen = deps.addPen((penId, color) => examplePen(scene, id, example, penId, color));
+          const { scene, example } = frames[i];
           deps.updatePanel(id, panel => ({ ...ops.commitScene(panel, scene), role: "example", sourceFrameId: owner, analysisRevision: revision ?? -1, selectedNodeIds: [example.nodeId], pendingResult: true,
-            example: { ...example, sourceFrameId: owner, penId: pen?.id ?? "" } }));
+            example: { ...example, sourceFrameId: owner, penId: "" } }));
         });
         out.frames = ids;
-        const skipped = decomposition.items.length - ids.length;
-        deps.toast(`${ids.length}개의 ${parent ? "더 작은 " : ""}semantic transformation을 최소 예제 프레임과 펜으로 만들었습니다${skipped ? ` (프레임이 가득 차 ${skipped}개는 빠짐)` : ""}. 예제 코드를 만드는 중입니다…`);
+        const made = frames.slice(0, ids.length), objects = made.filter(frame => frame.example.kind === "object").length, skipped = frames.length - ids.length;
+        deps.toast(`${objects ? `스케치의 object ${objects}개와 ` : ""}${made.length - objects}개의 ${parent ? "더 작은 " : ""}semantic transformation을 최소 예제 프레임으로 만들었습니다${skipped ? ` (프레임이 가득 차 ${skipped}개는 빠짐)` : ""}. 예제 코드를 만드는 중입니다… 펜은 예제의 Make pen으로 만드세요.`);
       }, owner);
       await pool(out.frames, 3, renderDerived);
     },

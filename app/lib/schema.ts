@@ -38,7 +38,7 @@ export const codeReferenceSchema = z.object({ transformationId: idSchema, label:
 export type CodeReference = z.infer<typeof codeReferenceSchema>;
 export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: sceneSchema.nullable().default(null),
   targetNodeId: idSchema.or(z.literal("")).default(""), targetTransformationId: idSchema.or(z.literal("")).default(""), targetPropertyId: idSchema.or(z.literal("")).default(""),
-  image: imageSchema.optional(), alternative: z.boolean().default(false), previous: z.string().max(MAX_CODE_LENGTH).default(""), instruction: z.string().max(2000).default(""),
+  image: imageSchema.optional(), alternative: z.boolean().default(false), previous: z.string().max(MAX_CODE_LENGTH).default(""), instruction: z.string().max(4000).default(""),
   compositionPens: z.array(semanticPenSchema).max(64).default([]), compositionStrokes: z.array(compositionStrokeSchema).max(500).default([]),
   /** Annotation strokes the user drew on the frame for a transform request (normalized; also drawn on the image). */
   transformMarks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(64).default([]),

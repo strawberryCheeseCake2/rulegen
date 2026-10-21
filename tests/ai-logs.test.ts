@@ -113,7 +113,7 @@ test("project snapshots, image assets and generated features restore exactly wit
   assert.deepEqual(restored.project.workspace.frames["sketch-target"], { x: 3000, y: 200 });
   // The decomposition's minimal example frames come back, made from the target sketch, beside it.
   const examples = restored.project.sketchFrames.slice(2).map(frame => restored.project.sketchPanels[frame.id]);
-  assert.equal(examples.length, 3); assert.ok(examples.every(panel => panel.role === "example" && panel.sourceFrameId === "sketch-target" && panel.analysisRevision === 7));
+  assert.equal(examples.length, 4, "the sketch's object and three transformations"); assert.ok(examples.every(panel => panel.role === "example" && panel.sourceFrameId === "sketch-target" && panel.analysisRevision === 7));
   assert.ok(restored.project.sketchFrames.slice(2).every(frame => restored.project.workspace.frames[frame.id].x > 3000));
   assert.deepEqual(restored.project.sketchPanels["sketch-other"], project.sketchPanels["sketch-other"]);
   assert.equal((await readGeneration(key)).metadata.status, "success");

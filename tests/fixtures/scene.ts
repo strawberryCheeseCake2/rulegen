@@ -48,18 +48,20 @@ export const aiDecomposition: AIDecomposition = {
     { id: "radial-repeat", name: "Radial repeat", description: "중심 둘레에 같은 간격으로 놓습니다.", params: [{ id: "radius", label: "Radius", description: "거리", value: num(60, 0, 200, 1, "px") }] },
     { id: "power-decay", name: "Power decay", description: "base·ratio^i", params: [{ id: "base", label: "Base", description: "", value: num(40, 4, 120) }, { id: "ratio", label: "Ratio", description: "", value: num(.85, .3, 1, .01) }] },
   ],
+  minimalReason: "",
+  objects: [{ id: "petal", name: "Petal", description: "끝이 뾰족한 길쭉한 꽃잎 하나", primitive: "petal", region: { x: .45, y: .2, w: .1, h: .25 } }],
   transformations: [
     { id: "radial-repetition", label: "Radial repetition", description: "꽃잎을 중심 둘레에 반복합니다.",
-      nodes: [{ id: "petals", kind: "collection", parentId: null, shape: null, count: 7 }, { id: "petal", kind: "object", parentId: "petals", shape: "circle", count: null }], carrier: "petals",
+      nodes: [{ id: "petals", kind: "collection", parentId: null, shape: null, count: 7, object: null }, { id: "petal", kind: "object", parentId: "petals", shape: "circle", count: null, object: "petal" }], carrier: "petals",
       region: { x: .3, y: .2, w: .4, h: .6 }, properties: [
         { id: "count", label: "Count", effect: "spatial", description: "꽃잎 수", value: num(7, 2, 24) },
         { id: "layout", label: "Layout", effect: "spatial", description: "배치", value: { type: "algorithm", algorithmId: "radial-repeat", args: [] } },
       ] },
-    { id: "petal-curl", label: "Petal curl", description: "꽃잎 끝이 말립니다.", nodes: [{ id: "petal", kind: "object", parentId: null, shape: "square", count: null }], carrier: "petal",
+    { id: "petal-curl", label: "Petal curl", description: "꽃잎 끝이 말립니다.", nodes: [{ id: "petal", kind: "object", parentId: null, shape: "square", count: null, object: "petal" }], carrier: "petal",
       region: { x: .45, y: .2, w: .1, h: .25 }, properties: [{ id: "curl", label: "Curl", effect: "spatial", description: "", value: num(.4, 0, 1, .01) }] },
     // The model repeated an id: it is made unique.
     { id: "petal-curl", label: "Size falloff", description: "사본마다 작아집니다.",
-      nodes: [{ id: "rings", kind: "collection", parentId: null, shape: null, count: null }, { id: "ring", kind: "collection", parentId: "rings", shape: null, count: null }, { id: "dot", kind: "object", parentId: "ring", shape: "circle", count: null }], carrier: "rings",
+      nodes: [{ id: "rings", kind: "collection", parentId: null, shape: null, count: null, object: null }, { id: "ring", kind: "collection", parentId: "rings", shape: null, count: null, object: null }, { id: "dot", kind: "object", parentId: "ring", shape: "circle", count: null, object: null }], carrier: "rings",
       region: { x: .3, y: .2, w: .4, h: .6 }, properties: [{ id: "size", label: "Size", effect: "spatial", description: "", value: { type: "algorithm", algorithmId: "power-decay", args: [] } }] },
   ],
 };

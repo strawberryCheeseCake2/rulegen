@@ -25,8 +25,6 @@ export type StudioDeps = {
   active?: () => string;
   toast: (message: string) => void;
   focus: (frame: FrameId) => void;
-  /** Add a pen to the toolbar (made with a free id and color); null when the toolbar is full. */
-  addPen: (make: (id: string, color: string) => SemanticPen | null) => SemanticPen | null;
   /** A pen as it reads now (a transformation pen follows its minimal example frame). */
   resolvePen: (pen: SemanticPen) => SemanticPen;
   /** Studio-wide algorithm clipboard, shared by every sketch. */

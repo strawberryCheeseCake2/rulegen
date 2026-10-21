@@ -45,26 +45,35 @@ export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema)
 export const aiTransformSchema = z.object({ algorithms, transformation: aiTransformationSchema });
 /** Independent transformations one sketch is decomposed into (each becomes a minimal example and a pen). */
 export const MAX_DECOMPOSED = 10;
-/** The plain shapes a minimal example's objects are: stand-ins, not elements of the sketch. */
+/** The plain stand-in shapes a minimal example's objects are when they are not one of the sketch's objects. */
 export const EXAMPLE_SHAPES = ["circle", "square"] as const;
 /** Nodes a minimal example may have (objects and collections, nested). */
 export const MAX_EXAMPLE_NODES = 8;
+/** The sketch's elements (what they ARE) a decomposition may return, each also shown in its own example. */
+export const MAX_SKETCH_OBJECTS = 6;
 /**
- * decompose: the sketch as a list of independent semantic transformations
- * (operations only: what the sketch's elements ARE is not one of them). Each comes
- * with the smallest collection/object structure that shows it: plain objects
- * (stand-in shapes), collections grouping them (nested if needed), and the node
- * that carries the transformation.
+ * decompose: the sketch's objects (its elements, each one plain instance: what it
+ * IS) and a list of independent semantic transformations (operations only: what
+ * the elements are is never one of them). Each transformation comes with the
+ * smallest collection/object structure that shows it: objects (one of the
+ * sketch's objects, or a plain stand-in shape), collections grouping them (nested
+ * if needed), and the node that carries the transformation.
  */
-export const aiDecompositionSchema = z.object({ algorithms, transformations: z.array(aiTransformationSchema.extend({
+export const aiDecompositionSchema = z.object({ algorithms,
+  objects: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80), description: z.string().max(600), primitive: z.string().max(40), region: regionSchema })).max(MAX_SKETCH_OBJECTS),
+  transformations: z.array(aiTransformationSchema.extend({
   nodes: z.array(z.object({ id: idSchema, kind: nodeKindSchema, parentId: idSchema.nullable(), shape: z.enum(EXAMPLE_SHAPES).nullable(),
+    /** An object drawn as one of the sketch's `objects` (its id), or null for a plain stand-in shape (always null when splitting an example). */
+    object: idSchema.nullable(),
     /** A collection of copies of its ONE member: how many (null for a collection of distinct members, and for objects). */
     count: z.number().int().min(1).max(48).nullable() })).min(1).max(MAX_EXAMPLE_NODES),
   /** The node the transformation is applied to. */
   carrier: idSchema,
   /** Where the evidence is in the sketch (normalized), so the example keeps its proportions. */
   region: regionSchema,
-})).min(1).max(MAX_DECOMPOSED) });
+})).min(1).max(MAX_DECOMPOSED),
+  /** Splitting an example into ONE piece (it is already primitive): why, in Korean ("" otherwise). */
+  minimalReason: z.string().max(400) });
 export type AIDecomposition = z.infer<typeof aiDecompositionSchema>;
 /** compose: a scene whose nodes take transformations from pens (by pen id, in order) before their own. */
 export const aiComposeSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema.extend({ pens: z.array(z.string().max(80)).max(MAX_AI_TRANSFORMATIONS) })).min(1).max(MAX_AI_SCENE_NODES) });

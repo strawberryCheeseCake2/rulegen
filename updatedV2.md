@@ -33,7 +33,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 작업 도구와 캔버스 조작 도구는 왼쪽 툴바에 모은다: 스케치 프레임 추가, 사진 첨부, **Select(V)**, 연필(P), 지우개(E), 라쏘(L), 이동(H), Interaction pen·transformation 펜, Undo/Redo/지우기, 확대·축소.
 - 연필의 색상·굵기·투명도 메뉴는 연필을 눌렀을 때만 연필 버튼 옆 팝오버로 나타난다.
 - Select 도구로 스케치 위의 Collection·Object를 선택하고 움직인다(6절).
-- transformation 펜은 최소 예제마다 하나씩 툴바에 생긴다(12절). 펜을 고르면 설정 팝오버에 그 transformation(이름·대상·property 값)과 **최소 예제 프레임 보기**가 나온다.
+- transformation 펜은 자동으로 생기지 않는다. transformation 예제에서 **Make pen**을 누르면 그 예제의 펜이 툴바에 생긴다(12절). 펜을 고르면 설정 팝오버에 그 transformation(이름·대상·property 값)과 **최소 예제 프레임 보기**가 나온다.
 
 ## 3. Collection · Object 모델
 
@@ -80,34 +80,38 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 ## 5. Decompose와 최소 예제
 
-- sketch 프레임의 **Decompose**(프레임 헤더, 우측 패널 1단계, Layers의 빈 상태)는 스케치(보이는 그대로: 결과 + 획)와 연필·펜 자국, Generation direction을 AI(`decompose` intent, `prompts/decompose.md`)에 보낸다. AI는 스케치를 **semantic transformation 목록**(최대 10개)과 공유 알고리즘 블록으로 돌려준다.
+- sketch 프레임의 **Decompose**(프레임 헤더, 우측 패널 1단계, Layers의 빈 상태)는 스케치(보이는 그대로: 결과 + 획)와 연필·펜 자국, Generation direction을 AI(`decompose` intent, `prompts/decompose.md`)에 보낸다. AI는 스케치를 **object 목록**(스케치 요소가 무엇인지, 최대 6개), **semantic transformation 목록**(최대 10개), 공유 알고리즘 블록으로 돌려준다.
   - transformation 하나는 semantic 동작 하나다(3.1절 규칙과 같음).
   - **최대한 독립적**이어야 한다: 다른 transformation 없이 평범한 대상에 혼자 적용해도 의미가 있고 보여야 한다. 같은 측면(개수, 색 등)을 두 transformation이 겹쳐 다루지 않고, 배치·개수·사본별 변화·한 요소의 모양·스타일·움직임처럼 측면별로 나눈다. 따로 보여줄 수 없는 것만 하나로 둔다.
-  - **transformation은 연산만이다.** 스케치 요소가 무엇인지(꽃잎, 잎, 가지 획, 집, 별의 모양)는 object이지 transformation이 아니므로 뽑지 않는다. "Petal shape", "Pointed tip outline"처럼 요소를 그리는 항목은 만들지 않고, 요소에 가해지는 것(배치·반복·개수·사본별 변화·성장·재귀·휘기·가늘어짐·말림·흔들림·색·선·질감·움직임)만 돌려준다. object(요소)와 그것에 가해지는 transformation(연산)을 이렇게 구분한다.
-  - 각 transformation은 그것을 보여주는 **가장 작은 collection/object 구조**(`nodes`)와 transformation이 붙는 노드(`carrier`)를 함께 준다. object는 스케치 요소가 아니라 평범한 **대역 도형**(`shape`: `circle` 또는 `square`, 회전·모서리 효과는 정사각형)이고, collection은 object나 다른 collection을 묶는다(`parentId`). object 여러 개, collection 여러 개, collection 안의 collection(최대 4단계) 모두 가능하며 노드는 최대 8개다. 예: 도형 하나의 연산은 object 하나, 사본 배치·반복은 collection + object 하나, 두 도형 사이의 관계는 collection 안의 object 여러 개, 고리마다 색이 바뀌는 것처럼 단계를 넘나드는 연산은 중첩 collection. carrier가 collection이면 그 구성원 전체에, object면 그 도형 하나에 작용한다. 스케치에서 근거가 있는 영역(`region`)도 준다.
-  - **낮은 coupling 규칙**(프롬프트): transformation의 label·설명, property와 알고리즘의 이름·설명은 그 연산만 말한다. 스케치 대상이 아니라 연산 이름("Petal curl"이 아니라 "Tip curl"), "사본"·"도형"·"선" 기준 서술("꽃잎" 금지), 다른 transformation의 색·모양·개수·움직임이나 "~위에/~와 함께" 같은 참조 금지. 여러 사본을 배치·반복·변화시키면 `target: "collection"`, 도형 하나의 모양·스타일·움직임이면 `target: "object"`다. 스케치에서 그 근거가 있는 영역(`region`)도 준다.
+  - **transformation은 연산만이다.** 스케치 요소가 무엇인지(꽃잎, 잎, 가지 획, 집, 별의 모양)는 object이지 transformation이 아니므로 transformation으로 뽑지 않고 `objects`에 넣는다. "Petal shape", "Pointed tip outline"처럼 요소를 그리는 transformation은 만들지 않고, 요소에 가해지는 것(배치·반복·개수·사본별 변화·성장·재귀·휘기·가늘어짐·말림·흔들림·색·선·질감·움직임)만 돌려준다. object(요소)와 그것에 가해지는 transformation(연산)을 이렇게 구분한다.
+  - **스케치의 object**(`objects`): 스케치를 이루는 요소의 종류마다 하나(꽃잎 일곱 장도 하나), 변형되지 않은 **한 개의 모습**으로 준다: `id`, 영어 `name`("Petal"), `primitive`, 한국어 `description`(윤곽·비율·선·기본 색), 또렷한 한 개의 영역(`region`). 개수·배치·사본 간 차이·휘기·움직임처럼 transformation이 하는 것은 넣지 않고, 요소의 모습 중 transformation으로 뽑은 것(예: 사본별 색 변화, 말림)은 뺀 평범한 모습으로 적는다.
+  - 각 transformation은 그것을 보여주는 **가장 작은 collection/object 구조**(`nodes`)와 transformation이 붙는 노드(`carrier`)를 함께 준다. **스케치에서 Decompose한 1차 예제는 원본과 비슷하게 보이도록** object를 스케치의 object로 그린다(`object`: 그 object의 id. 예: 꽃잎 방사 반복 → 꽃잎 object를 담은 collection, 꽃잎 끝 말림 → 꽃잎 object 하나). 맞는 요소가 없을 때만 평범한 **대역 도형**(`object: null`, `shape`: `circle` 또는 `square`, 회전·모서리 효과는 정사각형)을 쓴다. 그래도 transformation 자체에는 object의 의미가 들어가지 않는다: 요소는 노드(object)이고, transformation의 이름·설명·property·알고리즘은 연산만 말하며 어떤 도형에도 그대로 작동해야 한다("petal width" 같은 것은 object 몫). collection은 object나 다른 collection을 묶는다(`parentId`). object 여러 개, collection 여러 개, collection 안의 collection(최대 4단계) 모두 가능하며 노드는 최대 8개다. 예: 도형 하나의 연산은 object 하나, 사본 배치·반복은 collection + object 하나, 두 도형 사이의 관계는 collection 안의 object 여러 개, 고리마다 색이 바뀌는 것처럼 단계를 넘나드는 연산은 중첩 collection. carrier가 collection이면 그 구성원 전체에, object면 그 도형 하나에 작용한다. 스케치에서 근거가 있는 영역(`region`)도 준다.
+  - **낮은 coupling 규칙**(프롬프트): transformation의 label·설명, property와 알고리즘의 이름·설명은 그 연산만 말한다. 1차 예제가 스케치 요소를 그려도 마찬가지로, 스케치 대상이 아니라 연산 이름("Petal curl"이 아니라 "Tip curl"), "사본"·"도형"·"선" 기준 서술("꽃잎" 금지), 다른 transformation의 색·모양·개수·움직임이나 "~위에/~와 함께" 같은 참조 금지. 여러 사본을 배치·반복·변화시키면 `target: "collection"`, 도형 하나의 모양·스타일·움직임이면 `target: "object"`다. 스케치에서 그 근거가 있는 영역(`region`)도 준다.
   - 모델이 같은 id를 주면 `-2` 등으로 고유하게 바꾼다.
-- 결과가 오면 transformation마다 **최소 예제 프레임**을 원본 스케치 오른쪽에 격자(세 줄씩)로 만든다. 프레임 이름은 "<transformation> · example"이다.
+- 결과가 오면 **object마다, 그리고 transformation마다 최소 예제 프레임**을 원본 스케치 오른쪽에 격자(세 줄씩)로 만든다. object 예제가 먼저 온다. 프레임 이름은 "<object> · object", "<transformation> · example"이다.
+  - **object 예제**(`example.kind: "object"`)는 스케치 요소 하나를 transformation 없이 한 개만 그린다. 노드 하나(이름·설명·primitive는 그 object), 펜은 없고 더 나눌 수도 없다(Decompose 버튼 없음). 프레임 부제는 "object example", 보드 화살표는 `object`, 우측 패널 머리는 **OBJECT**(이름, 설명, 원본 스케치 링크), 예제 목록에는 `object` 표시가 붙는다. 코드 지시문: "원본 스케치(이미지)의 이 요소처럼(윤곽·비율·선·자기 색) 한 개만, 사본·배치·사본 간 변화·다른 요소·장식·움직임 없이, 재사용할 수 있는 함수로."
   - **같은 도형을 반복하는 그룹에는 항상 개수(count) 조절이 있다.** 모델은 collection마다 `count`를 준다(한 구성원의 사본 그룹이면 사본 수, 서로 다른 구성원이면 `null`). 구성원이 하나뿐인 collection은 모델이 `null`을 줘도 사본 그룹으로 본다(기본 6개). 그래서 도형 하나에 가하는 연산은 collection 없이 object 하나로 둔다.
-    - 사본 그룹이 transformation이 붙는 노드(carrier)인데 그 transformation에 개수 property나 개수 알고리즘 인자(`count`, `copies`, `instances`, "개수" 등)가 없으면, 앱이 `Count` property(정수, 1–24 이상)를 transformation 맨 앞에 넣는다. 이 개수는 펜에도 들어가 Compose에서도 조절된다.
-    - carrier가 아닌 사본 그룹(예: 고리들 ⊃ 고리 ⊃ 점에서 안쪽 고리)에는 예제 구조용 `Copies` transformation(id `example-copies`, `count` 하나)을 붙인다. 보여주는 transformation이 아니므로 펜에는 들어가지 않는다.
+    - 사본을 **만드는** transformation(반복·배치)은 자기 개수 property나 개수 알고리즘 인자(`count`, `copies`, `instances`, "개수" 등)를 가지고, 그 개수가 펜에도 들어간다.
+    - 그 밖의 사본 그룹, 곧 carrier가 아닌 그룹(예: 고리들 ⊃ 고리 ⊃ 점에서 안쪽 고리)과 이미 있는 사본에 **작용만 하는** transformation(줄을 휘기, 크기 감소 등)의 carrier 그룹에는 예제 구조용 `Copies` transformation(id `example-copies`, `count` 하나)을 붙인다. carrier에서는 그 transformation 앞에 오고, 코드는 평범한 사본(일정 간격의 한 줄)을 만든 뒤 transformation이 그것에 작용한다. 펜에는 들어가지 않는다. (예전에는 carrier transformation에 `Count`를 넣었는데, 그러면 작용만 하는 조각도 개수를 갖게 되어 사본을 만드는 조각과 같은 측면을 겹쳐 다뤘다.)
     - 예제 코드 지시문은 이 개수를 읽고 슬라이더로 사본 수가 바뀌게 하라고 한다. 더 작게 나눌 때 보내는 `split` 구조에도 그룹별 개수가 들어간다.
-  - 앱이 구조를 정리한다: 중복 id 제거, 부모는 collection만(자기 자신·순환·깊이 초과면 루트로), 빈 collection에는 원 하나를 넣고, carrier가 없으면 첫 object. 노드 id·이름·설명은 앱이 도형 종류로만 붙인다(`Group`, `Group 2`, `Circle`, `Square 2`, "평범한 도형을 묶는 그룹" 등). 형제 노드는 부모 상자를 가로로 나눠 쓰고, carrier object는 자기 칸을 채우며, 다른 도형은 작은 하나로 둔다. transformation은 carrier에만 붙고 나머지 노드는 평범하게 그대로 둔다.
+  - 앱이 구조를 정리한다: 중복 id 제거, 부모는 collection만(자기 자신·순환·깊이 초과면 루트로), 빈 collection에는 원 하나를 넣고, carrier가 없으면 첫 object, 없는 object id를 가리키면 대역 도형. 노드 id·이름·설명은 앱이 붙인다: 스케치 object로 그리는 노드는 그 object의 이름·설명·primitive(`petal`, "Petal", 여럿이면 "Petal 2"), 나머지는 도형 종류로만(`Group`, `Group 2`, `Circle`, `Square 2`, "평범한 도형을 묶는 그룹" 등). 예제에는 스케치 요소로 그리는 노드 목록(`example.elements`)이 저장된다. 형제 노드는 부모 상자를 가로로 나눠 쓰고, carrier object는 자기 칸을 채우며, 다른 도형은 작은 하나로 둔다. transformation은 carrier에만 붙고 나머지 노드는 평범하게 그대로 둔다.
   - 펜은 예제의 구조나 대역 도형을 가지지 않는다. 펜에는 transformation, 알고리즘, 그리고 collection에 작용하는지 object에 작용하는지(`target`, 모델에는 `appliesTo`)만 있다. Compose는 `appliesTo`에 맞는 종류의 노드에 펜을 붙이고, 그 노드는 자기 모양을 유지한다.
   - 이전 형식(`subject`/`member`, `collection`/`object`, `target`/`primitive`, `standIn`)으로 저장된 AI 기록은 복원할 때 이 구조로 바꿔 읽는다(collection 대상이면 그룹 + 도형 하나, 아니면 도형 하나).
-  - 예제 코드 지시문: "이 transformation만 carrier에 적용(collection이면 구성원 전체의 개수·위치·변화, object면 그 도형)하고 나머지 노드는 평범하게 그대로. object는 평범한 원/정사각형 대역(얇은 중립 윤곽, 채우기 없음), collection은 묶음일 뿐이며 스케치 요소가 아니므로 꽃잎 등 label이 암시하는 대상이나 다른 effect를 그리지 말 것."
+  - 예제 코드 지시문: "이 transformation만 carrier에 적용(collection이면 구성원 전체의 개수·위치·변화, object면 그 도형)하고 나머지 노드는 평범하게 그대로." 스케치 요소로 그리는 노드가 있으면(1차 예제): "이미지는 원본 스케치다. 그 노드들은 원본의 요소처럼(윤곽·비율·선·자기 색) 사본마다 평범한 한 개로 그려 원본과 닮게 하되, 이미지에서 다른 것(다른 배치·변화·색·움직임)은 가져오지 말 것. 나머지 object는 평범한 대역 도형. transformation은 연산만으로, 어떤 도형에도 그대로 작동하게 구현하고 요소는 자기 함수로 따로 그릴 것." 없으면(2차 이후): "object는 평범한 원/정사각형 대역(얇은 중립 윤곽, 채우기 없음), collection은 묶음일 뿐이며 스케치 요소가 아니므로 꽃잎 등 label이 암시하는 대상이나 다른 effect를 그리지 말 것."
   - 상태 머신은 없고, 그 transformation이 쓰는 알고리즘만 가져오며, 근거 영역의 비율을 유지한 채 프레임 가운데에 놓는다.
-- 예제마다 **transformation 펜**을 바로 만든다(12절). 그리고 예제 코드를 **최대 세 개씩 동시에** 생성한다. 예제 코드는 원본 스케치가 아니라 그 예제 프레임만 보고, "이 transformation 하나만, 평범한 대상에, 슬라이더가 눈에 보이게, 나중에 재사용할 수 있도록 함수로" 그리라는 지시로 만든다. 예제 프레임에서 나중에 Update해도 같은 지시를 쓴다(Generation direction이 있으면 덧붙임).
-- 우측 패널 1단계에 이 스케치에서 나온 예제 목록과 상태(코드 생성 중·준비됨·오류·코드 없음)가 보이고, 누르면 그 예제로 간다. 다시 Decompose하면 새 예제와 펜이 또 생긴다.
-- 프레임 수는 최대 48개다. 자리가 없으면 남는 transformation은 빼고 알려준다.
+- 펜은 자동으로 만들지 않는다. transformation 예제 프레임 헤더나 우측 패널의 **Make pen**을 눌러야 그 예제로 펜이 생긴다(12절). 예제 코드는 **최대 세 개씩 동시에** 생성한다. 예제 코드는 그 예제 프레임만 보고(스케치 요소를 그리는 예제와 object 예제는 요소 모습을 위해 원본 스케치 이미지를 받음; 지시문 길이 한도는 4000자), "이 transformation 하나만, 평범한 대상에, 슬라이더가 눈에 보이게, 나중에 재사용할 수 있도록 함수로" 그리라는 지시로 만든다. 예제 프레임에서 나중에 Update해도 같은 지시를 쓴다(Generation direction이 있으면 덧붙임).
+- 우측 패널 1단계에 이 스케치에서 나온 예제 목록과 상태(코드 생성 중·준비됨·오류·코드 없음)가 보이고, 누르면 그 예제로 간다. 다시 Decompose하면 새 예제가 또 생긴다(펜은 Make pen으로).
+- 프레임 수는 최대 48개다. 자리가 없으면 남는 예제는 빼고 알려준다.
 - 예제 프레임에서 값을 조절하거나 transformation을 다시 만들면 펜이 그 상태를 따라간다(12절).
 
 ### 5.1 최소 예제를 더 작게 나누기
 
-- 최소 예제 프레임도 **Decompose**할 수 있다(프레임 헤더, 우측 패널 예제 머리의 **Decompose further**). 같은 `decompose` intent에 예제의 장면과 그 transformation(`targetNodeId`, `targetTransformationId`)을 함께 보내고, 서버는 문맥에 `split`(그 transformation의 현재 정의·값, 대상 subject와 member, 쓰는 알고리즘)을 넣는다. 이미지는 그 예제의 결과 화면이다.
+- 최소 예제 프레임도 **Decompose**할 수 있다(프레임 헤더, 우측 패널 예제 머리의 **Decompose further**). 같은 `decompose` intent에 예제의 장면과 그 transformation(`targetNodeId`, `targetTransformationId`)을 함께 보내고, 서버는 문맥에 `split`(그 transformation의 현재 정의·값, 예제의 노드 구조와 carrier, 쓰는 알고리즘)을 넣는다. 이때 노드는 모두 대역 도형(`object: null`)으로 보낸다. 이미지는 그 예제의 결과 화면이다.
 - 프롬프트는 그 transformation을 **2–6개의 더 작고 서로 독립적인 transformation**으로 나누라고 한다. 각 조각은 부모가 하는 일의 일부만 맡고, 부모의 현재 값과 알고리즘(같은 id)을 이어받는다. 조각도 연산만이고(요소의 모양 금지) 각자 가장 작은 예제 구조(`nodes`, `carrier`)를 부모 구조에서 필요한 만큼만 남겨 정한다. 서버가 보내는 `split`에는 transformation, 부모 예제의 노드 구조와 carrier, 알고리즘이 들어 있다.
-- 더 나눌 수 없으면 모델은 부모와 같은 transformation 하나만 돌려주고, 앱은 프레임을 만들지 않고 "이미 최소 단위"라고 알려준다.
-- 결과는 스케치에서 Decompose할 때와 같다: 조각마다 최소 예제 프레임(부모 예제 오른쪽 격자)과 펜이 생기고 코드가 만들어진다. 부모 예제와 그 펜은 그대로 남는다. 새 예제의 출처는 부모 예제다(보드 화살표 `smaller`).
+- **2차부터는 스케치와 완전히 독립적이다.** 모델은 `objects`를 비워 두고 모든 object를 대역 도형으로 둔다. 서버도 split 결과에서는 `objects`를 버리고 노드의 `object`를 모두 `null`로 만든다. 그래서 더 작은 예제는 평범한 원·정사각형 위의 연산만 보여주고, object 예제는 생기지 않는다.
+- **나누는 기준**(프롬프트): property뿐 아니라 알고리즘의 식과 인자 안에서도 따로 떼어낼 수 있는 측면을 찾는다(사본 수, 경로를 따른 간격, 경로 모양(직선→곡선, 곡률, 반지름), 방향, 번호별 변화, 요소 하나의 모양, 스타일, 움직임). 여러 측면을 정하는 알고리즘은 조각마다 단순한 알고리즘으로 나눈다. 사본이 있어야 보이는 연산(줄을 휘기, 크기 감소)도 따로 된 transformation이며, 예제는 평범한 사본 그룹 위에서 보여준다. 1차 Decompose의 독립성 규칙도 같은 기준으로 바꿨다(정말 한 숫자가 둘 다 정하는 경우만 하나로 둔다).
+- **최소 단위**는 부모가 한 측면만 다룰 때뿐이다: 값 하나, 또는 같은 측면을 정하는 값들(한 색의 색상·채도 등)이고 여러 측면을 섞는 알고리즘이 없을 때. 개수+배치, 간격+곡률, 배치+변화는 항상 둘이다. 이때 모델은 부모와 같은 transformation 하나와 그 이유(`minimalReason`, 한 문장)를 돌려주고, 앱은 프레임을 만들지 않고 이유와 함께 "AI가 이미 최소 단위로 보고 나누지 않았다"고 알려준다(Generation direction에 나눌 방향을 적고 다시 할 수 있음).
+- 결과는 스케치에서 Decompose할 때와 같다: 조각마다 최소 예제 프레임(부모 예제 오른쪽 격자)이 생기고 코드가 만들어진다(펜은 Make pen으로). 부모 예제와 그 펜은 그대로 남는다. 새 예제의 출처는 부모 예제다(보드 화살표 `smaller`).
 - 몇 단계든 반복할 수 있다. 스케치의 예제 목록과 예제 머리의 목록은 더 작게 나눈 예제를 들여써서 트리로 보여준다. 깊은 예제에서 펜을 골라도 맨 처음 스케치로 화면을 옮긴다.
 - AI history에서 이 기록을 복원하면 같은 방식으로 작은 예제와 펜이 생긴다(조각이 하나면 아무것도 만들지 않음).
 - AI 재생성은 세 가지다: property 하나 다시 만들기, transformation 하나를 같은 id로 다시 만들기, 새 transformation을 AI가 제안해 스택 끝에 추가하기. 나머지 값은 유지하고, 겹치는 property id는 자동으로 바꾼다.
@@ -126,7 +130,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 위에서부터: AI 진행·오류 표시, 블록 클립보드, **프레임 역할별 머리**, 라이브 연결 상태와 Generate/Update code, 실행 오류와 Fix with AI, 선택한 노드의 properties(또는 선택 안내), 블록 팔레트, Generation direction.
 - 프레임 역할별 머리
   - **sketch**: workflow 세 단계. ① Decompose(버튼과 이 스케치의 예제 목록), ② Draw with pens(모든 transformation 펜, 눌러서 고르기), ③ Compose your sketch(Compose prompt, AI prompt 만들기, Compose sketch).
-  - **minimal example**: 어떤 transformation을 어떤 대상에 보여주는지, 이 예제의 펜(눌러서 그리기), 원본(스케치 또는 부모 예제)으로 가기, **Decompose further**와 이 예제에서 나눈 더 작은 예제 목록(5.1절).
+  - **minimal example**: 어떤 transformation을 어떤 대상에 보여주는지, 이 예제의 펜(눌러서 그리기, 아직 없으면 **Make pen**), 원본(스케치 또는 부모 예제)으로 가기, **Decompose further**와 이 예제에서 나눈 더 작은 예제 목록(5.1절).
   - **composition**: 어느 스케치에서 Compose했는지, 펜에서 가져온 transformation 목록(누르면 그 예제로, 예제가 지워졌으면 비활성), Compose prompt.
 - 선택한 노드의 이름·설명, state 칩, 상태별 설명과 전이, 그리고 **semantic transformation 스택**(번호가 붙은 카드마다 이름·설명·도구·property 소켓·새 소켓)을 보여준다.
 
@@ -175,7 +179,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 ## 12. Transformation 펜과 Compose
 
-- **Transformation 펜**은 최소 예제 하나에서 만들어진다(AI 없음). 펜은 transformation 하나(이름·설명·property와 그 값), 그 대상(collection/object, member), 그 transformation이 쓰는 알고리즘을 담는다. 펜 색은 펜을 구분하는 표시일 뿐 결과 색이 아니다.
+- **Transformation 펜**은 최소 예제 하나에서 사용자가 **Make pen**(예제 프레임 헤더, 또는 우측 패널 예제 머리)을 눌러 만든다(AI 없음). Decompose나 AI 기록 복원은 펜을 만들지 않는다. 펜을 툴바에서 지우면 그 예제에 다시 Make pen이 보인다. 펜은 transformation 하나(이름·설명·property와 그 값), 그 대상(collection/object, member), 그 transformation이 쓰는 알고리즘을 담는다. 펜 색은 펜을 구분하는 표시일 뿐 결과 색이 아니다.
 - **펜은 항상 최신이다.** 예제 프레임이 그 transformation을 가지고 있는 동안 펜은 그 프레임의 지금 상태(값 조절, AI regenerate 결과)를 읽는다. 툴바 펜, 그 펜으로 그린 획(획에는 그릴 때의 스냅샷이 남지만 같은 펜 id면 최신 상태로 읽음), Compose 요청이 모두 같다. 예제 프레임을 지우면 펜은 그때 상태로 고정되어 남는다. 저장할 때도 최신 상태를 저장한다.
 - 펜으로 그린 자국은 "**이 transformation을 여기에**"라는 뜻이다. 연필로 형태·배치를 그리고 펜으로 적용할 곳을 표시한다. 펜 설정에서 색을 바꾸고, 툴바에서 지울 수 있다(이미 그린 획의 의미는 남음). 예제 프레임 헤더의 **Pen** 버튼이나 우측 패널의 펜 칩으로도 고른다. 예제·composition 프레임에서 펜을 고르면 원본 스케치로 화면을 옮긴다.
 - **Compose sketch**(sketch 프레임 우측 패널 3단계)는 스케치 이미지, 순서가 있는 펜·연필·지우개 자국, 펜마다 transformation과 대상, Compose prompt를 AI(`compose`)에 보낸다. 모델에는 예제 프레임 id를 보내지 않는다.
@@ -210,7 +214,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 - 모든 AI 생성 요청을 서버의 `ai-generations/<날짜>/<시각-의도-ID>/`에 저장한다: 입력 이미지, 사용자 입력, AI에 보낸 prompt, 원본 응답, 최종 검증 결과, 코드는 `generated.js`, 모델·시간·상태·소요 시간·token 사용량. 실패·취소도 기록하고, API 키와 인증 헤더는 저장하지 않는다. 폴더는 Git에서 제외하며 `RULEGEN_AI_LOG_DIR`로 위치를 바꾼다. AI를 부르지 않는 로컬 편집(블록 끼우기, 펜 만들기, 슬라이더, 레이어 편집)은 기록하지 않는다.
 - 상단 **AI history**에서 기록을 조회하고(종류·시각·모델·상태), 결과와 오류를 확인하고 JSON으로 내려받는다.
-- 완료된 생성은 **이 생성 복원하기**로 AI 재호출 없이 복원한다. 새 생성은 `context.json`(생성 직전 프로젝트와 대상 프레임)과 `recovery.json`(복원용 프로젝트)을 함께 저장한다. Decompose 기록은 그 예제 프레임들(코드 없이)과 펜을, Compose 기록은 새 composition 프레임을 복원한다. 보드도 그때 모습으로 돌아온다: 프레임 위치와 화면 시점(camera, 확대 배율)을 그대로 복원하고, 시점이 없는 옛 기록만 대상 프레임으로 화면을 옮긴다. 복원은 현재 로컬 초안을 교체하므로 먼저 Export project로 내보내도록 안내한다.
+- 완료된 생성은 **이 생성 복원하기**로 AI 재호출 없이 복원한다. 새 생성은 `context.json`(생성 직전 프로젝트와 대상 프레임)과 `recovery.json`(복원용 프로젝트)을 함께 저장한다. Decompose 기록은 그 예제 프레임들(코드 없이, 펜 없이)을, Compose 기록은 새 composition 프레임을 복원한다. 보드도 그때 모습으로 돌아온다: 프레임 위치와 화면 시점(camera, 확대 배율)을 그대로 복원하고, 시점이 없는 옛 기록만 대상 프레임으로 화면을 옮긴다. 복원은 현재 로컬 초안을 교체하므로 먼저 Export project로 내보내도록 안내한다.
 - OpenAI의 일시적 오류(과부하 503, 500/502/504, 요청 한도 429)는 2초·4초·8초 간격으로(Retry-After가 있으면 그 값) 최대 3번 자동 재시도한다. 사용 한도 소진(`insufficient_quota`)이나 키·모델 오류는 재시도하지 않는다. 재시도한 응답은 `response-<회차>-retry<n>.txt`와 `log.json`의 `retries`에 남는다.
 - **오류 로그**: 화면에 뜨는 모든 오류를 `error-logs/<날짜>/<시각-출처-ID>.json`에 하나씩 저장한다(Git 제외, `RULEGEN_ERROR_LOG_DIR`로 위치 변경). 출처는 `ai`(AI 생성 실패: 의도·모델·HTTP 상태·OpenAI 오류 코드·`ai-generations/` 생성 폴더 키), `prepare`(코드 안전 검사 실패와 그 코드), `runtime`(생성 코드를 브라우저에서 실행할 때 난 오류와 그 코드), `ui`(그 밖에 프레임에 표시된 오류), `server`(요청 형식 등)다. API 키는 지우고, 이미지 data URL은 길이만 남긴다. 서버가 이미 기록한 오류는 브라우저에서 다시 기록하지 않는다.
 - 실패·취소 기록은 복원하지 않는다. 로그 폴더 밖 파일 접근을 막고 이미지 참조와 복원 형식을 검증한다.
@@ -265,7 +269,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 주요 사용 흐름
 
 1. 스케치 프레임에 연필로 그리거나 사진을 붙인다.
-2. **Decompose**를 누른다. 스케치 오른쪽에 transformation마다 최소 예제 프레임이 생기고, 툴바에 같은 수의 transformation 펜이 생기며, 예제 코드가 차례로 만들어진다.
+2. **Decompose**를 누른다. 스케치 오른쪽에 스케치의 object마다, 그리고 transformation마다 최소 예제 프레임이 생기고(transformation 예제는 원본 요소로 그려져 원본과 닮음), 예제 코드가 차례로 만들어진다. 쓸 transformation 예제에서 **Make pen**을 눌러 펜을 만든다.
 3. 예제 프레임에서 슬라이더로 값을 맞추거나, transformation을 AI로 다시 만든다. 펜이 그 상태를 따라간다.
 4. 새 스케치 프레임을 추가하고(또는 원래 스케치에) 연필로 형태와 배치를, transformation 펜으로 적용할 곳을 그린다.
 5. 우측 패널 3단계에서 **Compose sketch**를 누른다(처음에는 AI가 prompt 초안을 채움 → 확인·수정 → 다시 Compose sketch). 새 composition 프레임에 장면과 결과가 생긴다.
@@ -273,6 +277,6 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 ## 검증
 
-- 단위 테스트(전체 86개 통과): decompose 결과 변환과 id 정리, 프롬프트·스키마 사용, collection/object 예제 구조(한 개·여러 개·중첩, 사본 그룹의 Count property·Copies 보충과 이미 개수가 있으면 추가하지 않음, 자식이 부모 안에 놓임, 깨진 구조 정리, 스케치 요소 이름이 들어가지 않음, 옛 기록 형식 변환, 펜의 appliesTo, 알고리즘·머신 없음, 지시문), 펜이 예제 프레임의 최신 값을 따라가고 프레임이 사라지면 저장된 복사본을 쓰는 것, 같은 펜의 획이 Compose 문맥에서 하나로 묶이는 것, 예전 펜 형식 정리, Compose에서 펜 transformation을 그대로 복사하고 origin을 남기는 것(id 충돌 시 노드 자체 쪽 이름 변경, 알고리즘 id 충돌 시 펜 쪽 이름 변경, 펜 property를 상태 값으로 쓰기), 모델에 예제 프레임 id를 보내지 않는 것, composition 코드 생성에 예제 모듈 코드를 `references`로 보내는 것, Decompose 액션이 예제 프레임·펜을 만들고 예제 코드를 각자 생성하는 것(만든 코드가 실행되는 것까지), Compose 액션이 새 composition 프레임을 만드는 것, AI history 복원(decompose → 예제·펜, compose → composition 프레임), 최소 예제를 다시 Decompose할 때 모델에 `split` 문맥이 가고 작은 예제가 부모 예제를 출처로 생기며 더 나눌 수 없으면 아무것도 만들지 않는 것(복원 포함). 그 밖에 코드 계약·모듈·런타임·로그·레이어 편집 테스트.
+- 단위 테스트(전체 87개 통과): decompose 결과 변환과 id 정리, 프롬프트·스키마 사용, collection/object 예제 구조(한 개·여러 개·중첩, 사본 그룹의 Count property·Copies 보충과 이미 개수가 있으면 추가하지 않음, 자식이 부모 안에 놓임, 깨진 구조 정리, 스케치 요소 이름이 들어가지 않음, 옛 기록 형식 변환, 펜의 appliesTo, 알고리즘·머신 없음, 지시문), 펜이 예제 프레임의 최신 값을 따라가고 프레임이 사라지면 저장된 복사본을 쓰는 것, 같은 펜의 획이 Compose 문맥에서 하나로 묶이는 것, 예전 펜 형식 정리, Compose에서 펜 transformation을 그대로 복사하고 origin을 남기는 것(id 충돌 시 노드 자체 쪽 이름 변경, 알고리즘 id 충돌 시 펜 쪽 이름 변경, 펜 property를 상태 값으로 쓰기), 모델에 예제 프레임 id를 보내지 않는 것, composition 코드 생성에 예제 모듈 코드를 `references`로 보내는 것, Decompose 액션이 예제 프레임·펜을 만들고 예제 코드를 각자 생성하는 것(만든 코드가 실행되는 것까지), Compose 액션이 새 composition 프레임을 만드는 것, AI history 복원(decompose → 예제·펜, compose → composition 프레임), 최소 예제를 다시 Decompose할 때 모델에 `split` 문맥이 가고 작은 예제가 부모 예제를 출처로 생기며 더 나눌 수 없으면 아무것도 만들지 않는 것(복원 포함). 그 밖에 코드 계약·모듈·런타임·로그·레이어 편집 테스트.
 - Headless Chrome에서 AI 응답만 가짜로 넣어 전체 흐름을 확인했다: 스케치 → Decompose → 예제 프레임 3개(모두 준비됨)와 펜 3개 → 새 스케치에 Radial repetition 펜과 연필로 그리기 → Compose sketch(AI prompt 초안 → Compose) → composition 프레임 생성, 펜 transformation이 들어가고 코드 요청에 예제 코드가 참조로 포함됨.
 - 실제 AI가 transformation을 얼마나 독립적으로 나누는지, 예제 코드를 composition에서 얼마나 잘 재사용하는지는 아직 확인하지 못했다.

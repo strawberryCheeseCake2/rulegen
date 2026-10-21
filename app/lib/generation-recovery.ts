@@ -1,10 +1,9 @@
 import { z } from "zod";
-import { MAX_PENS, MAX_SKETCH_FRAMES, projectSchema } from "./project";
+import { MAX_SKETCH_FRAMES, projectSchema } from "./project";
 import { compositionPromptSchema, generatedSchema, type requestSchema } from "./schema";
-import { examplePen, semanticPenColors } from "./algorithm-pens";
 import { besideFrameGrid, showWorkspaceFrame } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
-import { decompositionSchema, exampleScene } from "./scene/minimal-example";
+import { decompositionSchema, exampleFrames } from "./scene/minimal-example";
 import { sceneSchema } from "./scene/validate";
 
 export const recoveryContextSchema = z.object({
@@ -27,18 +26,16 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
   const artwork = owner === "source" ? project.artwork : project.sketchFrames.find(frame => frame.id === owner)!.artwork;
   switch (input.intent) {
     case "decompose": {
-      // Its minimal example frames (without their code yet) and their pens, as the decomposition made them.
+      // Its minimal example frames (the sketch's objects, then the transformations; without their code yet), as the decomposition made them (pens are made by the user).
       // (An example split into one piece was already minimal: nothing was made.)
       const decomposition = decompositionSchema.parse(result), split = Boolean(input.targetTransformationId);
-      const room = split && decomposition.items.length < 2 ? 0 : Math.min(decomposition.items.length, MAX_SKETCH_FRAMES - project.sketchFrames.length);
+      const frames = exampleFrames(decomposition), room = split && decomposition.items.length < 2 ? 0 : Math.min(frames.length, MAX_SKETCH_FRAMES - project.sketchFrames.length);
       const spots = besideFrameGrid(project.workspace.frames, owner, room);
-      for (const [i, item] of decomposition.items.slice(0, room).entries()) {
-        const { scene, example } = exampleScene(decomposition, item), id = `sketch-${crypto.randomUUID()}` as const, penId = crypto.randomUUID();
-        const pen = project.semanticPens.length < MAX_PENS ? examplePen(scene, id, example, penId, semanticPenColors[project.semanticPens.length % semanticPenColors.length]) : null;
-        project.sketchFrames.push({ id, artwork: { strokes: [], photo: null, name: `${item.transformation.label || "Transformation"} · example`.slice(0, 200), revision: 0 } });
-        project.sketchPanels[id] = sketchPanelSchema.parse({ role: "example", scene, sourceFrameId: owner, analysisRevision: artwork.revision, example: { ...example, sourceFrameId: owner, penId: pen?.id ?? "" } });
+      for (const [i, { name, scene, example }] of frames.slice(0, room).entries()) {
+        const id = `sketch-${crypto.randomUUID()}` as const;
+        project.sketchFrames.push({ id, artwork: { strokes: [], photo: null, name: name.slice(0, 200), revision: 0 } });
+        project.sketchPanels[id] = sketchPanelSchema.parse({ role: "example", scene, sourceFrameId: owner, analysisRevision: artwork.revision, example: { ...example, sourceFrameId: owner, penId: "" } });
         project.workspace.frames[id] = spots[i];
-        if (pen) project.semanticPens.push(pen);
       }
       break;
     }
