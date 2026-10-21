@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { aiDecomposition, num, run, withMockedAI } from "./fixtures/scene";
-import { convertDecomposition, decompositionSchema, exampleInstruction, exampleScene } from "../app/lib/scene/minimal-example";
+import { convertDecomposition, decompositionSchema, exampleInstruction, exampleScene, exampleStructure } from "../app/lib/scene/minimal-example";
 import { compositionContext, examplePen, livePen } from "../app/lib/algorithm-pens";
 import { convertComposition } from "../app/lib/scene/convert";
 import { findNode } from "../app/lib/scene/graph";
@@ -28,12 +28,14 @@ const image = "data:image/png;base64,AAAA";
 const decomposition = () => convertDecomposition(structuredClone(aiDecomposition));
 const moduleCode = (root: string, body: string) => `rulegenModule(${JSON.stringify(root)}, function (m) {\n  return { draw() { ${body} } };\n});`;
 
-test("decompose: AI splits the sketch into independent transformations, each with its subject; ids are made unique", async () => {
+test("decompose: AI splits the sketch into independent operations, each with the collection/object structure that shows it; ids are made unique", async () => {
   await withMockedAI(() => aiDecomposition, async calls => {
     const result = decompositionSchema.parse(await runAI(requestSchema.parse({ intent: "decompose", image, instruction: "색은 따로 나눠줘" }), new AbortController().signal));
     assert.deepEqual(result.items.map(item => item.transformation.id), ["radial-repetition", "petal-curl", "petal-curl-2"]);
-    assert.deepEqual(result.items.map(item => item.subject.kind), ["collection", "object", "collection"]);
-    assert.equal(result.items[1].member, null, "an object's transformation has no member");
+    assert.deepEqual(result.items.map(item => [item.carrier, item.nodes.length]), [["petals", 2], ["petal", 1], ["rings", 3]]);
+    const item = calls[0].text.format.schema.properties.transformations.items.properties;
+    assert.equal(item.nodes.maxItems, 8); assert.ok(item.nodes.items.properties.shape.anyOf, "objects are circle/square stand-ins, collections have no shape");
+    assert.match(calls[0].instructions, /Objects and the transformations applied to them/); assert.match(calls[0].instructions, /nested collections/); assert.match(calls[0].instructions, /LOW COUPLING/);
     const layout = findProperty({ transformations: [result.items[0].transformation] } as never, "layout")!.value as { algorithmId: string; args: unknown[] };
     assert.equal(layout.algorithmId, "radial-repeat"); assert.ok(layout.args.length, "algorithm calls are expanded with their defaults");
     assert.equal(calls[0].text.format.name, "rulegen_decompose");
@@ -43,29 +45,60 @@ test("decompose: AI splits the sketch into independent transformations, each wit
   });
 });
 
-test("each transformation becomes a minimal example scene: only it, on a plain subject, with just the algorithms it calls", () => {
+test("a minimal example is the structure the transformation needs: plain stand-in objects, collections (nested, several), the transformation on its carrier only", () => {
   const parts = decomposition();
   const arrangement = exampleScene(parts, parts.items[0]);
-  assert.deepEqual(arrangement.scene.nodes.map(node => [node.id, node.kind, node.parentId, node.transformations.map(item => item.id)]), [["petals", "collection", null, ["radial-repetition"]], ["petal", "object", "petals", []]]);
-  assert.deepEqual(arrangement.example, { nodeId: "petals", transformationId: "radial-repetition" });
+  assert.deepEqual(arrangement.scene.nodes.map(node => [node.id, node.kind, node.parentId, node.primitive, node.name, node.transformations.map(item => item.id)]),
+    [["group", "collection", null, "group", "Group", ["radial-repetition"]], ["circle", "object", "group", "circle", "Circle", []]]);
+  assert.deepEqual(arrangement.example, { nodeId: "group", transformationId: "radial-repetition" });
   assert.deepEqual(arrangement.scene.algorithms.map(item => item.id), ["radial-repeat"]);
   assert.ok(arrangement.scene.nodes.every(node => node.machine === null));
+  // Nothing of the sketch's element ("꽃잎", "petal") is in the names or descriptions.
+  assert.doesNotMatch(JSON.stringify(arrangement.scene.nodes.map(node => [node.id, node.name, node.description, node.primitive])), /꽃잎|petal/i);
   const shape = exampleScene(parts, parts.items[1]);
-  assert.deepEqual(shape.scene.nodes.map(node => [node.id, node.kind, node.parentId, node.transformations.length]), [["example", "collection", null, 0], ["petal", "object", "example", 1]]);
-  assert.equal(shape.example.nodeId, "petal"); assert.deepEqual(shape.scene.algorithms, []);
-  // A member is always there for a collection's transformation, even when the model gave none.
-  assert.equal(exampleScene(parts, parts.items[2]).scene.nodes.length, 2);
+  assert.deepEqual(shape.scene.nodes.map(node => [node.id, node.primitive, node.transformations.length]), [["square", "rect", 1]]);
+  assert.equal(shape.example.nodeId, "square"); assert.deepEqual(shape.scene.algorithms, []);
+  const nested = exampleScene(parts, parts.items[2]);
+  // Groups of copies always get a count: in the carrier's transformation (it had none), or as plain "Copies" on the inner group.
+  assert.deepEqual(nested.scene.nodes.map(node => [node.id, node.parentId, node.name, node.transformations.map(item => [item.id, item.properties.map(property => property.id)])]),
+    [["group", null, "Group 1", [["petal-curl-2", ["count", "size"]]]], ["group-2", "group", "Group 2", [["example-copies", ["count"]]]], ["circle", "group-2", "Circle", []]]);
+  assert.match(exampleInstruction(nested.scene, nested.example), /"Copies" transformation/); assert.match(exampleInstruction(nested.scene, nested.example), /count property/);
+  // A carrier that already has a count (a property or an algorithm argument) gets none added; the model's count sets the default.
+  assert.deepEqual(arrangement.scene.nodes[0].transformations[0].properties.map(property => property.id), ["count", "layout"]);
+  const viaArg = { ...parts.items[0], transformation: { ...parts.items[0].transformation, properties: [{ id: "layout", label: "Layout", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "radial-repeat", args: [{ id: "radius", value: num(60, 0, 200, 1, "px") }, { id: "copy-count", value: num(5, 1, 20) }] } }] } };
+  assert.equal(exampleScene({ ...parts, algorithms: [{ ...parts.algorithms[0], params: [...parts.algorithms[0].params, { id: "copy-count", label: "Copies", description: "", value: num(5, 1, 20) }] }, parts.algorithms[1]] }, viaArg).scene.nodes[0].transformations[0].properties.length, 1);
+  const noCount = { ...parts.items[0], transformation: { ...parts.items[0].transformation, properties: parts.items[0].transformation.properties.filter(property => property.id !== "count") } };
+  assert.deepEqual((exampleScene(parts, noCount).scene.nodes[0].transformations[0].properties[0].value as { value: number }).value, 7);
+  const inside = (a: { x: number; y: number; w: number; h: number }, b: typeof a) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w + 1e-9 && a.y + a.h <= b.y + b.h + 1e-9;
+  assert.ok(inside(nested.scene.nodes[1].region, nested.scene.nodes[0].region) && inside(nested.scene.nodes[2].region, nested.scene.nodes[1].region), "children sit inside their collection");
+  // Several objects and several collections; a broken structure is made sound.
+  const messy = exampleStructure([
+    { id: "a", kind: "collection", parentId: null, shape: null }, { id: "b", kind: "collection", parentId: null, shape: null },
+    { id: "x", kind: "object", parentId: "a", shape: "circle" }, { id: "y", kind: "object", parentId: "a", shape: "square" },
+    { id: "loop1", kind: "collection", parentId: "loop2", shape: null }, { id: "loop2", kind: "collection", parentId: "loop1", shape: null },
+    { id: "z", kind: "object", parentId: "x", shape: "blob" }, { id: "x", kind: "object", parentId: null, shape: "square" }], "missing");
+  assert.deepEqual(messy.nodes.map(node => [node.id, node.kind, node.parentId]), [
+    ["group", "collection", null], ["circle", "object", "group"], ["square", "object", "group"],
+    ["group-2", "collection", null], ["circle-2", "object", "group-2"],
+    ["group-3", "collection", null], ["group-4", "collection", "group-3"], ["circle-3", "object", "group-4"], ["circle-4", "object", null]]);
+  assert.equal(messy.carrier, "circle", "a missing carrier falls back to the first object");
+  // Logs written with earlier models restore onto a structure.
+  const legacy = decompositionSchema.parse({ algorithms: parts.algorithms, items: [
+    { transformation: parts.items[1].transformation, region: parts.items[1].region, subject: { kind: "object", name: "Blob", description: "", primitive: "blob" }, member: null },
+    { transformation: parts.items[0].transformation, region: parts.items[0].region, target: "collection", collection: { name: "Petals", description: "꽃잎들" }, object: { name: "Petal", description: "", primitive: "rect" } },
+    { transformation: parts.items[1].transformation, region: parts.items[1].region, standIn: "square" }] });
+  assert.deepEqual(legacy.items.map(item => exampleScene(legacy, item).scene.nodes.map(node => [node.name, node.transformations.length])),
+    [[["Circle", 1]], [["Group", 1], ["Square", 0]], [["Square", 1]]]);
   const instruction = exampleInstruction(arrangement.scene, arrangement.example, "더 크게");
-  assert.match(instruction, /minimal example of ONE semantic transformation, "Radial repetition"/); assert.match(instruction, /ONLY this transformation/); assert.match(instruction, /User direction: 더 크게/);
+  assert.match(instruction, /minimal example of ONE semantic transformation, "Radial repetition"/); assert.match(instruction, /ONLY this transformation, to the collection "Group"/); assert.match(instruction, /User direction: 더 크게/); assert.match(instruction, /not the sketch's elements/);
 });
 
 test("a pen made from an example follows it: values tuned there come along; its last state stays when the frame is gone", () => {
   const parts = decomposition(), { scene, example } = exampleScene(parts, parts.items[0]);
   const pen = examplePen(scene, "sketch-ex", example, "pen-1", "#3b73c4")!;
   assert.equal(pen.kind, "transformation"); assert.equal(pen.name, "Radial repetition");
-  assert.deepEqual(pen.transformation!.subject, { kind: "collection", name: "Petals", description: "꽃잎들", primitive: "group" });
-  assert.equal(pen.transformation!.member?.name, "Petal");
-  const tuned = setPropertyScalar({ ...createSketchPanel({ scene }) } as SketchPanel, "petals", "count", [], 12).scene!;
+  assert.equal(pen.meaning, "꽃잎을 중심 둘레에 반복합니다."); assert.equal(pen.transformation!.target, "collection");
+  const tuned = setPropertyScalar({ ...createSketchPanel({ scene }) } as SketchPanel, "group", "count", [], 12).scene!;
   const count = (value: SemanticPen) => (value.transformation!.transformation.properties.find(item => item.id === "count")!.value as { value: number }).value;
   assert.equal(count(livePen(pen, id => id === "sketch-ex" ? tuned : undefined)), 12, "follows the example frame");
   assert.equal(count(livePen(pen, () => undefined)), 7, "the frame is gone: its saved copy");
@@ -105,7 +138,7 @@ test("compose: nodes take the pens' transformations exactly (with an origin), pl
     const result = await runAI(requestSchema.parse({ intent: "compose", image, instruction: "- 꽃을 배치해줘", compositionPens: pens, compositionStrokes: strokes }), new AbortController().signal) as typeof scene;
     assert.equal(findNode(result, "petals")!.transformations[0].origin?.frameId, "sketch-ex0");
     const sent = JSON.parse(calls[0].input[0].content.find((part: { text?: string }) => part.text?.includes("compositionPens")).text);
-    assert.equal(sent.compositionPens[0].transformation.label, "Radial repetition"); assert.equal(sent.compositionPens[0].subject.kind, "collection");
+    assert.equal(sent.compositionPens[0].transformation.label, "Radial repetition"); assert.equal(sent.compositionPens[0].appliesTo, "collection"); assert.equal(sent.compositionPens[0].subject, undefined, "the stand-ins are not part of the pen");
     assert.equal(sent.compositionPens[0].frameId, undefined); assert.equal(JSON.stringify(sent).includes("sketch-ex0"), false, "frames are the app's business");
     assert.match(calls[0].instructions, /THIS transformation applies HERE/); assert.match(calls[0].instructions, /copies that transformation into the node EXACTLY/);
   });
@@ -113,9 +146,9 @@ test("compose: nodes take the pens' transformations exactly (with an origin), pl
 
 test("a composition's code reuses the code of the examples its transformations came from", async () => {
   const parts = decomposition(), { scene, example } = exampleScene(parts, parts.items[0]);
-  const exampleCode = moduleCode("petals", "const r = m.v(\"petals/layout/radius\"); for (let i = 0; i < m.v(\"petals/count\"); i++) p.circle(r, i, 4);");
+  const exampleCode = moduleCode("group", "const r = m.v(\"group/layout/radius\"); for (let i = 0; i < m.v(\"group/count\"); i++) p.circle(r, i, 4);");
   const examplePanel = { ...createSketchPanel({ scene, role: "example", example: { ...example, sourceFrameId: "source", penId: "p0" } }), generated: connectScene({ title: "Petals", explanation: "", code: exampleCode }, scene) };
-  assert.match(exampleModule(examplePanel)!, /petals\/layout\/radius/);
+  assert.match(exampleModule(examplePanel)!, /group\/layout\/radius/);
   assert.match(codeInstruction(examplePanel), /minimal example of ONE semantic transformation/);
   const pen = { ...examplePen(scene, "sketch-ex", example, "p0", "#3b73c4")!, id: "mark-pen-1" };
   const composed = convertComposition({ algorithms: [], nodes: [{ id: "ring", kind: "collection", parentId: null, name: "Ring", description: "", primitive: "group", region: { x: .1, y: .1, w: .5, h: .5 }, pens: ["mark-pen-1"], transformations: [], machine: null }] }, [pen]);
@@ -123,13 +156,13 @@ test("a composition's code reuses the code of the examples its transformations c
   const deps = { panel: (id: string) => panels[id] ?? createSketchPanel(), artwork: (id: string) => panels[id] ? { name: id, photo: null, strokes: [], revision: 0 } : undefined };
   const references = codeReferences(deps as never, composed);
   assert.deepEqual(references.map(item => [item.transformationId, item.label]), [["radial-repetition", "Radial repetition"]]);
-  assert.match(references[0].code, /petals\/count/);
+  assert.match(references[0].code, /group\/count/);
   assert.deepEqual(codeReferences({ ...deps, artwork: () => undefined } as never, composed), [], "the example frame is gone: nothing to reuse");
   const composition = createSketchPanel({ scene: composed, role: "composition", composePrompt: "- 링으로 배치", instruction: "작게" });
   assert.equal(codeInstruction(composition), "- 링으로 배치\nUser direction: 작게");
   await withMockedAI(() => ({ title: "Ring", explanation: "", code: moduleCode("ring", sceneBindings(composed).map(binding => `m.v(${JSON.stringify(binding.key)});`).join(" ")) }), async calls => {
     await runAI(requestSchema.parse({ intent: "code", scene: composed, image, instruction: "x", references }), new AbortController().signal);
-    assert.match(JSON.parse(calls[0].input[0].content[0].text).references[0].code, /petals\/count/);
+    assert.match(JSON.parse(calls[0].input[0].content[0].text).references[0].code, /group\/count/);
     assert.match(calls[0].instructions, /reuse each example's implementation/);
   });
 });
@@ -190,7 +223,7 @@ test("a minimal example decomposes again: its one transformation (with current v
   await withMockedAI(() => aiDecomposition, async calls => {
     await runAI(requestSchema.parse({ intent: "decompose", image, scene, targetNodeId: example.nodeId, targetTransformationId: example.transformationId }), new AbortController().signal);
     const split = JSON.parse(calls[0].input[0].content[0].text).split;
-    assert.equal(split.transformation.id, "radial-repetition"); assert.equal(split.subject.kind, "collection"); assert.equal(split.member.name, "Petal");
+    assert.equal(split.transformation.id, "radial-repetition"); assert.equal(split.carrier, "group"); assert.deepEqual(split.nodes.map((node: { id: string; shape: string | null }) => [node.id, node.shape]), [["group", null], ["circle", "circle"]]);
     assert.deepEqual(split.algorithms.map((item: { id: string }) => item.id), ["radial-repeat"]);
     assert.match(calls[0].instructions, /DECOMPOSE IT FURTHER/);
     await assert.rejects(runAI(requestSchema.parse({ intent: "decompose", image, scene, targetNodeId: example.nodeId, targetTransformationId: "gone" }), new AbortController().signal), /나눌 transformation/);

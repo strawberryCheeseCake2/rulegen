@@ -507,68 +507,78 @@
               "additionalProperties": false
             }
           },
-          "subject": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 100
-              },
-              "description": {
-                "type": "string",
-                "maxLength": 600
-              },
-              "primitive": {
-                "type": "string",
-                "maxLength": 40
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "collection",
-                  "object"
-                ]
-              }
-            },
-            "required": [
-              "name",
-              "description",
-              "primitive",
-              "kind"
-            ],
-            "additionalProperties": false
-          },
-          "member": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 100
-                  },
-                  "description": {
-                    "type": "string",
-                    "maxLength": 600
-                  },
-                  "primitive": {
-                    "type": "string",
-                    "maxLength": 40
-                  }
+          "nodes": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
                 },
-                "required": [
-                  "name",
-                  "description",
-                  "primitive"
-                ],
-                "additionalProperties": false
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "collection",
+                    "object"
+                  ]
+                },
+                "parentId": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "shape": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "circle",
+                        "square"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "count": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 48
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
               },
-              {
-                "type": "null"
-              }
-            ]
+              "required": [
+                "id",
+                "kind",
+                "parentId",
+                "shape",
+                "count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "carrier": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
           },
           "region": {
             "type": "object",
@@ -608,8 +618,8 @@
           "label",
           "description",
           "properties",
-          "subject",
-          "member",
+          "nodes",
+          "carrier",
           "region"
         ],
         "additionalProperties": false

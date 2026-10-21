@@ -11,7 +11,7 @@ export function AlgorithmPenSettings({ pen, onChange, onClose, onRemove, onExamp
     <p className="algorithm-pen-hint">{interaction ? "클릭할 곳, 호버 영역, 드래그 방향과 놓을 위치를 스케치로 표시하세요. 펜 의미에 원하는 동작을 적으면 Compose가 사용자 입력과 반응을 함께 해석합니다."
       : "이 펜으로 그린 자국은 \"이 transformation을 여기에\"라는 뜻입니다. 연필로 형태와 배치를 그리고, 이 펜으로 그 transformation이 적용될 곳을 표시한 뒤 Compose하세요."}</p>
     {source && <>
-      <div className="algorithm-origin"><strong>{source.transformation.label || source.transformation.id}</strong><span>{source.subject.kind === "collection" ? "COLLECTION" : "OBJECT"} · {source.subject.name}</span></div>
+      <div className="algorithm-origin"><strong>{source.transformation.label || source.transformation.id}</strong><span>SEMANTIC TRANSFORMATION</span></div>
       {source.transformation.description && <p className="algorithm-source">{source.transformation.description}</p>}
       {source.transformation.properties.length > 0 && <dl className="semantic-parameter-snapshot">{source.transformation.properties.flatMap(property => valueLeaves(property.value).slice(0, 3).map(leaf => <div key={`${property.id}/${leaf.path.join("/")}`}>
         <dt>{[property.label, ...leaf.path].join(" · ")}</dt><dd>{describeValue(leaf.value, names)}</dd></div>)).slice(0, 10)}</dl>}

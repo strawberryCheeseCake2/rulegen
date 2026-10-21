@@ -1,6 +1,6 @@
 import { semanticPenSchema, ART_WIDTH, ART_HEIGHT, type SemanticPen, type Artwork } from "./schema";
 import { algorithmClosure, algorithmRefs } from "./scene/algorithms";
-import { childrenOf, findNode } from "./scene/graph";
+import { findNode } from "./scene/graph";
 import type { Example } from "./scene/minimal-example";
 import type { Scene } from "./scene/schema";
 import { findTransformation } from "./scene/transformations";
@@ -16,10 +16,7 @@ export const semanticPenColors = ["#3b73c4", "#c4547d", "#8b61b6", "#cf8c2e", "#
 export function examplePenTransformation(scene: Scene, frameId: string, example: Pick<Example, "nodeId" | "transformationId">) {
   const node = findNode(scene, example.nodeId), transformation = node && findTransformation(node, example.transformationId);
   if (!node || !transformation) return null;
-  const member = node.kind === "collection" ? childrenOf(scene, node.id).find(item => item.kind === "object") ?? childrenOf(scene, node.id)[0] : undefined;
-  return { frameId, nodeId: node.id, subject: { kind: node.kind, name: node.name, description: node.description, primitive: node.primitive },
-    member: member ? { name: member.name, description: member.description, primitive: member.primitive } : null,
-    transformation: structuredClone(transformation), library: algorithmClosure(scene.algorithms, transformation.properties.flatMap(property => algorithmRefs(property.value))) };
+  return { frameId, nodeId: node.id, target: node.kind, transformation: structuredClone(transformation), library: algorithmClosure(scene.algorithms, transformation.properties.flatMap(property => algorithmRefs(property.value))) };
 }
 /** A pen made from a minimal example frame: drawing with it means "this transformation goes here". */
 export function examplePen(scene: Scene, frameId: string, example: Pick<Example, "nodeId" | "transformationId">, id: string, color: string): SemanticPen | null {
@@ -27,7 +24,7 @@ export function examplePen(scene: Scene, frameId: string, example: Pick<Example,
   if (!transformation) return null;
   const label = transformation.transformation.label || transformation.transformation.id;
   return semanticPenSchema.parse({ kind: "transformation", id, name: label.slice(0, 100), color, transformation,
-    meaning: [transformation.transformation.description, `대상: ${transformation.subject.name}${transformation.member ? ` (${transformation.member.name}들)` : ""}`].filter(Boolean).join(" · ").slice(0, 2000) });
+    meaning: transformation.transformation.description.slice(0, 2000) });
 }
 /**
  * A pen as it reads now: a transformation pen follows its minimal example frame

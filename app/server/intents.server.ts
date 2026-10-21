@@ -5,7 +5,7 @@ import { convertComposition, convertTransformation, mergeAIAlgorithms } from "..
 import { algorithmClosure, algorithmRefs } from "../lib/scene/algorithms";
 import { descendantIds, updateNode } from "../lib/scene/graph";
 import { conformMachine } from "../lib/scene/machines";
-import { convertDecomposition } from "../lib/scene/minimal-example";
+import { collectionCount, convertDecomposition } from "../lib/scene/minimal-example";
 import { canAddTransformation, placeTransformation } from "../lib/scene/transformations";
 import { validateScene } from "../lib/scene/validate";
 import { sceneBindings, sceneValues } from "../lib/scene/values";
@@ -35,18 +35,18 @@ const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 
 /** The modules the code must define: one per root node, with the node ids it draws. */
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치를 Decompose하거나 Compose해주세요." : undefined;
-/** What the model reads of a pen: its transformation and subject (the example frame is the app's business). */
+/** What the model reads of a pen: its transformation and algorithms (the example frame and its stand-in shape are the app's business). */
 const penForModel = (pen: AIInput["compositionPens"][number]) => pen.kind === "interaction" ? { id: pen.id, kind: pen.kind, color: pen.color, meaning: pen.meaning }
-  : { id: pen.id, kind: pen.kind, color: pen.color, name: pen.name, meaning: pen.meaning, subject: pen.transformation!.subject, member: pen.transformation!.member,
+  : { id: pen.id, kind: pen.kind, color: pen.color, name: pen.name, meaning: pen.meaning, appliesTo: pen.transformation!.target,
     transformation: pen.transformation!.transformation, algorithms: pen.transformation!.library };
 export const strokeContext = (input: AIInput) => ({ compositionPens: input.compositionPens.map(penForModel), compositionStrokes: input.compositionStrokes, canvas });
-/** Decomposing a minimal example: the one transformation it shows, its subject, and the algorithms it calls (to split further). */
+/** Decomposing a minimal example: the one transformation it shows, its example structure and carrier, and the algorithms it calls (to split further). */
 function splitContext(input: AIInput) {
   const scene = input.scene, node = scene && targetNode(input), transformation = node?.transformations.find(item => item.id === input.targetTransformationId);
   if (!scene || !node || !transformation) return null;
-  const member = node.kind === "collection" ? scene.nodes.find(item => item.parentId === node.id) : undefined;
-  return { transformation, subject: { kind: node.kind, name: node.name, description: node.description, primitive: node.primitive },
-    member: member ? { name: member.name, description: member.description, primitive: member.primitive } : null,
+  // Its example's structure, as the model wrote it for decompose (the carrier and the plain nodes around it).
+  return { transformation, carrier: node.id,
+    nodes: scene.nodes.map(item => ({ id: item.id, kind: item.kind, parentId: item.parentId, shape: item.kind === "collection" ? null : item.primitive === "rect" ? "square" : "circle", count: collectionCount(item) })),
     algorithms: algorithmClosure(scene.algorithms, transformation.properties.flatMap(property => algorithmRefs(property.value))) };
 }
 

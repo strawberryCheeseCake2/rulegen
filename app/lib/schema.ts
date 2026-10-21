@@ -8,16 +8,15 @@ export const codeSchema = z.object({ title: z.string().max(150), explanation: z.
 export const generatedSchema = codeSchema.extend({ sceneBindings: z.array(sceneBindingSchema).max(4096).default([]), machineSignature: z.string().max(200000).default("") });
 /**
  * What a transformation pen carries: ONE semantic transformation as its minimal
- * example frame shows it, with the subject it acts on and the algorithms it calls.
+ * example frame shows it, the kind of node it applies to, and the algorithms it calls (not the stand-in shapes it was shown on).
  * While that frame exists the pen follows it (its latest values and code); this
  * copy is what is left when it is gone.
  */
 export const penTransformationSchema = z.object({
   /** The minimal example frame, and the node there that carries the transformation. */
   frameId: z.string().max(80), nodeId: idSchema,
-  /** What it acts on: one object (its look), or a collection (how its members are arranged and vary) with its plain member. */
-  subject: z.object({ kind: nodeKindSchema, name: z.string().min(1).max(100), description: z.string().max(600), primitive: z.string().max(40) }),
-  member: z.object({ name: z.string().min(1).max(100), description: z.string().max(600), primitive: z.string().max(40) }).nullable().default(null),
+  /** What kind of node it was applied to in its example: a collection (its members as a whole) or an object (its shape). */
+  target: nodeKindSchema.catch("object").default("object"),
   transformation: transformationSchema,
   library: z.array(algorithmSchema).max(24),
 });

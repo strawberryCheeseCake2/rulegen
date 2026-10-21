@@ -45,11 +45,23 @@ export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema)
 export const aiTransformSchema = z.object({ algorithms, transformation: aiTransformationSchema });
 /** Independent transformations one sketch is decomposed into (each becomes a minimal example and a pen). */
 export const MAX_DECOMPOSED = 10;
-const subject = z.object({ name: z.string().min(1).max(100), description: z.string().max(600), primitive: z.string().max(40) });
-/** decompose: the sketch as a list of independent semantic transformations, each with the subject it acts on. */
+/** The plain shapes a minimal example's objects are: stand-ins, not elements of the sketch. */
+export const EXAMPLE_SHAPES = ["circle", "square"] as const;
+/** Nodes a minimal example may have (objects and collections, nested). */
+export const MAX_EXAMPLE_NODES = 8;
+/**
+ * decompose: the sketch as a list of independent semantic transformations
+ * (operations only: what the sketch's elements ARE is not one of them). Each comes
+ * with the smallest collection/object structure that shows it: plain objects
+ * (stand-in shapes), collections grouping them (nested if needed), and the node
+ * that carries the transformation.
+ */
 export const aiDecompositionSchema = z.object({ algorithms, transformations: z.array(aiTransformationSchema.extend({
-  /** What it acts on: one object, or a collection (with the plain member it arranges/varies). */
-  subject: subject.extend({ kind: nodeKindSchema }), member: subject.nullable(),
+  nodes: z.array(z.object({ id: idSchema, kind: nodeKindSchema, parentId: idSchema.nullable(), shape: z.enum(EXAMPLE_SHAPES).nullable(),
+    /** A collection of copies of its ONE member: how many (null for a collection of distinct members, and for objects). */
+    count: z.number().int().min(1).max(48).nullable() })).min(1).max(MAX_EXAMPLE_NODES),
+  /** The node the transformation is applied to. */
+  carrier: idSchema,
   /** Where the evidence is in the sketch (normalized), so the example keeps its proportions. */
   region: regionSchema,
 })).min(1).max(MAX_DECOMPOSED) });

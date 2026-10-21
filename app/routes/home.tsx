@@ -76,6 +76,8 @@ export default function Home() {
   const [color, setColor] = useState("#75664e"), [width, setWidth] = useState(3), [opacity, setOpacity] = useState(80);
   const [workspace, setWorkspace] = useState<WorkspaceLayout>(() => workspaceSchema.parse({}));
   const workspaceCanvas = useRef<WorkspaceHandle>(null);
+  /** Frames picked together on the board (select-tool drag), to delete together. */
+  const [selectedFrames, setSelectedFrames] = useState<FrameId[]>([]);
   const [pendingFrameFocus, setPendingFrameFocus] = useState<FrameId | null>(null);
   const resultPreviews = useRef(new Map<string, CodePreviewHandle>());
   // The frame whose running result takes mouse, touch and keyboard input (Esc stops).
@@ -249,10 +251,11 @@ export default function Home() {
       const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
       // Playing with a result: the frame only takes input for it; Esc stops.
       if (playing === activeSketch) { if (e.key === "Escape") setPlaying(null); return; }
-      if (e.key === "Escape") { setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
+      if (e.key === "Escape") { setSelectedFrames([]); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
       else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
+      else if (tool === "select" && selectedFrames.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); if (!busy) deleteFrames(selectedFrames); }
       else if (tool === "select" && panel.selectedNodeIds.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); edits.remove(); }
       else if (tool === "select" && panel.selectedNodeIds.length && e.key.startsWith("Arrow")) { e.preventDefault(); const step = e.shiftKey ? 10 : 1; edits.nudge((e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0) / 900, (e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0) / 600); }
       else if (!(command || e.altKey)) { if (key === "v") chooseTool("select"); if (key === "p") chooseTool("pen"); if (key === "e") chooseTool("eraser"); if (key === "l") chooseTool("lasso"); if (key === "h") chooseTool("hand"); }
@@ -267,14 +270,14 @@ export default function Home() {
     setArtwork(data.artwork); artworkRef.current = data.artwork; setSketchFrames(data.sketchFrames); sketchFramesRef.current = data.sketchFrames;
     mutatePanels(() => Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
-    setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
+    setSketchHistories({}); setSketchSelections({}); setSelectedFrames([]); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
     setPlaying(null); setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
   function newProject() {
     cancelAll(); activeDocument.current++; prepareNumber.current++;
     const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
     mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setPlaying(null);
-    setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({}); setSemanticPens([]);
+    setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({}); setSelectedFrames([]); setSemanticPens([]);
     setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
     setTool("pen"); setPencilOpen(false); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
   }
@@ -311,8 +314,19 @@ export default function Home() {
     setSketchHistories(current => ({ ...current, [id]: { past: [], future: [] } }));
     activateSketch(id); setPencilOpen(false); setPenSettingsOpen(false); setPendingFrameFocus(id);
   }
-  function deleteFrame(id: FrameId) {
+  /** Delete several frames at once (a board selection); frames still running AI work are kept. */
+  function deleteFrames(ids: FrameId[]) {
+    const removable = ids.filter(id => !panelsRef.current[id]?.loading), kept = ids.length - removable.length;
+    if (!removable.length) { setToast("AI 작업 중인 프레임은 삭제할 수 없습니다. 먼저 작업을 취소해주세요."); return; }
+    if (removable.length > 1 && !window.confirm(`선택한 ${removable.length}개 프레임을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    const pens = removable.filter(id => panelsRef.current[id]?.example?.penId).length;
+    for (const id of removable) deleteFrame(id, true);
+    setSelectedFrames([]);
+    setToast(`${removable.length}개 프레임을 삭제했습니다.${pens ? ` 예제로 만든 펜 ${pens}개는 지금 상태로 남아 있습니다.` : ""}${kept ? ` AI 작업 중인 ${kept}개는 남겼습니다.` : ""}`);
+  }
+  function deleteFrame(id: FrameId, quiet = false) {
     if (panelsRef.current[id]?.loading) return;
+    setSelectedFrames(current => current.includes(id) ? current.filter(item => item !== id) : current);
     cancel(id); prepareNumber.current++;
     // A pen made from this example keeps the transformation as it is now.
     const example = panelsRef.current[id]?.example;
@@ -327,11 +341,12 @@ export default function Home() {
     if (id === "source") { const empty = { ...blank(), name: artworkRef.current.name }; artworkRef.current = empty; setArtwork(empty); setHistory([]); setFuture([]); setHasSelection(false); }
     setWorkspace(current => removeWorkspaceFrame(current, id));
     if (activeSketchRef.current === id) {
-      const fallback = id !== "source" && !workspace.hiddenFrames.includes("source") ? "source" : remaining[0]?.id || "source";
+      const sourceShown = id !== "source" && !workspace.hiddenFrames.includes("source") && !(quiet && selectedFrames.includes("source"));
+      const fallback = sourceShown ? "source" : remaining[0]?.id || "source";
       activeSketchRef.current = fallback; setActiveSketch(fallback);
       if (fallback !== "source" || (id !== "source" && !workspace.hiddenFrames.includes("source"))) setPendingFrameFocus(fallback as FrameId);
     }
-    setToast(example?.penId ? "최소 예제 프레임을 삭제했습니다. 펜은 지금 상태로 남아 있습니다." : "프레임을 삭제했습니다.");
+    if (!quiet) setToast(example?.penId ? "최소 예제 프레임을 삭제했습니다. 펜은 지금 상태로 남아 있습니다." : "프레임을 삭제했습니다.");
   }
   function commit(next: Artwork) { setWorkspace(current => showWorkspaceFrame(current, "source")); const previous = artworkRef.current; const updated = { ...next, revision: previous.revision + 1 }; setHistory(h => [...h.slice(-39), previous]); setFuture([]); artworkRef.current = updated; setArtwork(updated); }
   function commitSketchFrame(id: string, next: Artwork) {
@@ -566,7 +581,7 @@ export default function Home() {
         onPenExample={pen => { const id = penExample(pen); return Boolean(id && showFrame(id)); }}
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
-        onHelp={() => setToast("V 선택·이동 · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제·Interact 끝내기")} />
+        onHelp={() => setToast("V 선택·이동(빈 보드를 드래그하면 프레임 여러 개 선택, ⇧ 추가, Delete로 삭제) · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제·Interact 끝내기")} />
       <aside className="layer-sidebar">
         <LayerPanel scene={scene} sketchId={activeSketch} selected={panel.selectedNodeIds} hovered={panel.hovered} busy={busy} canUndo={panel.sceneHistory.length > 0} canRedo={panel.sceneFuture.length > 0} title={currentSketch.name}
           onSelect={edits.select} onHover={edits.hover}
@@ -576,6 +591,7 @@ export default function Home() {
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} links={links} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          selectedFrames={selectedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setSelectedFrames} onDeleteFrames={deleteFrames}
           onActivateFrame={id => activateSketch(id)}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>SKETCH → DECOMPOSE → PENS → COMPOSE</span></footer>

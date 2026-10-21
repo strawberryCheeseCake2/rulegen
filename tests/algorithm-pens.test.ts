@@ -14,7 +14,7 @@ const previousLogDirectory = process.env.RULEGEN_AI_LOG_DIR;
 process.env.RULEGEN_AI_LOG_DIR = logDirectory;
 after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
 
-const parts = convertDecomposition({ algorithms: [], transformations: [{ id: "edge-jitter", label: "Edge jitter", description: "윤곽이 흔들립니다.", subject: { kind: "object", name: "Blob", description: "", primitive: "blob" }, member: null,
+const parts = convertDecomposition({ algorithms: [], transformations: [{ id: "edge-jitter", label: "Edge jitter", description: "윤곽이 흔들립니다.", nodes: [{ id: "blob", kind: "object", parentId: null, shape: "circle", count: null }], carrier: "blob",
   region: { x: .2, y: .2, w: .3, h: .3 }, properties: [{ id: "amount", label: "Amount", effect: "spatial", description: "", value: num(5, 0, 20) }] }] });
 const example = exampleScene(parts, parts.items[0]);
 const pen = examplePen(example.scene, "sketch-ex", example.example, "jitter-pen", "#3b73c4")!;
