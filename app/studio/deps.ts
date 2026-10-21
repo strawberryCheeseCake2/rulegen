@@ -27,6 +27,8 @@ export type StudioDeps = {
   focus: (frame: FrameId) => void;
   /** A pen as it reads now (a transformation pen follows its minimal example frame). */
   resolvePen: (pen: SemanticPen) => SemanticPen;
+  /** A toolbar pen by id, as it reads now. */
+  pen?: (id: string) => SemanticPen | undefined;
   /** Studio-wide algorithm clipboard, shared by every sketch. */
   clip: () => AlgorithmClip | null;
   setClip: (clip: AlgorithmClip) => void;

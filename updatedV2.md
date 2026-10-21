@@ -115,7 +115,15 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 몇 단계든 반복할 수 있다. 스케치의 예제 목록과 예제 머리의 목록은 더 작게 나눈 예제를 들여써서 트리로 보여준다. 깊은 예제에서 펜을 골라도 맨 처음 스케치로 화면을 옮긴다.
 - AI history에서 이 기록을 복원하면 같은 방식으로 작은 예제와 펜이 생긴다(조각이 하나면 아무것도 만들지 않음).
 - AI 재생성은 세 가지다: property 하나 다시 만들기, transformation 하나를 같은 id로 다시 만들기, 새 transformation을 AI가 제안해 스택 끝에 추가하기. 나머지 값은 유지하고, 겹치는 property id는 자동으로 바꾼다.
-- **재생성은 버튼을 눌러도 바로 실행되지 않는다.** property·transformation의 ✦ 버튼이나 Add transformation with AI를 누르면 그 자리에 **Regenerate with AI** 입력 창이 열린다. 무엇이 대상인지(Property / Transformation / New transformation) 첨부 칩으로 보이고, 어떻게 바꿀지(또는 무엇을 더할지) 텍스트로 적는다. **Draw on frame**을 켜면 활성 프레임에 보라색으로 바꿀 곳을 그릴 수 있고(그 동안 스케치 획·레이어 선택은 꺼짐), "Annotation n획 첨부됨"으로 보이며 ×로 지운다. **Regenerate**를 누르면 텍스트(비어 있으면 프레임의 기존 지시), annotation 좌표, annotation을 그린 결과 이미지가 함께 AI(`transform`)에 간다. 성공하면 창이 닫히고, 실패하면 내용이 남아 다시 시도할 수 있다. Cancel로 닫는다. **재생성이 성공하면 그 프레임에 결과 코드가 있을 때 코드도 바로 다시 생성한다**(재생성된 transformation의 새 설명대로 예전 동작을 바꾸라는 지시와 함께). 그래서 장면 설명과 실행 중인 코드가 어긋나지 않는다. 예제 프레임에서 다시 만들면 그 예제의 펜도 새 transformation을 따라간다.
+- **추가·수정은 버튼을 눌러도 바로 실행되지 않고, 먼저 AI가 텍스트로 확인(clarification)한다.** 시작하는 곳은 둘이다.
+  - **프레임 annotation**: 장면이 있는 프레임 헤더의 **Annotate**를 누르면 우측 패널 맨 위에 **ANNOTATE FRAME** 창이 열리고 바로 그리기 모드가 된다. 프레임에 보라색으로 짚고(원·화살표·선·손글씨) 무엇을 더하거나 바꿀지 적는다. 어느 노드의 어떤 transformation을 바꿀지, 새로 더할지는 AI가 고른다.
+  - **노드에서**: property·transformation의 ✦ 버튼이나 Add transformation with AI를 누르면 그 자리에 **ADD OR MODIFY WITH AI** 창이 열린다. 대상(Property / Transformation / New transformation)은 고정이고 AI는 어떻게 바꿀지만 확인한다.
+  - 두 창 모두 텍스트, **Draw on frame**(그 동안 스케치 획·레이어 선택은 꺼짐, "Annotation n획 첨부됨", ×로 지움)을 쓴다. **Clarify**를 누르면 텍스트, annotation 좌표, annotation을 그린 결과 이미지, 장면이 AI(`clarify` intent, `prompts/clarify.md`)에 간다. AI는 아무것도 바꾸지 않고 **이해한 내용**, **대상**(추가/수정 · 「노드」의 「transformation」 · property), **구체적인 계획**(바꿀 값·알고리즘과 대략의 새 값, 그대로 둘 것; 추가면 연산 이름·하는 일·property와 시작 값), 정말 결과가 달라지는 **질문**(최대 3개)을 돌려준다. 앱은 대상이 장면에 있는지 확인하고(property만 주면 그 transformation을 찾음, 노드에서 연 경우 대상은 바꾸지 않음, 더 넣을 수 없는 노드에 추가면 오류), 대상 노드를 선택해 프레임에 보이게 한다.
+  - **Transformation 펜으로 annotate**: 요청이 열려 있을 때 툴바에서 transformation 펜을 고르면 그 프레임에 머문 채 그리기 모드가 되고(원본 스케치로 화면을 옮기지 않음), 그 펜으로 그린 획은 "이 펜의 transformation을 여기에"라는 뜻이 된다. 획은 펜 색으로 보이고 창에는 "Radial repetition 1획"처럼 펜별로 첨부된다. AI에는 획마다 그린 펜(`pen`, 연필 획은 null)과 그 펜들의 transformation·알고리즘·`appliesTo`가 간다(`transformMarkPens`, `compositionPens`; 결과 이미지에도 펜 색으로 그림). AI는 확인에 `penId`를 적는다.
+    - **추가**(그 노드에 아직 없는 연산): Apply하면 AI 생성 없이 펜의 transformation을 **예제에 있는 그대로**(값·알고리즘, 예제를 가리키는 `origin`) 그 노드 스택 끝에 붙인다(겹치는 id는 바꿈). 그 다음 코드를 다시 만들 때 그 예제의 코드를 `references`로 재사용한다. 값을 바꾸고 싶으면 그 뒤에 따로 요청한다.
+    - **수정**(기존 transformation을 펜처럼 바꾸기): 펜을 참고로 `transform`이 실행되고, 펜의 transformation과 알고리즘이 함께 가서 그 연산·알고리즘을 재사용하게 한다.
+    - 그린 펜이 아닌 펜 id는 버린다. 펜 여러 개면 한 번에 하나를 처리하고 나머지는 다음 요청으로 하라고 질문에 적는다.
+  - 질문에 답하거나 고칠 점을 적고 **Clarify again**을 누르면 답이 요청에 붙고 이전 확인과 함께 다시 간다. **Apply**를 누르면 그때 확인된 대상에 `transform`이 실행되고, 요청·확인된 계획("그대로 따를 것")·답이 지시가 된다(다른 구현을 제안하는 alternative 모드는 쓰지 않음). 성공하면 창이 닫히고, 실패하면 내용이 남아 다시 시도할 수 있다. Cancel로 닫는다. 확인 중 장면이 바뀌면 다시 하라고 알린다. 확인 기록도 AI history에 남는다(복원할 변경은 없음). **재생성이 성공하면 그 프레임에 결과 코드가 있을 때 코드도 바로 다시 생성한다**(재생성된 transformation의 새 설명대로 예전 동작을 바꾸라는 지시와 함께). 그래서 장면 설명과 실행 중인 코드가 어긋나지 않는다. 예제 프레임에서 다시 만들면 그 예제의 펜도 새 transformation을 따라간다.
 
 ## 6. Layers 패널과 직접 조작
 
@@ -205,7 +213,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 15. 프롬프트 폴더
 
 
-- 모든 AI 프롬프트는 프로젝트 루트 **`prompts/`**에 Markdown으로 둔다. 의도마다 한 파일(`decompose`, `compose`, `compose-prompt`, `transform`, `code`)이고, 공통 규칙은 `prompts/contracts/`(scene 모델, state planning, scene 코드 계약, interaction annotation)에서 `{{include:…}}`로 포함한다.
+- 모든 AI 프롬프트는 프로젝트 루트 **`prompts/`**에 Markdown으로 둔다. 의도마다 한 파일(`decompose`, `compose`, `compose-prompt`, `clarify`, `transform`, `code`)이고, 공통 규칙은 `prompts/contracts/`(scene 모델, state planning, scene 코드 계약, interaction annotation)에서 `{{include:…}}`로 포함한다.
 - 각 프롬프트 파일 끝에 **출력 JSON 형식과 예시**를 적고, 서버가 실제로 보내는 strict JSON Schema를 `prompts/schemas/<intent>.json`에 둔다. 스키마를 바꾸면 `npm run prompts:schemas`로 다시 쓰고, 파일이 실제 스키마와 다르면 테스트가 실패한다.
 - 서버는 요청마다 프롬프트 파일을 다시 읽어 재시작 없이 반영한다. `RULEGEN_PROMPT_DIR`로 위치를 바꿀 수 있고 Docker 이미지에도 포함한다.
 
@@ -277,6 +285,6 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 ## 검증
 
-- 단위 테스트(전체 87개 통과): decompose 결과 변환과 id 정리, 프롬프트·스키마 사용, collection/object 예제 구조(한 개·여러 개·중첩, 사본 그룹의 Count property·Copies 보충과 이미 개수가 있으면 추가하지 않음, 자식이 부모 안에 놓임, 깨진 구조 정리, 스케치 요소 이름이 들어가지 않음, 옛 기록 형식 변환, 펜의 appliesTo, 알고리즘·머신 없음, 지시문), 펜이 예제 프레임의 최신 값을 따라가고 프레임이 사라지면 저장된 복사본을 쓰는 것, 같은 펜의 획이 Compose 문맥에서 하나로 묶이는 것, 예전 펜 형식 정리, Compose에서 펜 transformation을 그대로 복사하고 origin을 남기는 것(id 충돌 시 노드 자체 쪽 이름 변경, 알고리즘 id 충돌 시 펜 쪽 이름 변경, 펜 property를 상태 값으로 쓰기), 모델에 예제 프레임 id를 보내지 않는 것, composition 코드 생성에 예제 모듈 코드를 `references`로 보내는 것, Decompose 액션이 예제 프레임·펜을 만들고 예제 코드를 각자 생성하는 것(만든 코드가 실행되는 것까지), Compose 액션이 새 composition 프레임을 만드는 것, AI history 복원(decompose → 예제·펜, compose → composition 프레임), 최소 예제를 다시 Decompose할 때 모델에 `split` 문맥이 가고 작은 예제가 부모 예제를 출처로 생기며 더 나눌 수 없으면 아무것도 만들지 않는 것(복원 포함). 그 밖에 코드 계약·모듈·런타임·로그·레이어 편집 테스트.
+- 단위 테스트(전체 91개 통과): 추가·수정 확인(clarify: 대상 고르기·고정 대상 유지·장면 확인, 확인 전에는 아무것도 바뀌지 않고 Apply 때만 확인된 계획으로 transform; transformation 펜 annotation은 획별 펜이 AI에 가고, 추가는 AI 없이 펜 transformation을 그대로 복사), decompose 결과 변환과 id 정리, 프롬프트·스키마 사용, collection/object 예제 구조(한 개·여러 개·중첩, 사본 그룹의 Count property·Copies 보충과 이미 개수가 있으면 추가하지 않음, 자식이 부모 안에 놓임, 깨진 구조 정리, 스케치 요소 이름이 들어가지 않음, 옛 기록 형식 변환, 펜의 appliesTo, 알고리즘·머신 없음, 지시문), 펜이 예제 프레임의 최신 값을 따라가고 프레임이 사라지면 저장된 복사본을 쓰는 것, 같은 펜의 획이 Compose 문맥에서 하나로 묶이는 것, 예전 펜 형식 정리, Compose에서 펜 transformation을 그대로 복사하고 origin을 남기는 것(id 충돌 시 노드 자체 쪽 이름 변경, 알고리즘 id 충돌 시 펜 쪽 이름 변경, 펜 property를 상태 값으로 쓰기), 모델에 예제 프레임 id를 보내지 않는 것, composition 코드 생성에 예제 모듈 코드를 `references`로 보내는 것, Decompose 액션이 예제 프레임·펜을 만들고 예제 코드를 각자 생성하는 것(만든 코드가 실행되는 것까지), Compose 액션이 새 composition 프레임을 만드는 것, AI history 복원(decompose → 예제·펜, compose → composition 프레임), 최소 예제를 다시 Decompose할 때 모델에 `split` 문맥이 가고 작은 예제가 부모 예제를 출처로 생기며 더 나눌 수 없으면 아무것도 만들지 않는 것(복원 포함). 그 밖에 코드 계약·모듈·런타임·로그·레이어 편집 테스트.
 - Headless Chrome에서 AI 응답만 가짜로 넣어 전체 흐름을 확인했다: 스케치 → Decompose → 예제 프레임 3개(모두 준비됨)와 펜 3개 → 새 스케치에 Radial repetition 펜과 연필로 그리기 → Compose sketch(AI prompt 초안 → Compose) → composition 프레임 생성, 펜 transformation이 들어가고 코드 요청에 예제 코드가 참조로 포함됨.
 - 실제 AI가 transformation을 얼마나 독립적으로 나누는지, 예제 코드를 composition에서 얼마나 잘 재사용하는지는 아직 확인하지 못했다.

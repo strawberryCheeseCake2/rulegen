@@ -54,6 +54,8 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
       if (input.scene) panel.scene = input.scene;
       break;
     case "compose-prompt": panel.composePrompt = compositionPromptSchema.parse(result).prompt; break;
+    // A clarification changed nothing (the transform it led to has its own log).
+    case "clarify": break;
   }
   if (!project.sketchPanels[owner]) owner = "source";
   project.activeSketchId = owner;

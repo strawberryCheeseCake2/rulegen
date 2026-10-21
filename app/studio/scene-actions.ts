@@ -1,4 +1,7 @@
-import { compositionPromptSchema, generatedSchema, type CodeReference } from "../lib/schema";
+import { clarificationSchema, compositionPromptSchema, generatedSchema, type CodeReference, type SemanticPen } from "../lib/schema";
+import { clarifiedInstruction } from "../lib/scene/clarify";
+import { addPenTransformation } from "../lib/scene/convert";
+import type { TransformDraft } from "../lib/sketch-panels";
 import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
 import { compositionContext } from "../lib/algorithm-pens";
 import type { SketchPanel } from "../lib/sketch-panels";
@@ -214,15 +217,33 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     try { await sceneAI(deps, id).generateCode(); }
     finally { deps.updatePanel(id, { pendingResult: false }); }
   }
+  /** The transformation pens an annotation was drawn with (as they read now), and each mark's pen ("" when plain or the pen is gone). */
+  function annotationPens(draft: Pick<TransformDraft, "marks" | "markPens">) {
+    const pens = [...new Set(draft.markPens.filter(Boolean))].map(id => deps.pen?.(id)).filter((pen): pen is SemanticPen => pen?.kind === "transformation");
+    return { pens, markPens: draft.marks.map((_, i) => pens.some(pen => pen.id === draft.markPens[i]) ? draft.markPens[i] : "") };
+  }
+  /** The annotation for AI: thinned marks with their pens, and the frame drawn over with them (pen marks in their pen's color). */
+  async function annotation(marks: Marks, markPens: string[], pens: SemanticPen[]) {
+    const styles = marks.map((_, i) => { const pen = pens.find(item => item.id === markPens[i]); return pen ? { color: pen.color, width: 5, opacity: 1 } : undefined; });
+    return { transformMarks: compactMarks(marks), transformMarkPens: markPens.slice(-64), compositionPens: pens,
+      image: await annotatedImage((await deps.capture(owner, true)).image, marks, undefined, styles as { color: string; width: number; opacity: number }[]) };
+  }
+  type Extra = { alternative?: boolean; markPens?: string[]; pens?: SemanticPen[] };
+  async function regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = [], extra: Extra = {}) {
+    const done = await regenerateOne(nodeId, target, instruction, marks, extra);
+    // The running code still does the old thing: rewrite it from the new description right away (unless the scene moved on).
+    if (!done || !deps.panel(owner).generated || JSON.stringify(deps.panel(owner).scene) !== JSON.stringify(done.scene)) return;
+    await generateCode(false, `${codeInstruction(deps.panel(owner))}\n${done.label} was just regenerated: implement its NEW description and algorithms exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
+  }
   /** Regenerate one property/transformation (or add one); returns what changed, or null. */
-  async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = []) {
+  async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = [],
+    { alternative = Boolean(target.transformationId && !target.propertyId), markPens = [], pens = [] }: Extra = {}) {
     const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
     const done: { changed?: { scene: Scene; label: string } } = {};
     const message = target.propertyId ? "이 property의 구현만 다시 만들고 있습니다…" : target.transformationId ? "이 semantic transformation을 다시 만들고 있습니다…" : "새 semantic transformation을 만들고 있습니다…";
     await deps.task(message, async () => {
       const scene = sceneSchema.parse(await deps.request("transform", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
-        alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction?.trim() || panel.instruction, transformMarks: compactMarks(marks),
-        image: await annotatedImage((await deps.capture(owner, true)).image, marks) }, owner));
+        alternative, instruction: instruction?.trim() || panel.instruction, ...await annotation(marks, markPens, pens) }, owner));
       if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
       deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), transformDraft: null }));
       done.changed = { scene: deps.panel(owner).scene, label: describeTarget(scene, nodeId, target) };
@@ -271,11 +292,45 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       await pool(out.frames, 3, renderDerived);
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. Then the code follows. */
-    async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {
-      const done = await regenerateOne(nodeId, target, instruction, marks);
-      // The running code still does the old thing: rewrite it from the new description right away (unless the scene moved on).
-      if (!done || !deps.panel(owner).generated || JSON.stringify(deps.panel(owner).scene) !== JSON.stringify(done.scene)) return;
-      await generateCode(false, `${codeInstruction(deps.panel(owner))}\n${done.label} was just regenerated: implement its NEW description and algorithms exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
+    regenerate,
+    /**
+     * Before adding or modifying: the open request (text and frame annotation, on a node or the whole frame) comes
+     * back as text: what the AI understood, the target, the concrete plan and its questions. Nothing changes yet.
+     * Asked again with an answer, the answer joins the request.
+     */
+    async clarify() {
+      const panel = deps.panel(owner), draft = panel.transformDraft;
+      if (!draft) return;
+      const snapshot = JSON.stringify(panel.scene), document = deps.documentId(), answer = draft.clarification ? draft.answer.trim() : "";
+      const instruction = [draft.instruction.trim(), answer && `(답변) ${answer}`].filter(Boolean).join("\n");
+      deps.updatePanel(owner, current => current.transformDraft ? { transformDraft: { ...current.transformDraft, annotating: false } } : {});
+      await deps.task("무엇을 추가하거나 바꿀지 확인하고 있습니다…", async () => {
+        const { pens, markPens } = annotationPens(draft);
+        const clarification = clarificationSchema.parse(await deps.request("clarify", { scene: panel.scene, targetNodeId: draft.nodeId ?? "",
+          targetTransformationId: draft.nodeId ? draft.target.transformationId || "" : "", targetPropertyId: draft.nodeId ? draft.target.propertyId || "" : "",
+          instruction, clarification: draft.clarification, ...await annotation(draft.marks, markPens, pens) }, owner));
+        if (document !== deps.documentId() || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("확인 중 장면이 변경되었습니다. 다시 시도해주세요.");
+        // The node it would change is selected, so it shows on the frame.
+        deps.updatePanel(owner, current => current.transformDraft ? { transformDraft: { ...current.transformDraft, instruction: instruction.slice(0, 2000), answer: "", clarification }, selectedNodeIds: [clarification.nodeId] } : {});
+      }, owner);
+    },
+    /**
+     * The user confirmed the clarification: add or modify exactly that (its plan and their answers as the brief), then the code follows.
+     * Adding a pen's transformation needs no AI: it is copied in exactly as its example has it (the code then reuses the example's code).
+     */
+    async applyClarification() {
+      const panel = deps.panel(owner), draft = panel.transformDraft, clarification = draft?.clarification;
+      if (!draft || !clarification) return;
+      const { pens, markPens } = annotationPens(draft), pen = pens.find(item => item.id === clarification.penId);
+      if (clarification.action === "add" && pen) {
+        try { deps.updatePanel(owner, current => ({ ...ops.commitScene(current, addPenTransformation(current.scene, clarification.nodeId, pen), [clarification.nodeId]), transformDraft: null })); }
+        catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); return; }
+        deps.toast(`펜 「${pen.name}」의 transformation을 그대로 더했습니다.`);
+        if (deps.panel(owner).generated) await generateCode(false, `${codeInstruction(deps.panel(owner))}\nSemantic transformation "${pen.transformation!.transformation.label}" was just added to node "${clarification.nodeId}" from a pen: implement it exactly, reusing its example's code in references.`);
+        return;
+      }
+      await regenerate(clarification.nodeId, { transformationId: clarification.transformationId || undefined, propertyId: clarification.propertyId || undefined },
+        clarifiedInstruction(draft.instruction, clarification, draft.answer), draft.marks, { alternative: false, markPens, pens });
     },
     /**
      * Compose this sketch, drawn with transformation pens (and the pencil), into a

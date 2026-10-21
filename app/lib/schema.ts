@@ -32,7 +32,21 @@ export type SemanticPen = z.infer<typeof semanticPenSchema>;
 export const compositionStrokeSchema = z.object({ id: z.string().min(1).max(80), tool: z.enum(["pencil", "semantic", "interaction", "eraser"]), color: z.string().max(80), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(128), semanticPenId: z.string().max(80).nullable() });
 export const imageSchema = z.string().max(8_000_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/);
 export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(1).max(2000) });
-export const AI_INTENTS = ["decompose", "compose", "compose-prompt", "transform", "code"] as const;
+export const AI_INTENTS = ["decompose", "compose", "compose-prompt", "clarify", "transform", "code"] as const;
+/**
+ * clarify: before a transformation is added or modified from a frame annotation (and text), what the AI
+ * understood, what it will add or change where, and what it still needs to know. Nothing changes until
+ * the user applies it.
+ */
+export const clarificationSchema = z.object({
+  understanding: z.string().max(1000), action: z.enum(["add", "modify"]),
+  /** The node it applies to; the transformation it modifies ("" to add one); one property of it ("" for the whole transformation). */
+  nodeId: idSchema, transformationId: z.string().max(80), propertyId: z.string().max(80),
+  /** A transformation pen the user drew with: added exactly as its example has it ("add"), or the reference for the change ("modify"); "" for none. */
+  penId: z.string().max(80),
+  plan: z.string().max(1500), questions: z.array(z.string().max(300)).max(3),
+});
+export type Clarification = z.infer<typeof clarificationSchema>;
 /** A working implementation of a semantic transformation: the code module of its minimal example (for the code of a composition that uses it). */
 export const codeReferenceSchema = z.object({ transformationId: idSchema, label: z.string().max(100), code: z.string().max(40000) });
 export type CodeReference = z.infer<typeof codeReferenceSchema>;
@@ -42,12 +56,17 @@ export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: scene
   compositionPens: z.array(semanticPenSchema).max(64).default([]), compositionStrokes: z.array(compositionStrokeSchema).max(500).default([]),
   /** Annotation strokes the user drew on the frame for a transform request (normalized; also drawn on the image). */
   transformMarks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(64).default([]),
+  /** For each annotation stroke, the transformation pen it was drawn with ("" for a plain mark); the pens are in `compositionPens`. */
+  transformMarkPens: z.array(z.string().max(80)).max(64).default([]),
+  /** Clarify: the previous clarification the user is answering (its questions), if any. */
+  clarification: clarificationSchema.nullable().default(null),
   /** Code: the minimal example modules of the transformations the scene took from pens. */
   references: z.array(codeReferenceSchema).max(12).default([]),
 }).superRefine((input, ctx) => {
   const ids = input.compositionPens.map(p => p.id);
   if (new Set(ids).size !== ids.length || input.compositionStrokes.some(s => (s.tool === "semantic" || s.tool === "interaction") && (!s.semanticPenId || !ids.includes(s.semanticPenId)))) ctx.addIssue({ code: "custom", message: "펜 의미와 획을 연결하지 못했습니다." });
   if (input.compositionStrokes.some(s => s.tool === "interaction" && input.compositionPens.find(p => p.id === s.semanticPenId)?.kind !== "interaction")) ctx.addIssue({ code: "custom", message: "Interaction annotation과 펜 의미를 확인해주세요." });
+  if (input.transformMarkPens.some(id => id && input.compositionPens.find(p => p.id === id)?.kind !== "transformation")) ctx.addIssue({ code: "custom", message: "Annotation에 쓴 transformation 펜을 찾지 못했습니다." });
 });
 export type GeneratedCode = z.infer<typeof generatedSchema>;
 export type Stroke = { points: Point[]; color: string; width: number; opacity: number; tool: "pen" | "eraser"; semanticPen?: SemanticPen };

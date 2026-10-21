@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { generatedSchema, MAX_CODE_LENGTH, type GeneratedCode } from "./schema";
+import { generatedSchema, MAX_CODE_LENGTH, type Clarification, type GeneratedCode } from "./schema";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
 import { refreshProgram } from "./scene/machines";
@@ -59,7 +59,17 @@ export type SketchPanel = SavedSketchPanel & {
 };
 /** What a regeneration targets: a property, a transformation, or (neither) a new stacked transformation. */
 export type TransformTarget = { transformationId?: string; propertyId?: string };
-export type TransformDraft = { nodeId: string; target: TransformTarget; instruction: string; annotating: boolean; marks: { x: number; y: number }[][] };
+/**
+ * An open add/modify request: on a node (`nodeId`, with its `target`), or on the whole frame (`nodeId` null: the AI
+ * picks the node and transformation from the annotation). It is clarified in text first (`clarification`, which the
+ * user can `answer`), and only applied when the user confirms.
+ */
+export type TransformDraft = { nodeId: string | null; target: TransformTarget; instruction: string; annotating: boolean; marks: { x: number; y: number }[][];
+  /** For each mark, the transformation pen it was drawn with ("" for a plain mark): that pen's transformation goes there. */
+  markPens: string[];
+  clarification: Clarification | null; answer: string };
+/** A new request: on the frame (annotating right away), or on a node's property, transformation or (empty target) a new transformation. */
+export const newTransformDraft = (nodeId: string | null, target: TransformTarget = {}): TransformDraft => ({ nodeId, target, instruction: "", annotating: nodeId === null, marks: [], markPens: [], clarification: null, answer: "" });
 export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<typeof sketchPanelSchema>): SketchPanel {
   const parsed = sketchPanelSchema.parse(saved || {});
   // Saved programs get the current host runtime (it is prepared again on load anyway).

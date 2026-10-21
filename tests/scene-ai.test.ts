@@ -72,7 +72,7 @@ test("AI adds a new stacked transformation or replaces one in place, keeping pro
     await runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "tree", targetTransformationId: "ink-wash", instruction: "더 번지게", transformMarks: [[{ x: .2, y: .3 }, { x: .4, y: .5 }]], image: "data:image/png;base64,AAAA" }), signal());
     const context = JSON.parse(calls[2].input[0].content[0].text);
     assert.equal(context.instruction, "더 번지게");
-    assert.deepEqual(context.annotationMarks, [[{ x: .2, y: .3 }, { x: .4, y: .5 }]]);
+    assert.deepEqual(context.annotationMarks, [{ points: [{ x: .2, y: .3 }, { x: .4, y: .5 }], pen: null }]);
     assert.match(calls[2].instructions, /annotationMarks/);
   });
   assert.match(loadPrompt("transform"), /"add"[\s\S]*"replace"[\s\S]*"property"/);

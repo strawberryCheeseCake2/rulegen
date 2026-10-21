@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "understanding": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "add",
+        "modify"
+      ]
+    },
+    "nodeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "transformationId": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "propertyId": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "penId": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "plan": {
+      "type": "string",
+      "maxLength": 1500
+    },
+    "questions": {
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 300
+      }
+    }
+  },
+  "required": [
+    "understanding",
+    "action",
+    "nodeId",
+    "transformationId",
+    "propertyId",
+    "penId",
+    "plan",
+    "questions"
+  ],
+  "additionalProperties": false
+}

@@ -95,6 +95,22 @@ export function convertComposition(output: AICompose, pens: SemanticPen[]): Scen
   });
   return settle({ algorithms: library, nodes });
 }
+/**
+ * A pen's transformation appended to one node exactly as its minimal example has it (its algorithms imported,
+ * an `origin` pointing back); ids that collide on the node are renamed.
+ */
+export function addPenTransformation(scene: Scene, nodeId: string, pen: SemanticPen): Scene {
+  const source = pen.transformation, node = scene.nodes.find(item => item.id === nodeId);
+  if (!source || !node) throw new Error("펜의 transformation을 붙일 대상을 찾지 못했습니다.");
+  if (node.transformations.length >= MAX_TRANSFORMATIONS) throw new Error("이 노드에는 더 이상 semantic transformation을 추가할 수 없습니다.");
+  const taken = new Set(node.transformations.map(item => item.id)), properties = new Set(node.transformations.flatMap(item => item.properties.map(property => property.id)));
+  if (properties.size + source.transformation.properties.length > MAX_NODE_PROPERTIES) throw new Error(`한 노드에는 property를 ${MAX_NODE_PROPERTIES}개까지 둘 수 있습니다.`);
+  const unique = (seen: Set<string>, id: string) => { let next = id, suffix = 2; while (seen.has(next)) next = `${id.slice(0, 70)}-${suffix++}`; seen.add(next); return next; };
+  const imported = importAlgorithms(scene.algorithms, source.library), transformation = source.transformation;
+  const added: SemanticTransformation = { ...transformation, id: unique(taken, transformation.id), origin: { frameId: source.frameId, transformationId: transformation.id, label: transformation.label },
+    properties: transformation.properties.map(property => ({ ...property, id: unique(properties, property.id), value: remapValue(property.value, imported.ids) })) };
+  return validateScene({ ...scene, algorithms: imported.library, nodes: scene.nodes.map(item => item.id === nodeId ? conformMachine({ ...item, transformations: [...item.transformations, added] }) : item) });
+}
 function breakCycles(nodes: SceneNode[]): SceneNode[] {
   const byId = new Map(nodes.map(node => [node.id, node]));
   return nodes.map(node => {

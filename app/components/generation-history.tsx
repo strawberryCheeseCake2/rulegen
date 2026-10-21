@@ -4,7 +4,7 @@ import { recoveredGenerationSchema, type RecoveredGeneration } from "../lib/gene
 import { downloadFile } from "../lib/project";
 
 type Entry = { key: string; intent: string; model: string; startedAt: string; status: string; durationMs?: number };
-const labels: Record<string, string> = { decompose: "Transformation 분해", transform: "Transformation 재생성", code: "코드", compose: "스케치 조합", "compose-prompt": "조합 prompt" };
+const labels: Record<string, string> = { decompose: "Transformation 분해", transform: "Transformation 재생성", code: "코드", compose: "스케치 조합", "compose-prompt": "조합 prompt", clarify: "추가·수정 확인" };
 async function getHistory(query = "", signal?: AbortSignal) {
   const response = await fetch(`/api/generations${query}`, { signal });
   const data = await response.json();

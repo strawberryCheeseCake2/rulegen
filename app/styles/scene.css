@@ -234,10 +234,20 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .regenerate-annotation > button, .regenerate-actions > button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 11px; background: #fff; color: #4b6155; }
 .regenerate-annotation > button.active { border-color: #7c3aed; background: #f3edff; color: #5b21b6; }
 .regenerate-actions { display: flex; gap: 6px; }
+.clarification { display: flex; flex-direction: column; gap: 5px; padding: 8px 9px; border: 1px solid #e6d3b4; border-radius: 6px; background: #fff; }
+.clarification p { margin: 0; font-size: 12px; line-height: 1.5; color: #3d4d43; }
+.clarification .clarification-target { display: flex; gap: 6px; align-items: baseline; font-size: 11.5px; color: #2f6551; }
+.clarification .clarification-target b { flex: none; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: #e4f0e8; color: #2f6551; }
+.clarification .clarification-plan { padding-left: 8px; border-left: 2px solid #f1c48a; }
+.clarification-questions { margin: 0; padding-left: 16px; font-size: 11.5px; line-height: 1.5; color: #8a5a1c; }
+.clarification textarea { width: 100%; box-sizing: border-box; resize: vertical; min-height: 40px; font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid #dbe4de; border-radius: 4px; }
 .regenerate-actions > button.primary { border-color: #23533f; background: #23533f; color: #fff; }
 .regenerate-actions > button:disabled { opacity: .5; }
 .transform-marks { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; overflow: visible; }
 .transform-marks polyline { fill: none; stroke: #7c3aed; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+.transform-marks polyline.pen-mark { stroke-width: 5; opacity: .9; }
+.annotation-pen { display: inline-flex; align-items: center; gap: 3px; margin: 0 3px; font-weight: 600; }
+.annotation-pen i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .sketch-frame-surface.transform-drawing { outline: 2px dashed #7c3aed; outline-offset: -2px; cursor: crosshair; }
 .machine-attachment { display: inline-flex; align-items: center; gap: 5px; padding: 3px 4px 3px 8px; border-radius: 12px; background: #fff3e3; border: 1px solid #f1c48a; color: #8a4b00; font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .machine-attachment b { font-weight: 600; }

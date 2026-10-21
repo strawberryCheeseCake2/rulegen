@@ -21,7 +21,9 @@ import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile, MAX_PENS, MAX_SKETCH_FRAMES } from "../lib/project";
 import { createInteractionPen, examplePen, livePen, semanticPenColors } from "../lib/algorithm-pens";
-import { createSketchPanel, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
+import { createSketchPanel, newTransformDraft, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
+import { clarificationTarget } from "../lib/scene/clarify";
+import { AnnotationComposer } from "../components/annotation-composer";
 import { emptyScene } from "../lib/scene/schema";
 import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
 import { findNode } from "../lib/scene/graph";
@@ -215,7 +217,7 @@ export default function Home() {
   }
   const deps: StudioDeps = {
     panel: id => panelsRef.current[id] || createSketchPanel(), updatePanel, request, task,
-    capture: captureFrame, createFrames, resolvePen,
+    capture: captureFrame, createFrames, resolvePen, pen: id => { const pen = semanticPensRef.current.find(item => item.id === id); return pen && resolvePen(pen); },
     preview: owner => resultPreviews.current.get(owner),
     artwork: artworkOf, documentId: () => activeDocument.current, requestId: owner => requestNumbers.current.get(owner) ?? 0,
     toast: setToast, focus: setPendingFrameFocus,
@@ -397,14 +399,21 @@ export default function Home() {
     setPenSettingsOpen(false); setTool(next); setPlaying(null);
     setPencilOpen(next === "pen" ? !pencilOpen : false);
   }
-  /** A stroke drawn on the frame for the open regeneration (normalized). */
+  /** A stroke drawn on the frame for the open request (normalized); drawn with a transformation pen, it carries that pen ("its transformation goes here"). */
   function addTransformMark(frameId: string, points: { x: number; y: number }[]) {
     if (points.length < 2) return;
+    const pen = tool === "semantic" && activeSemanticPen?.kind === "transformation" ? activeSemanticPen.id : "";
     updatePanel(frameId, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft,
-      marks: [...previous.transformDraft.marks, points.map(point => ({ x: Math.min(1, Math.max(0, point.x / 900)), y: Math.min(1, Math.max(0, point.y / 600)) }))].slice(-64) } } : {});
+      marks: [...previous.transformDraft.marks, points.map(point => ({ x: Math.min(1, Math.max(0, point.x / 900)), y: Math.min(1, Math.max(0, point.y / 600)) }))].slice(-64),
+      markPens: [...previous.transformDraft.marks.map((_, i) => previous.transformDraft!.markPens[i] ?? ""), pen].slice(-64) } } : {});
   }
+  /** A toolbar pen by id, as it reads now. */
+  const penById = (id: string) => algorithmPens.find(pen => pen.id === id);
   function selectAlgorithmPen(pen: SemanticPen) {
     setActiveSemanticPenId(pen.id); setTool("semantic"); setPlaying(null); setPencilOpen(false); setPenSettingsOpen(true);
+    // An open request on this frame: the pen annotates it here ("this transformation goes here"), so stay and draw.
+    const open = panelsRef.current[activeSketchRef.current]?.transformDraft;
+    if (open) { if (pen.kind === "transformation") updatePanel(activeSketchRef.current, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, annotating: true } } : {}); return; }
     // Pens draw on sketches: from an example (however deep) or composition, the sketch it came from is brought into view.
     const sketch = rootSketch(activeSketchRef.current);
     if (sketch !== activeSketchRef.current) showFrame(sketch);
@@ -508,7 +517,8 @@ export default function Home() {
           onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />}
       </SketchCanvas>
       {owner.transformDraft && owner.transformDraft.marks.length > 0 && <svg className="transform-marks" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Regeneration annotation">
-        {owner.transformDraft.marks.map((mark, i) => <polyline key={i} vectorEffect="non-scaling-stroke" points={mark.map(point => `${point.x * 900},${point.y * 600}`).join(" ")} />)}</svg>}
+        {owner.transformDraft.marks.map((mark, i) => { const pen = owner.transformDraft!.markPens[i] ? penById(owner.transformDraft!.markPens[i]) : undefined;
+          return <polyline key={i} vectorEffect="non-scaling-stroke" className={pen ? "pen-mark" : undefined} style={pen ? { stroke: pen.color } : undefined} points={mark.map(point => `${point.x * 900},${point.y * 600}`).join(" ")} />; })}</svg>}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
   // Header controls for a frame: its AI work, its pen (an example), run/pause, interact, re-render, (re)generate code, decompose (a sketch or an example).
@@ -525,6 +535,13 @@ export default function Home() {
       {frame.generated && <button aria-pressed={playing === id} title={playing === id ? "Stop interacting (Esc)" : "Use the result with the mouse and keyboard"} disabled={!frame.executable} onClick={() => { activateSketch(id); setPlaying(current => current === id ? null : id); }}><Icon name="hand" size={13} />{playing === id ? "Stop" : "Interact"}</button>}
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
+      {frame.scene.nodes.length > 0 && <button aria-pressed={frame.transformDraft?.nodeId === null} disabled={frameBusy} title="Annotate this frame to add or modify a semantic transformation (AI clarifies in text first)"
+        onClick={() => {
+          const opening = panelsRef.current[id]?.transformDraft?.nodeId !== null;
+          activateSketch(id); setPlaying(null); updatePanel(id, { transformDraft: opening ? newTransformDraft(null) : null });
+          // The frame is drawn on next: bring it into view.
+          if (opening) workspaceCanvas.current?.focus(id as FrameId);
+        }}><Icon name="pen" size={13} />Annotate</button>}
       {frame.role === "sketch" && <button disabled={frameBusy || !present} title="Split this sketch into independent semantic transformations: a minimal example frame and a pen for each" onClick={() => { activateSketch(id); void sceneAI(deps, id).decompose(); }}>Decompose<Icon name="spark" size={13} /></button>}
       {frame.role === "example" && frame.example?.kind !== "object" && <button disabled={frameBusy || !splitTarget(frame)} title="Split this example's transformation into smaller ones: a minimal example frame and a pen for each" onClick={() => { activateSketch(id); void sceneAI(deps, id).decompose(); }}>Decompose<Icon name="spark" size={13} /></button>}
     </>;
@@ -568,10 +585,10 @@ export default function Home() {
       onState={patch => nodeState && edits.editState(node.id, nodeState.id, patch)} onTransition={(id, patch) => edits.editTransition(node.id, id, patch)}
       onScalar={(propertyId, path, value) => edits.scalar(node.id, propertyId, path, value)} onSwap={(propertyId, path, choice) => edits.swap(node.id, propertyId, path, choice)}
       onProperty={(propertyId, patch) => edits.editProperty(node.id, propertyId, patch)} onRemoveProperty={propertyId => edits.removeProperty(node.id, propertyId)}
-      onAddProperty={(algorithmId, transformationId) => edits.addProperty(node.id, algorithmId, transformationId)} onRegenerate={target => updatePanel(activeSketch, { transformDraft: { nodeId: node.id, target, instruction: "", annotating: false, marks: [] } })}
+      onAddProperty={(algorithmId, transformationId) => edits.addProperty(node.id, algorithmId, transformationId)} onRegenerate={target => updatePanel(activeSketch, { transformDraft: newTransformDraft(node.id, target) })}
       draft={panel.transformDraft?.nodeId === node.id ? panel.transformDraft : null}
       onDraftChange={patch => updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, ...patch } } : {})}
-      onDraftSubmit={() => { const draft = panel.transformDraft; if (!draft) return; updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, annotating: false } } : {}); void ai.regenerate(draft.nodeId, draft.target, draft.instruction, draft.marks); }}
+      onDraftClarify={() => { void ai.clarify(); }} onDraftApply={() => { void ai.applyClarification(); }} describeClarification={clarification => clarificationTarget(scene, clarification, penById)} annotationPen={penById}
       onDraftCancel={() => updatePanel(activeSketch, { transformDraft: null })}
       onOrigin={showFrame}
       onCopy={(propertyId, path) => edits.copySlot(node.id, propertyId, path)} onPaste={(propertyId, path, dropped) => edits.pasteSlot(node.id, propertyId, path, dropped)}
@@ -617,6 +634,11 @@ export default function Home() {
         {clip && <div className="block-clipboard" title="Right-click a socket to paste, or drag blocks from the palette"><span className="algorithm-badge">ƒ</span>Clipboard · <strong>{clip.label}</strong></div>}
         {panel.loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{panel.loading}</span><button onClick={() => cancel()}>Cancel</button></div>}{panel.error && <div className="error-banner" role="alert"><span>{panel.error}</span><button aria-label="Dismiss error" onClick={() => patchActive({ error: "" })}><Icon name="close" size={14} /></button></div>}
         <div ref={inspector} className="inspector-content live-inspector-content">
+          {/* An annotation on the whole frame: AI picks what to add or modify, says so in text, and changes nothing until Apply. */}
+          {panel.transformDraft?.nodeId === null && <AnnotationComposer draft={panel.transformDraft} kind="Frame" what={`${currentSketch.name} 첨부됨`} busy={busy} pen={penById}
+            describe={clarification => clarificationTarget(scene, clarification, penById)}
+            onChange={patch => updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, ...patch } } : {})}
+            onClarify={() => { void ai.clarify(); }} onApply={() => { void ai.applyClarification(); }} onCancel={() => updatePanel(activeSketch, { transformDraft: null })} />}
           {workflowHead}
           {propertiesStage}
           {(scene.nodes.length > 0 || panel.role === "sketch") && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder={panel.role === "sketch" ? "Decompose에 줄 방향. 예: 반복과 색은 따로 나눠줘" : "예: 더 유기적으로, 반복은 적게, 파란색으로…"} value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>}

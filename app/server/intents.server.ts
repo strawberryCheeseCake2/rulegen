@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
+import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
+import { settleClarification } from "../lib/scene/clarify";
 import { aiComposeSchema, aiDecompositionSchema, aiTransformSchema, type AICompose } from "../lib/scene/ai-schema";
 import { convertComposition, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
 import { algorithmClosure, algorithmRefs } from "../lib/scene/algorithms";
@@ -16,7 +17,8 @@ import { prepareCode } from "./code.server";
 // preconditions, the request context and how the model output is finalized.
 // The workflow: decompose a sketch into independent transformations (each then
 // rendered as a minimal example and made a pen; an example can be decomposed again) → compose a sketch drawn with
-// those pens → code. `transform` regenerates one transformation in place.
+// those pens → code. `clarify` says in text what an annotation (and text) would add or modify, before
+// `transform` adds or regenerates that one transformation in place.
 
 export type AIInput = z.infer<typeof requestSchema>;
 type Intent = {
@@ -50,7 +52,14 @@ function splitContext(input: AIInput) {
     algorithms: algorithmClosure(scene.algorithms, transformation.properties.flatMap(property => algorithmRefs(property.value))) };
 }
 
-export const intents: Record<"decompose" | "compose" | "compose-prompt" | "transform" | "code", Intent> = {
+/** The transformation pens an annotation was drawn with (the reference for a clarification or a transform). */
+const transformationPens = (input: AIInput) => input.compositionPens.filter(pen => pen.kind === "transformation");
+/** Annotation strokes, each with the pen it was drawn with (null: a plain mark). */
+const annotationMarks = (input: AIInput) => input.transformMarks.map((points, i) => ({ points, pen: input.transformMarkPens[i] || null }));
+/** A clarification's fixed target: the node (and transformation or property) a regeneration was opened on, or null (the AI chooses). */
+const fixedTarget = (input: AIInput) => input.targetNodeId ? { nodeId: input.targetNodeId, transformationId: input.targetTransformationId, propertyId: input.targetPropertyId } : null;
+
+export const intents: Record<"decompose" | "compose" | "compose-prompt" | "clarify" | "transform" | "code", Intent> = {
   decompose: {
     schema: aiDecompositionSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : input.targetTransformationId && !splitContext(input) ? "나눌 transformation을 찾지 못했습니다." : undefined,
@@ -71,11 +80,22 @@ export const intents: Record<"decompose" | "compose" | "compose-prompt" | "trans
     check: input => !input.image ? "프롬프트를 만들 스케치 이미지가 필요합니다." : undefined,
     context: input => ({ instruction: input.instruction }),
   },
+  clarify: {
+    schema: clarificationSchema, maxTokens: () => 4000, effort: "low",
+    check: input => needsScene(input) || (!input.image ? "확인할 프레임 이미지가 없습니다." : undefined) || (input.targetNodeId ? needsTarget(input) : undefined)
+      || (!input.instruction.trim() && !input.transformMarks.length && !input.targetNodeId ? "프레임에 그리거나 무엇을 바꿀지 적어주세요." : undefined),
+    // Each stroke says which transformation pen it was drawn with (null: a plain mark); the pens carry their transformations.
+    context: input => ({ scene: input.scene, target: fixedTarget(input), instruction: input.instruction, annotationMarks: annotationMarks(input), pens: transformationPens(input).map(penForModel),
+      previous: input.clarification, canvas }),
+    // Nothing changes yet: the target is checked against the scene (a fixed one is kept), and a pen must be one drawn with.
+    finalize: (input, output) => settleClarification(input.scene!, clarificationSchema.parse(output), fixedTarget(input), transformationPens(input).map(pen => pen.id)),
+  },
   transform: {
     schema: aiTransformSchema, maxTokens: () => 10000,
     check: input => needsTarget(input) || (!input.targetPropertyId && !input.targetTransformationId && !canAddTransformation(targetNode(input)!) ? "이 노드에는 더 이상 semantic transformation을 추가할 수 없습니다." : undefined),
     context: input => ({ scene: input.scene, targetNodeId: input.targetNodeId, targetTransformationId: input.targetTransformationId, targetPropertyId: input.targetPropertyId,
-      mode: input.targetPropertyId ? "property" : input.targetTransformationId ? "replace" : "add", alternative: input.alternative, instruction: input.instruction, annotationMarks: input.transformMarks, canvas }),
+      mode: input.targetPropertyId ? "property" : input.targetTransformationId ? "replace" : "add", alternative: input.alternative, instruction: input.instruction,
+      ...(transformationPens(input).length ? { pens: transformationPens(input).map(penForModel) } : {}), annotationMarks: annotationMarks(input), canvas }),
     finalize: (input, output: z.infer<typeof aiTransformSchema>) => {
       const scene = input.scene!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
       const generated = convertTransformation(output.transformation, library, ids);
