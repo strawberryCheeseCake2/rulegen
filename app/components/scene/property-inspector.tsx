@@ -52,7 +52,16 @@ export type PropertyInspectorProps = {
   onOpenProxy?: () => void;
   /** Runtime errors of handles in the proxy frame, by property id. */
   handleErrors?: Record<string, string>;
+  /**
+   * Hidden constants a targeted inspection suggests exposing on this node, not
+   * decided yet: shown faintly in the transformation they would join, to accept
+   * (it becomes a property) or reject. `index`: its place in the inspection's list.
+   */
+  suggestions?: { item: SuggestedProperty; index: number }[];
+  onAcceptSuggestion?: (index: number) => void; onRejectSuggestion?: (index: number) => void;
 };
+/** What the inspector shows of a suggested hidden parameter. */
+export type SuggestedProperty = Pick<Property, "id" | "label" | "effect" | "description"> & { transformationId: string; value: ScalarValue; reason: string; form?: "constant" | "scale" };
 
 const effects: Effect[] = ["spatial", "stylistic", "temporal"];
 
@@ -165,6 +174,31 @@ function PropertyCard({ property, props, openMenu }: { property: Property; props
   </article>;
 }
 
+/**
+ * A hidden parameter suggested by a targeted inspection: not a property yet, so it
+ * is faint and read-only, at the value the code uses now, until accepted or rejected.
+ */
+function SuggestedCard({ item, index, props }: { item: SuggestedProperty; index: number; props: PropertyInspectorProps }) {
+  const value = item.value, scale = item.form === "scale" && value.type === "number";
+  const shown = value.type === "number" ? `${scale ? "×" : ""}${Math.round(value.value * 1000) / 1000}${scale ? "" : value.unit}` : value.type === "toggle" ? (value.value ? "켜짐" : "꺼짐") : String(value.value);
+  return <article className={`property-card suggested-property effect-${item.effect} ${props.highlightPropertyId === item.id ? "inspection-highlight" : ""}`} data-property-id={item.id} aria-label={`Suggested parameter ${item.label}`}>
+    <div className="property-card-title">
+      <b>{item.label}</b><em className="suggested-tag" title="Targeted inspection suggests exposing this hard-coded value">제안</em>
+      <span className="effect-select">{item.effect}</span>
+    </div>
+    {item.description && <p className="property-description">{item.description}</p>}
+    {item.reason && <p className="property-description suggested-reason">{item.reason}</p>}
+    <div className="suggested-value">
+      {value.type === "number" && <input type="range" aria-label={`${item.label} (suggested)`} min={value.min} max={value.max} step={value.step} value={value.value} disabled readOnly />}
+      <output>{scale ? "배율 " : "지금 코드의 값 "}{shown}</output>
+    </div>
+    <div className="suggested-actions">
+      <button type="button" className="accept" disabled={props.busy || !props.onAcceptSuggestion} title="Expose it as a property of this transformation (no code regeneration)" onClick={() => props.onAcceptSuggestion?.(index)}><Icon name="plus" size={11} />Accept</button>
+      <button type="button" disabled={props.busy || !props.onRejectSuggestion} onClick={() => props.onRejectSuggestion?.(index)}>Reject</button>
+    </div>
+  </article>;
+}
+
 /** One semantic transformation of the stack: its meaning, its properties and a socket for more. */
 function TransformationCard({ transformation, index, count, roomInNode, props, openMenu }: { transformation: SemanticTransformation; index: number; count: number; roomInNode: boolean; props: PropertyInspectorProps; openMenu: ReturnType<typeof useContextMenu>[1] }) {
   const { state, busy } = props, name = transformation.label || `Transformation ${index + 1}`;
@@ -190,7 +224,8 @@ function TransformationCard({ transformation, index, count, roomInNode, props, o
     <textarea aria-label={`${name} transformation description`} maxLength={1000} rows={2} value={transformation.description} disabled={Boolean(state)} onChange={e => props.onTransformation(transformation.id, { description: e.target.value })} />
     <fieldset disabled={busy} className="property-list">
       {transformation.properties.map(property => <PropertyCard key={property.id} property={property} props={props} openMenu={openMenu} />)}
-      {!transformation.properties.length && <p className="empty-panel">No properties yet. Drop a block below or regenerate this transformation.</p>}
+      {!state && (props.suggestions ?? []).filter(entry => entry.item.transformationId === transformation.id).map(entry => <SuggestedCard key={`suggested:${entry.item.id}`} item={entry.item} index={entry.index} props={props} />)}
+      {!transformation.properties.length && !(props.suggestions ?? []).some(entry => entry.item.transformationId === transformation.id) && <p className="empty-panel">No properties yet. Drop a block below or regenerate this transformation.</p>}
     </fieldset>
     {!state && roomInNode && transformation.properties.length < MAX_PROPERTIES && <NewSocket library={props.library} busy={busy} onAdd={id => props.onAddProperty(id, transformation.id)} onDrop={clip => props.onAddBlock(clip, transformation.id)} />}
   </section>;

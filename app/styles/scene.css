@@ -307,6 +307,13 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-ghost.clickable:hover .inspection-shape { stroke-width: 2.5; }
 .inspection-shape.focused { stroke-width: 3.5; stroke-dasharray: none; filter: drop-shadow(0 0 3px #fff); }
 .inspection-item.clickable { pointer-events: all; cursor: pointer; }
+/* Overlay handles: a grip to drag (circle), turn (with an arc) or slide (diamond); a faint guide while dragging. */
+.inspection-grip { pointer-events: all; cursor: grab; touch-action: none; }
+.inspection-grip.dragging { cursor: grabbing; }
+.inspection-grip > circle, .inspection-grip > rect, .inspection-grip > path { stroke-width: 2; }
+.inspection-grip:hover > circle:first-of-type, .inspection-grip.dragging > circle:first-of-type, .inspection-grip:hover > rect, .inspection-grip.dragging > rect { stroke-width: 3; }
+.inspection-grip-hit { fill: transparent; stroke: none; }
+.inspection-grip-guide { fill: none; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .65; pointer-events: none; }
 .inspection-item.clickable .inspection-shape { pointer-events: stroke; }
 .inspection-label { font-family: Inter, Arial, sans-serif; font-weight: 600; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; }
 
@@ -326,7 +333,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-modes button[aria-selected=true] { background: #fff; color: #2e725d; box-shadow: 0 1px 3px #34473b12; }
 .inspection-stepper { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 .inspection-stepper output { font-size: 11px; min-width: 44px; text-align: center; color: #3d5246; }
-.inspection-stepper button.live { border-color: #397461; color: #23533f; background: #eef6f1; }
 .inspection-timeline { flex: none; padding: 8px 18px 4px; border-bottom: 1px solid #eef2ef; }
 .timeline-track { position: relative; height: 26px; cursor: pointer; touch-action: none; outline: none; }
 .timeline-track.empty { cursor: default; }
@@ -395,6 +401,9 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-table tr:hover td { background: #f6faf7; }
 .inspection-table tr.changed td { background: #fff8e6; }
 .inspection-table tr.focused td { background: #fff1dc; }
+.inspection-table tr.edited .inspection-value { color: #b35c00; font-weight: 600; }
+.inspection-step-edit { display: inline-flex; align-items: center; gap: 3px; width: fit-content; font-size: 9.5px; padding: 0 4px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
+.inspection-step-edit button { display: inline-flex; padding: 1px; border: 0; background: none; color: inherit; cursor: pointer; }
 .inspection-table tr.focused td:first-child { box-shadow: inset 3px 0 0 #e07b00; }
 .inspection-table td:first-child { display: flex; flex-direction: column; gap: 1px; }
 .inspection-node { font-size: 9.5px; color: #8a998f; }
@@ -411,6 +420,19 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-recommendation .inspection-target b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inspection-recommendation .inspection-target.focused { border-color: #e07b00; background: #fff4e5; color: #8a4b00; }
 .property-card.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; }
+/* A hidden parameter a targeted inspection suggests (not a property yet): faint and read-only until accepted or rejected. */
+.property-card.suggested-property { border-style: dashed; border-color: #cdd6c6; background: repeating-linear-gradient(135deg, #fcfdf9 0 7px, #f5f8f2 7px 14px); opacity: .72; }
+.property-card.suggested-property:hover, .property-card.suggested-property.inspection-highlight { opacity: 1; }
+.property-card.suggested-property.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; border-style: solid; border-color: #e07b00; }
+.suggested-property .property-card-title b { flex: 1; min-width: 0; font: 600 12px Inter, Arial, sans-serif; color: #6b7c5e; }
+.suggested-tag { font-style: normal; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
+.suggested-reason { color: #9a7a40; }
+.suggested-value { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: #6b7c5e; }
+.suggested-value input[type=range] { flex: 1; min-width: 0; opacity: .6; }
+.suggested-actions { display: flex; gap: 6px; }
+.suggested-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #c9d6ce; background: #fff; color: #5c6e63; cursor: pointer; }
+.suggested-actions button.accept { border-color: #397461; background: #397461; color: #fff; }
+.suggested-actions button:disabled { opacity: .5; cursor: default; }
 @media (max-width: 700px) { .inspection-content { grid-template-columns: 1fr; } .inspection-side { border-right: 0; border-bottom: 1px solid #e7ece8; } }
 .brush-targeted-row { display: flex; align-items: center; gap: 2px; }
 .brush-targeted-row > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -583,6 +605,9 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-parameter.accepted em { background: #e3f1ea; color: #23684f; }
 .inspection-parameter > span { font-size: 11px; color: #5c6e63; }
 .inspection-parameter code { font-size: 10.5px; color: #4a6656; }
+.inspection-parameter.focused { border-color: #e07b00; box-shadow: 0 0 0 2px #fff1dc; }
+.inspection-parameter-head { all: unset; cursor: pointer; display: block; }
+.inspection-parameter-head:focus-visible { outline: 2px solid #e07b00; outline-offset: 2px; border-radius: 3px; }
 .inspection-parameter-actions { display: flex; gap: 6px; }
 .inspection-parameter-actions button, .inspection-parameter-restore { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #c9d6ce; background: #fff; color: #5c6e63; }
 .inspection-parameter-actions button.accept { border-color: #397461; background: #397461; color: #fff; }

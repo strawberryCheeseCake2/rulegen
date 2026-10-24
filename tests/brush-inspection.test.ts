@@ -245,7 +245,7 @@ test("overlays can sit on drawn items: a point list reads as its box, the input 
   assert.deepEqual((sent.stores.bush as { polygons: unknown[] }).polygons[0], { "@x": 100, "@y": 300, "@w": 60, "@h": 40, "@cx": 130, "@cy": 320, "@n": 40, "@points": "…" });
   assert.ok(INPUT_ROOT in sent.stores, "the input history goes too");
   assert.ok(JSON.stringify(sent).length < 1200);
-  assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:` }], valueFixes: [], recommendations: [] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
+  assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:`, handle: null }], valueFixes: [], recommendations: [] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
 });
 
 test("per-item values stay readable: records keep their fields for AI, and an each label that is the same for every item is shown once", async () => {
@@ -295,6 +295,8 @@ test("Autocomplete: on request, AI reads the inspection annotation and suggests 
     assert.ok(context.brushNodes[0].transformations[0].properties[0].label, "named in the user's terms");
     assert.doesNotMatch(JSON.stringify(context), /"value":/, "no values or code: only what the marked things are");
     assert.match(calls[0].instructions, /reusable tool for one concern/);
+    assert.match(calls[0].instructions, /not debugging code/, "suggestions say what the user wants to change in the drawing");
+    assert.match(calls[0].instructions, /WHAT THE USER WANTS TO CHANGE/);
   });
   await withMockedAI(() => output, async calls => {
     await assert.rejects(runAI(requestSchema.parse({ intent: "concern", scene, inspection: { ...inspection, marks: [] } }), new AbortController().signal), /Inspection annotation/);

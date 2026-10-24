@@ -9,7 +9,7 @@ import { sampleScene, sceneProgram, run, withMockedAI } from "./fixtures/scene";
 import { connectScene } from "../app/server/scene-code.server";
 import { exposeParameter, parameterProblem, parameterStatus, type ParameterSuggestion } from "../app/lib/hidden-parameters";
 import { brushesFor } from "../app/lib/brushes";
-import { emptyInspection, inspectResultSchema, remapResult, targetedResultSchema } from "../app/lib/inspection";
+import { emptyInspection, inspectResultSchema, overlayStoreFields, remapResult, targetedResultSchema, type InspectionStep } from "../app/lib/inspection";
 import { sceneLiveStatus } from "../app/lib/scene/live";
 import { findNode } from "../app/lib/scene/graph";
 import { findProperty } from "../app/lib/scene/transformations";
@@ -162,12 +162,25 @@ test("records: the module is made to keep a per-item value on its item records, 
 test("records from AI are kept only when they apply to the brush's module, and the panel says whether the code has them", async () => {
   const scene = sampleScene(), code = program().code;
   const records = { nodeId: "tree", fields: ["segments"], reason: "마디 수", edits: [{ find: LOOP, replace: `${LOOP} m.store.segments = depth;` }] };
-  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], constraints: [], steps: [] };
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], steps: [],
+    constraints: [{ key: "tree/size", nodeId: "tree", transformationId: "t", transformation: "t", propertyId: "size", property: "크기", path: "size", type: "number" }] };
   const ask = (output: object) => withMockedAI(() => ({ summary: "s", overlays: [], valueFixes: [], recommendations: [], parameters: [], ...output }), async () =>
     inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", previous: code, inspection }), new AbortController().signal)));
-  assert.deepEqual((await ask({ records })).records, records);
+  assert.deepEqual((await ask({ records })).records, { ...records, perItem: [] });
   assert.equal((await ask({ records: { ...records, edits: [{ find: "not in the code", replace: "segments" }] } })).records, null);
   assert.equal((await ask({ records: { ...records, nodeId: "elsewhere" } })).records, null);
+  // A cut-off edit is dropped: overlays reading the fields it would add cannot draw, so they go too and the summary says so.
+  const link = { kind: "constraint" as const, nodeId: "tree", id: "size" };
+  const reads = { id: "seg", kind: "label" as const, name: "마디", x: "item(\"x\")", y: "0", w: "0", h: "0", label: "${item(\"n\")}", color: "#2563eb", link, when: "", each: "tree:segments" };
+  const plain = { ...reads, id: "box", label: "", each: "tree:items" };
+  const cut = await ask({ records: { ...records, edits: [{ find: LOOP, replace: `${LOOP} m.store.segments = [` }] }, overlays: [reads, plain] });
+  assert.equal(cut.records, null); assert.deepEqual(cut.overlays.map(item => item.id), ["box"]);
+  assert.match(cut.summary, /오버레이 1개를 표시하지 못했습니다/);
+  assert.equal(overlayStoreFields({ ...reads, each: "", label: "${s(\"tree\", \"segments.0.@cx\")}" }).has("segments"), true);
+  const already = await withMockedAI(() => ({ summary: "s", overlays: [reads], valueFixes: [], recommendations: [], parameters: [], records: { ...records, edits: [{ find: "gone", replace: "segments" }] } }), async () =>
+    inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", previous: code,
+      inspection: { ...inspection, steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: { states: {}, stores: { tree: { segments: [{ x: 0 }] } } } }] } }), new AbortController().signal)));
+  assert.deepEqual(already.overlays.map(item => item.id), ["seg"], "the code records them already: the overlays draw");
   assert.equal((await ask({ records: null })).records, null);
   assert.equal(targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }).records, null, "older tools read without any");
   const [brush] = brushesFor(scene, "sketch-a", [], () => "brush-1");
@@ -177,4 +190,86 @@ test("records from AI are kept only when they apply to the brush's module, and t
   assert.match(render(code), /ITEM RECORDS/); assert.match(render(code), />기록 추가<\/button>/, "not in the code (e.g. undone): it can be added again");
   const recorded = (await import("../app/lib/hidden-parameters")).recordFields(scene, program(), records) as { generated: { code: string } };
   assert.match(render(recorded.generated.code), /✓ 그려진 항목마다 segments/); assert.doesNotMatch(render(recorded.generated.code), />기록 추가</);
+});
+
+// ── Hidden values on the overlays: a suggested parameter is shown before it is a property ──
+const gapOverlay = { id: "gap", kind: "line" as const, name: "마디 간격", x: "0", y: "0", w: "0", h: "p(\"tree/segment-gap\") * 2", label: "간격 ${p(\"tree/segment-gap\")}px", color: "#e07b00",
+  link: { kind: "parameter" as const, nodeId: "tree", id: "segment-gap" }, when: "", each: "" };
+
+test("overlays read a suggested parameter at the code's value until a step records it as a property", async () => {
+  const { historyOverlays, sameFocus } = await import("../app/lib/inspection");
+  const { suggestedValues } = await import("../app/lib/hidden-parameters");
+  // Step 1 before it was accepted (not recorded), step 2 after, moved to 30.
+  const steps: InspectionStep[] = [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: {} },
+    { id: 2, at: 1, nodeId: null, from: null, to: null, transitionId: null, values: { "tree/segment-gap": 30 }, runtime: {} }];
+  const fallback = suggestedValues([gap]);
+  assert.deepEqual(fallback, { "tree/segment-gap": 10 });
+  const at = (index: number) => historyOverlays([gapOverlay], steps, index, {}, null, fallback).filter(item => !item.ghost);
+  assert.deepEqual(at(0).map(item => [item.h, item.label]), [[20, "간격 10px"]], "not recorded: the constant the code uses");
+  assert.deepEqual(at(1).map(item => [item.h, item.label]), [[60, "간격 30px"]], "recorded: the property's value");
+  assert.deepEqual(historyOverlays([gapOverlay], steps, 0).filter(item => !item.ghost), [], "without the suggestion it cannot be read");
+  // Once accepted it is the constraint with the same property id.
+  assert.ok(sameFocus({ kind: "parameter", nodeId: "tree", id: "segment-gap" }, { kind: "constraint", nodeId: "tree", id: "segment-gap" }));
+  assert.ok(!sameFocus({ kind: "parameter", nodeId: "tree", id: "segment-gap" }, { kind: "state", nodeId: "tree", id: "segment-gap" }));
+});
+
+test("an overlay of a suggested parameter is kept only with the suggestion", async () => {
+  const scene = sampleScene(), code = program().code;
+  const broken = { ...gap, id: "broken", label: "Broken", edits: [{ find: "not in the code", replace: "m.v(\"tree/broken\")" }] };
+  const constraints = [{ key: "orb/radius", nodeId: "orb", transformationId: "t", transformation: "T", propertyId: "radius", property: "Radius", path: "", type: "number" }];
+  const output = { summary: "s", valueFixes: [], recommendations: [], parameters: [gap, broken], overlays: [
+    gapOverlay,
+    { ...gapOverlay, id: "broken-link", link: { kind: "parameter", nodeId: "tree", id: "broken" } },
+    { ...gapOverlay, id: "broken-read", h: "p(\"tree/broken\")", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
+    { ...gapOverlay, id: "radius", h: "p(\"orb/radius\")", label: "", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
+  ] };
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], constraints, steps: [] };
+  await withMockedAI(() => output, async calls => {
+    const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "마디 간격", previous: code, inspection }), new AbortController().signal));
+    assert.deepEqual(result.parameters.map(item => item.id), ["segment-gap"]);
+    assert.deepEqual(result.overlays.map(item => item.id), ["gap", "radius"], "linked to or reading a dropped suggestion: dropped");
+    assert.match(calls[0].instructions, /link\.kind` `"parameter"`/, "the AI is told it may show it");
+  });
+});
+
+test("a scale multiplies several constants: it starts at 1 and goes both ways", () => {
+  const scene = sampleScene(), code = program().code;
+  const scale = { ...gap, id: "segment-scale", form: "scale" as const, value: { type: "number" as const, value: 1, min: .2, max: 3, step: .05, unit: "×" },
+    edits: [{ find: LOOP, replace: LOOP.replaceAll("i * 10", "i * 10 * m.v(\"tree/segment-scale\")") }] };
+  assert.equal(parameterProblem(scene, code, scale), null);
+  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, value: 2 } })!, /배율/);
+  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, min: 1 } })!, /배율/);
+  assert.equal(targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [], parameters: [gap] }).parameters[0].form, "constant", "older suggestions replace one constant");
+});
+
+test("an undecided suggestion is a faint card in its transformation of the properties panel: highlighted from the inspection, accepted or rejected there", async () => {
+  const { PropertyInspector } = await import("../app/components/scene/property-inspector");
+  const scene = sampleScene(), node = findNode(scene, "tree")!, [brush] = brushesFor(scene, "sketch-a", [], () => "brush-1");
+  const render = (props: Record<string, unknown>) => renderToStaticMarkup(createElement(PropertyInspector, new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, ...props } as Record<string, unknown>,
+    { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  const card = (html: string) => /<article[^>]*data-property-id="segment-gap"[^>]*>/.exec(html)?.[0] ?? "";
+  const html = render({ suggestions: [{ item: gap, index: 0 }], onAcceptSuggestion: noop, onRejectSuggestion: noop });
+  assert.match(card(html), /suggested-property/); assert.doesNotMatch(card(html), /inspection-highlight/);
+  // In the transformation it would join, after its properties.
+  const section = html.slice(html.indexOf('data-transformation-id="branching-growth"'));
+  assert.ok(section.indexOf('data-property-id="segment-gap"') > 0 && section.indexOf('data-property-id="segment-gap"') < (section.indexOf("<section", 10) >>> 0), "inside its transformation card");
+  assert.match(html, /<em class="suggested-tag"[^>]*>제안<\/em>/); assert.match(html, /지금 코드의 값 10px/); assert.match(html, /aria-label="Segment gap \(suggested\)"[^>]*disabled/, "read-only until accepted");
+  assert.match(html, />Accept<\/button>/); assert.match(html, />Reject<\/button>/);
+  assert.match(card(render({ suggestions: [{ item: gap, index: 0 }], highlightPropertyId: "segment-gap" })), /inspection-highlight/, "clicking it in the inspection highlights it here");
+  assert.match(render({ suggestions: [{ item: { ...gap, form: "scale", value: { type: "number", value: 1, min: .2, max: 3, step: .1, unit: "×" } }, index: 0 }] }), /배율 ×1/);
+  assert.equal(card(render({ suggestions: [], state: undefined })), "");
+  // The inspection panel's card is the button that highlights it (and is highlighted with it).
+  const focused = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "targeted", scene, nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), focus: { kind: "parameter", nodeId: "tree", id: "segment-gap" } }, busy: false, running: true,
+    targeted: { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: targetedResultSchema.parse({ summary: "s", overlays: [gapOverlay], valueFixes: [], recommendations: [], parameters: [gap] }) },
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop, onAcceptParameter: noop, onRejectParameter: noop, onParameterValue: noop } as never));
+  assert.match(focused, /inspection-parameter pending focused/); assert.match(focused, /aria-pressed="true" title="Highlight it in the properties panel"/);
+  assert.doesNotMatch(focused, /suggested-property|class="suggested/, "not in the inspection's constraint table");
+});
+
+test("an each overlay's condition is checked per item and may read it", async () => {
+  const { placeOverlays, stepContext } = await import("../app/lib/inspection");
+  const steps: InspectionStep[] = [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: { stores: { bush: { bends: [{ x: 1, side: 0 }, { x: 2, side: 1 }, { x: 3, side: 0 }] } } } }];
+  const overlay = { id: "b", kind: "line" as const, name: "", x: "item(\"x\")", y: "0", w: "1", h: "1", label: "", color: "#7c3aed", link: { kind: "parameter" as const, nodeId: "bush", id: "bend" }, when: "item(\"side\") == 0", each: "bush:bends" };
+  assert.deepEqual(placeOverlays([overlay], stepContext(steps, 0)).map(item => item.x), [1, 3]);
+  assert.deepEqual(placeOverlays([{ ...overlay, when: "step == 1" }], stepContext(steps, 0)), [], "a condition on the step still holds for all items");
 });

@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema } from "./hidden-parameters";
+import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema, suggestionKey, type ParameterSuggestion } from "./hidden-parameters";
 import { findNode } from "./scene/graph";
-import type { Scene, SceneBinding } from "./scene/schema";
+export { readsPerItem } from "./item-values";
+import type { ScalarValue, Scene, SceneBinding } from "./scene/schema";
 import { findProperty, propertyOwner } from "./scene/transformations";
-import { sceneBindings, layoutKey } from "./scene/values";
+import { bindingKey, nodeLeaves, sceneBindings, layoutKey } from "./scene/values";
 
 // Inspection of one brush in one frame: the running result records a step at
 // every state change (up to MAX_STEPS), with the brush's live values and the
@@ -17,11 +18,24 @@ export type InspectionStep = {
   /** null for the start of recording. */
   nodeId: string | null; from: string | null; to: string | null; transitionId: string | null;
   values: Record<string, Scalar>;
+  /** What-if values set at this step only (a handle dragged while looking at it): the step is drawn with them; nothing else changes. */
+  edits?: Record<string, Scalar>;
+  /** What-if values of single drawn items at this step (by the item's `id` in the store): only that item is drawn with them. */
+  itemEdits?: Record<string, Record<string, Scalar>>;
   /** The running sketch's state at that moment (module stores, machine states, random seed); selecting the step restores it. */
   runtime: unknown;
 };
-/** What an overlay, row or recommendation points at (a transformation only from recommendations). */
-export type InspectionFocus = { kind: "constraint" | "state" | "transition" | "transformation"; nodeId: string; id: string };
+/**
+ * What an overlay, row or recommendation points at (a transformation only from
+ * recommendations; a parameter is a hidden constant the inspection suggests exposing,
+ * `id` = the property id it gets).
+ */
+export type InspectionFocus = { kind: "constraint" | "state" | "transition" | "transformation" | "parameter"; nodeId: string; id: string };
+/** Whether two foci point at the same thing: a suggested parameter is the constraint it becomes once accepted (same property id). */
+export function sameFocus(a: InspectionFocus | null, b: InspectionFocus) {
+  const value = (kind: string) => kind === "parameter" ? "constraint" : kind;
+  return Boolean(a && value(a.kind) === value(b.kind) && a.nodeId === b.nodeId && a.id === b.id);
+}
 /** How an annotation mark is drawn: color, width (canvas pixels of the 900×600 frame) and opacity. */
 export const markStyleSchema = z.object({ color: z.string().regex(/^#[0-9a-fA-F]{6}$/), width: z.number().min(1).max(30), opacity: z.number().min(.1).max(1) });
 export type MarkStyle = z.infer<typeof markStyleSchema>;
@@ -30,6 +44,7 @@ export const DEFAULT_MARK_STYLE: MarkStyle = { color: "#7c3aed", width: 6, opaci
 export const MAX_MARKS = 128;
 export const MARK_COLORS = ["#7c3aed", "#e0457b", "#e07b00", "#1f8a5b", "#2563eb", "#1f2328"];
 export type InspectionState = {
+  /** The step looked at (the result is held there); null: the latest one. */
   brushId: string; steps: InspectionStep[]; cursor: number | null;
   /** The inspection annotation being drawn (normalized 0..1) and its concern; they become a targeted tool. */
   marks: { x: number; y: number }[][]; concern: string;
@@ -37,8 +52,32 @@ export type InspectionState = {
   markStyles: MarkStyle[];
   focus: InspectionFocus | null;
 };
+/** The step an inspection holds the result at: the one picked, else the latest (null when nothing is recorded). */
+export const heldIndex = (state: Pick<InspectionState, "steps" | "cursor">) => state.steps.length ? Math.min(state.cursor ?? state.steps.length - 1, state.steps.length - 1) : null;
 export const emptyInspection = (brushId = ""): InspectionState => ({ brushId, steps: [], cursor: null, marks: [], markStyles: [], concern: "", focus: null });
 export const markStyleAt = (styles: MarkStyle[] | undefined, index: number) => styles?.[index] ?? DEFAULT_MARK_STYLE;
+
+/** A step's values as it is looked at: as recorded, with its what-if values over them. */
+export const stepValues = (step: Pick<InspectionStep, "values" | "edits"> | undefined): Record<string, Scalar> | undefined => step && (step.edits ? { ...step.values, ...step.edits } : step.values);
+/**
+ * Set (or with null, take back) a what-if value of one step: of the whole step, or of
+ * one drawn item there (`itemId`). With null and no item, every item's value of that key goes too.
+ */
+export function editStep(state: InspectionState, index: number, key: string, value: Scalar | null, itemId?: string): InspectionState {
+  const step = state.steps[index]; if (!step) return state;
+  const edits = { ...step.edits }, items: Record<string, Record<string, Scalar>> = { ...step.itemEdits };
+  if (itemId !== undefined) {
+    const own = { ...items[itemId] };
+    if (value === null) delete own[key]; else own[key] = value;
+    if (Object.keys(own).length) items[itemId] = own; else delete items[itemId];
+  } else if (value === null) {
+    delete edits[key];
+    for (const id of Object.keys(items)) { const { [key]: _gone, ...rest } = items[id]; if (Object.keys(rest).length) items[id] = rest; else delete items[id]; }
+  } else edits[key] = value;
+  return { ...state, steps: state.steps.map((item, i) => i === index ? { ...item, edits: Object.keys(edits).length ? edits : undefined, itemEdits: Object.keys(items).length ? items : undefined } : item) };
+}
+/** The id of a drawn item as its store record names it (null: it has none). */
+export const itemIdOf = (item: unknown) => item && typeof item === "object" && ["string", "number"].includes(typeof (item as { id?: unknown }).id) ? String((item as { id: string | number }).id) : null;
 
 /** Keep the newest MAX_STEPS steps. */
 export function addStep(state: InspectionState, step: Omit<InspectionStep, "id">): InspectionState {
@@ -68,21 +107,47 @@ export function constraintRows(scene: Scene, nodeIds: string[]): ConstraintRow[]
 export const layoutKeys = (nodeIds: string[]) => nodeIds.flatMap(id => (["x", "y", "w", "h"] as const).map(field => layoutKey(id, field)));
 
 export function changedKeys(steps: InspectionStep[], index: number) {
-  const step = steps[index], previous = steps[index - 1];
+  const step = stepValues(steps[index]), previous = stepValues(steps[index - 1]);
   if (!step || !previous) return new Set<string>();
-  return new Set(Object.keys(step.values).filter(key => step.values[key] !== previous.values[key]));
+  return new Set(Object.keys(step).filter(key => step[key] !== previous[key]));
 }
 export const formatScalar = (value: Scalar | undefined) => value === undefined ? "—" : typeof value === "number" ? String(Math.round(value * 100) / 100) : String(value);
 
 // ── Targeted inspection result (AI) ─────────────────────────────────────────
 
-const link = z.object({ kind: z.enum(["constraint", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
+/** "parameter": a hidden constant suggested in the same result (`id` = the suggested property id). */
+const link = z.object({ kind: z.enum(["constraint", "state", "transition", "parameter"]), nodeId: z.string().max(80), id: z.string().max(80) });
 const scalar = z.union([z.number(), z.string().max(200), z.boolean()]);
+/**
+ * A direct manipulation handle on an overlay: a grip the user drags on the frame
+ * to change one value (a constraint, or a suggested parameter). Where the grip sits
+ * and how a drag maps to the value are expressions chosen for the concern (drag a
+ * leaf tip to bend it, rotate an arm to open an angle, slide along a row to add
+ * items), so the result and the overlay follow the value as it is dragged.
+ */
+export const HANDLE_GESTURES = ["drag", "rotate", "slide"] as const;
+/** What the `value` expression may read besides the overlay readers (canvas pixels; angles in radians). */
+export const HANDLE_VARIABLES = ["hx", "hy", "sx", "sy", "dx", "dy", "start", "px", "py", "angle", "startAngle", "dist", "startDist"] as const;
+export const handleSchema = z.object({
+  /** The value it changes: a key from `constraints` (number or toggle) or a suggested parameter's key. */
+  key: z.string().max(1200),
+  /** drag: the grip follows the pointer; rotate: it turns around the pivot; slide: it moves along the line from the pivot through it. */
+  gesture: z.enum(HANDLE_GESTURES),
+  /** Where the grip sits (reads the key, so it follows the value). On an `each` overlay, on every item (up to a few). */
+  x: z.string().max(400), y: z.string().max(400),
+  /** The pivot of a rotate, the start of a slide's track ("" = where the grip was when the drag began). */
+  pivotX: z.string().max(400), pivotY: z.string().max(400),
+  /** The new value from the pointer: hx, hy (pointer), sx, sy (pointer at the start), dx, dy, start (the value at the start), px, py (pivot), angle, startAngle, dist, startDist (around the pivot). */
+  value: z.string().max(600),
+  /** What the gesture does, in plain words (Korean, about 20 characters), e.g. "끝을 끌어 휘게". */
+  hint: z.string().max(80),
+});
+export type OverlayHandle = z.infer<typeof handleSchema>;
 export const overlaySchema = z.object({
   id: z.string().min(1).max(80), kind: z.enum(["rect", "ellipse", "line", "label"]),
   /** What this color shows, in plain words (the legend). */
   name: z.string().max(60).default(""),
-  /** Expressions in canvas pixels; may read values with p("key"). For a line, w/h are the end offset. */
+  /** Expressions in canvas pixels; may read values with p("key") (also the keys of suggested parameters). For a line, w/h are the end offset. */
   x: z.string().max(400), y: z.string().max(400), w: z.string().max(400), h: z.string().max(400),
   /** Text with ${expression} parts, e.g. "w=${p(\"star/size\")}". */
   label: z.string().max(300), color: z.string().regex(/^#[0-9a-fA-F]{6}$/), link,
@@ -90,6 +155,8 @@ export const overlaySchema = z.object({
   when: z.string().max(400).default(""),
   /** "<root id>:<store path>": draw once per item of that array in the module's m.store (item("…"), i). Empty: once. */
   each: z.string().max(200).default(""),
+  /** A handle to change what it shows by dragging it on the frame (null: none). */
+  handle: handleSchema.nullable().default(null),
 });
 const change = z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: scalar });
 /** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
@@ -150,11 +217,15 @@ export type Overlay = z.input<typeof overlaySchema>;
 // prev/delta against the previous step, in/elapsed for machine states, item("path")
 // and i inside `each`, step/steps for the position in the history.
 
-/** What an overlay reads at one step. */
+/** What an overlay reads at one step. `fallback`: values for keys a step does not record (suggested parameters, at the value the code uses). */
 export type OverlayContext = {
-  values: Record<string, Scalar>; previous?: Record<string, Scalar>;
+  values: Record<string, Scalar>; previous?: Record<string, Scalar>; fallback?: Record<string, Scalar>;
+  /** What-if values of single items (by item id): an `each` item with its own value reads it. */
+  itemValues?: Record<string, Record<string, Scalar>>;
   stores: Record<string, unknown>; states: Record<string, { id: string; elapsed: number }>;
   step: number; steps: number; item?: unknown; itemIndex?: number;
+  /** Named numbers (a handle's drag: hx, hy, start, …). */
+  vars?: Record<string, number>;
 };
 type Runtime = { stores?: Record<string, unknown>; states?: Record<string, { id: string; elapsed: number }>; history?: unknown[] };
 const runtimeOf = (step: InspectionStep | undefined): Runtime => step?.runtime && typeof step.runtime === "object" ? step.runtime as Runtime : {};
@@ -216,7 +287,8 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
   const isOp = (...values: string[]) => peek()?.type === "op" && values.includes(peek()!.value as string);
   const expect = (value: string) => { const token = take(); if (token?.type !== "op" || token.value !== value) throw new Error(`'${value}'가 필요합니다.`); };
   const text = (what: string) => { const token = take(); if (token?.type !== "str") throw new Error(`${what}에는 문자열이 필요합니다.`); return token.value; };
-  const read = (values: Record<string, Scalar> | undefined, key: string) => values ? numeric(values[key]) : NaN;
+  const own = context.itemValues && context.item !== undefined ? context.itemValues[itemIdOf(context.item) ?? ""] : undefined;
+  const read = (values: Record<string, Scalar> | undefined, key: string) => values ? numeric((values === context.values ? own?.[key] : undefined) ?? values[key] ?? context.fallback?.[key]) : NaN;
   function call(name: string): number {
     expect("(");
     let value: number;
@@ -251,6 +323,7 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
       if (token.value === "i") return context.itemIndex ?? 0;
       if (token.value === "step") return context.step;
       if (token.value === "steps") return context.steps;
+      if (context.vars && Object.hasOwn(context.vars, token.value)) return context.vars[token.value];
       return call(token.value);
     }
     throw new Error("수식을 읽지 못했습니다.");
@@ -292,11 +365,14 @@ export function fillLabel(template: string, input: Record<string, Scalar> | Over
   return missing ? "" : text;
 }
 
-/** The context of step `index` (live values when there is no step yet). */
-export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): OverlayContext {
+/**
+ * The context of step `index` (live values when there is no step yet); `fallback` fills keys the step does not record,
+ * and a step's what-if values (`edits`) are drawn with it.
+ */
+export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null, fallback?: Record<string, Scalar>): OverlayContext {
   const step = steps[index], runtime = runtimeOf(step);
   // `drawn`: the stores as the running code draws this step now (restored), newer than the recording (e.g. after the code records more per item).
-  return { values: step?.values ?? live, previous: steps[index - 1]?.values, stores: { ...(runtime.stores ?? {}), ...(drawn ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
+  return { values: stepValues(step) ?? live, previous: stepValues(steps[index - 1]), itemValues: step?.itemEdits, fallback, stores: { ...(runtime.stores ?? {}), ...(drawn ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
 }
 
 /** Shorten plain data for AI: arrays keep their first items (and say how long they were). */
@@ -340,7 +416,6 @@ export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar>
   const context: OverlayContext = "values" in input && "stores" in input ? input as OverlayContext : { values: input as Record<string, Scalar>, stores: {}, states: {}, step: 0, steps: 1 };
   return overlays.flatMap(overlay => {
     try {
-      if (overlay.when?.trim() && !evaluate(overlay.when, context)) return [];
       const cut = overlay.each?.indexOf(":") ?? -1;
       const each = overlay.each ?? "", list = cut > 0 ? pathValue(context.stores[each.slice(0, cut)], each.slice(cut + 1)) : undefined;
       const items: (OverlayContext | null)[] = cut > 0 ? (Array.isArray(list) ? list.slice(0, maxItems).map((item, itemIndex) => ({ ...context, item, itemIndex })) : []) : [null];
@@ -348,6 +423,8 @@ export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar>
       const perItem = cut <= 0 || labelReadsItem(overlay.label);
       return items.flatMap((itemContext, n) => {
         const scope = itemContext ?? context;
+        // The condition is per item too (it may read the item, e.g. item("side") == 0).
+        if (overlay.when?.trim() && !evaluate(overlay.when, scope)) return [];
         const [x, y, w, h] = [overlay.x, overlay.y, overlay.w, overlay.h].map(source => evaluate(source || "0", scope));
         if (![x, y, w, h].every(Number.isFinite)) return [];
         return [{ overlay, key: `${overlay.id}:${ghost}:${n}`, x, y, w, h, label: ghost || (n > 0 && !perItem) ? "" : fillLabel(overlay.label, scope), step: context.step, ghost }];
@@ -366,10 +443,10 @@ const where = (item: PlacedOverlay) => `${item.overlay.id}|${item.key.split(":")
  * many more share it, and clicking it goes to the next of them.
  */
 export type StepBadge = { key: string; overlay: Overlay; x: number; y: number; steps: number[]; shown: number; next: number; current: boolean };
-export function stepBadges(overlays: Overlay[], steps: InspectionStep[], index: number, spotOf: (item: PlacedOverlay) => { x: number; y: number }, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): StepBadge[] {
+export function stepBadges(overlays: Overlay[], steps: InspectionStep[], index: number, spotOf: (item: PlacedOverlay) => { x: number; y: number }, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null, fallback?: Record<string, Scalar>): StepBadge[] {
   const groups = new Map<string, Omit<StepBadge, "shown" | "next" | "current">>();
   for (const overlay of overlays) for (let j = 0; j < steps.length; j++) {
-    const [item] = placeOverlays([overlay], stepContext(steps, j, live, j === index ? drawn : null), j - index, 1);
+    const [item] = placeOverlays([overlay], stepContext(steps, j, live, j === index ? drawn : null, fallback), j - index, 1);
     if (!item) continue;
     const spot = spotOf(item), key = `${overlay.id}|${Math.round(spot.x)},${Math.round(spot.y)}`;
     const group = groups.get(key) ?? { key, overlay, ...spot, steps: [] };
@@ -390,15 +467,84 @@ export function stepBadges(overlays: Overlay[], steps: InspectionStep[], index: 
  * values and stores. A ghost that would sit exactly where a nearer step already
  * draws is left out. Ghosts come first, farthest first, so nearer ones are on top.
  */
-export function historyOverlays(overlays: Overlay[], steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null): PlacedOverlay[] {
-  const current = placeOverlays(overlays, stepContext(steps, index, live, drawn));
+export function historyOverlays(overlays: Overlay[], steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null, fallback?: Record<string, Scalar>): PlacedOverlay[] {
+  const current = placeOverlays(overlays, stepContext(steps, index, live, drawn, fallback));
   const taken = new Set(current.map(where)), ghosts: PlacedOverlay[] = [];
   const order = steps.map((_, j) => j).filter(j => j !== index).sort((a, b) => Math.abs(a - index) - Math.abs(b - index) || a - b);
-  for (const j of order) for (const item of placeOverlays(overlays, stepContext(steps, j, live), j - index, GHOST_ITEMS)) {
+  for (const j of order) for (const item of placeOverlays(overlays, stepContext(steps, j, live, null, fallback), j - index, GHOST_ITEMS)) {
     const spot = where(item); if (taken.has(spot)) continue;
     taken.add(spot); ghosts.push(item);
   }
   return [...ghosts.reverse(), ...current];
+}
+
+// ── Handles: drag an overlay to change the value it shows ───────────────────
+
+/** A handle's grip at the step looked at: where it sits, and the scope (item) its expressions read. */
+export type HandleGrip = { key: string; overlay: Overlay; handle: OverlayHandle; x: number; y: number; scope: OverlayContext };
+export const MAX_GRIPS = 8;
+/** The grips of every overlay with a handle at one step context (on an `each` overlay, its first items whose condition holds). */
+export function handleGrips(overlays: Overlay[], context: OverlayContext, max = MAX_GRIPS): HandleGrip[] {
+  return overlays.flatMap(overlay => {
+    const handle = overlay.handle; if (!handle) return [];
+    const cut = overlay.each?.indexOf(":") ?? -1, list = cut > 0 ? pathValue(context.stores[overlay.each!.slice(0, cut)], overlay.each!.slice(cut + 1)) : undefined;
+    const scopes: OverlayContext[] = cut > 0 ? (Array.isArray(list) ? list.slice(0, MAX_EACH).map((item, itemIndex) => ({ ...context, item, itemIndex })) : []) : [context];
+    const grips: HandleGrip[] = [];
+    for (const [n, scope] of scopes.entries()) {
+      if (grips.length >= max) break;
+      try {
+        if (overlay.when?.trim() && !evaluate(overlay.when, scope)) continue;
+        const x = evaluate(handle.x, scope), y = evaluate(handle.y, scope);
+        if (Number.isFinite(x) && Number.isFinite(y)) grips.push({ key: `${overlay.id}:handle:${n}`, overlay, handle, x, y, scope });
+      } catch { /* not placeable here */ }
+    }
+    return grips;
+  });
+}
+/** The value a key has in a context (a toggle as 0/1); NaN when it has none. */
+export function contextValue(context: OverlayContext, key: string) {
+  const own = context.itemValues && context.item !== undefined ? context.itemValues[itemIdOf(context.item) ?? ""] : undefined;
+  return numeric(own?.[key] ?? context.values[key] ?? context.fallback?.[key]);
+}
+/** Where a drag started: the pointer, the grip's value and the pivot (the grip itself when the handle names none). */
+export type HandleDrag = { sx: number; sy: number; start: number; px: number; py: number };
+export function startDrag(grip: HandleGrip, pointer: { x: number; y: number }): HandleDrag {
+  const read = (source: string, otherwise: number) => { if (!source.trim()) return otherwise; try { const value = evaluate(source, grip.scope); return Number.isFinite(value) ? value : otherwise; } catch { return otherwise; } };
+  return { sx: pointer.x, sy: pointer.y, start: contextValue(grip.scope, grip.handle.key), px: read(grip.handle.pivotX, grip.x), py: read(grip.handle.pivotY, grip.y) };
+}
+/** The value for the pointer during a drag (raw: not yet clamped); NaN when it cannot be computed. */
+export function dragValue(grip: HandleGrip, drag: HandleDrag, pointer: { x: number; y: number }) {
+  const vars = { hx: pointer.x, hy: pointer.y, sx: drag.sx, sy: drag.sy, dx: pointer.x - drag.sx, dy: pointer.y - drag.sy, start: drag.start, px: drag.px, py: drag.py,
+    angle: Math.atan2(pointer.y - drag.py, pointer.x - drag.px), startAngle: Math.atan2(drag.sy - drag.py, drag.sx - drag.px),
+    dist: Math.hypot(pointer.x - drag.px, pointer.y - drag.py), startDist: Math.hypot(drag.sx - drag.px, drag.sy - drag.py) };
+  try { return evaluate(grip.handle.value, { ...grip.scope, vars }); } catch { return NaN; }
+}
+/** A dragged value made valid for its spec: a number clamped to its range and rounded to its step, a toggle on from 0.5. */
+export function clampValue(spec: ScalarValue | undefined, raw: number): number | boolean | null {
+  if (!Number.isFinite(raw)) return null;
+  if (spec?.type === "toggle") return raw >= .5;
+  if (spec && spec.type !== "number") return null;
+  if (!spec) return raw;
+  const stepped = spec.step > 0 ? spec.min + Math.round((raw - spec.min) / spec.step) * spec.step : raw;
+  const decimals = Math.min(6, Math.max(0, -Math.floor(Math.log10(spec.step > 0 ? spec.step : 1)) + 1));
+  return Number(Math.min(spec.max, Math.max(spec.min, stepped)).toFixed(decimals));
+}
+/** The spec (type, range, step) of every value a handle of the brush may change: its constraints and the parameters suggested for it. */
+export function valueSpecs(scene: Scene, nodeIds: string[], parameters: ParameterSuggestion[] = []): Record<string, ScalarValue> {
+  const ids = new Set(nodeIds);
+  return { ...Object.fromEntries(parameters.map(item => [suggestionKey(item), item.value])),
+    ...Object.fromEntries(scene.nodes.filter(node => ids.has(node.id)).flatMap(nodeLeaves).map(leaf => [bindingKey(leaf.path), leaf.value])) };
+}
+/** Whether a handle can be used as given: a number or toggle value it may change, and expressions that read only what they may. */
+export function handleProblem(handle: OverlayHandle, spec: { type: string } | undefined): string | null {
+  if (!spec || (spec.type !== "number" && spec.type !== "toggle")) return "숫자나 토글 값만 조절할 수 있습니다";
+  const vars = Object.fromEntries(HANDLE_VARIABLES.map(name => [name, 1]));
+  const check: OverlayContext = { values: {}, stores: {}, states: {}, step: 0, steps: 1, item: {}, itemIndex: 0, vars };
+  for (const source of [handle.x, handle.y, handle.value, handle.pivotX, handle.pivotY]) {
+    if (!source.trim() && (source === handle.pivotX || source === handle.pivotY)) continue;
+    try { evaluate(source, check); } catch { return `수식을 읽지 못했습니다: ${source.slice(0, 60)}`; }
+  }
+  return null;
 }
 
 // ── Label placement: labels of the step being looked at never overlap ────────
@@ -446,6 +592,24 @@ const remapKey = (key: string, map: (id: string) => string) => {
   const cut = key.indexOf("/");
   return cut < 0 ? key : `${encodeURIComponent(map(decodeURIComponent(key.slice(0, cut))))}${key.slice(cut)}`;
 };
+/** The value keys an overlay reads with p, prev or delta (in its geometry, condition and label). */
+export function overlayKeys(overlay: Pick<Overlay, "x" | "y" | "w" | "h" | "label" | "when">) {
+  const keys = new Set<string>();
+  for (const source of [overlay.x, overlay.y, overlay.w, overlay.h, overlay.label, overlay.when ?? ""])
+    for (const [, name, , arg] of source.matchAll(READERS)) if (name === "p" || name === "prev" || name === "delta") keys.add(arg);
+  return keys;
+}
+/** The store path parts an overlay reads (its `each` array, item(…), s(…), len(…)), handle included. */
+export function overlayStoreFields(overlay: Pick<Overlay, "x" | "y" | "w" | "h" | "label" | "when" | "each"> & { handle?: Overlay["handle"] }) {
+  const parts = new Set<string>(), add = (path: string) => path.split(".").filter(part => part && !part.startsWith("@") && !/^\d+$/.test(part)).forEach(part => parts.add(part));
+  add(overlay.each?.split(":").slice(1).join(":") ?? "");
+  const handle = overlay.handle ? [overlay.handle.x, overlay.handle.y, overlay.handle.pivotX, overlay.handle.pivotY, overlay.handle.value] : [];
+  for (const source of [overlay.x, overlay.y, overlay.w, overlay.h, overlay.label, overlay.when ?? "", ...handle]) {
+    for (const [, path] of source.matchAll(/\bitem\(\s*["']([^"']*)["']/g)) add(path);
+    for (const [, path] of source.matchAll(/\b(?:s|len)\(\s*["'][^"']*["']\s*,\s*["']([^"']*)["']/g)) add(path);
+  }
+  return parts;
+}
 /** An overlay expression (or label template) with the node ids it reads translated. */
 export function remapExpression(source: string, map: (id: string) => string) {
   return source.replace(READERS, (_all, name: string, quote: string, arg: string) => `${name}(${quote}${name === "p" || name === "prev" || name === "delta" ? remapKey(arg, map) : map(arg)}${quote}`);
@@ -458,7 +622,8 @@ export function remapResult(result: InspectResultInput, ids: Map<string, string>
     overlays: result.overlays.map(overlay => {
       const cut = overlay.each.indexOf(":");
       return { ...overlay, id: `${overlay.id}${suffix}`, x: expression(overlay.x), y: expression(overlay.y), w: expression(overlay.w), h: expression(overlay.h), label: expression(overlay.label), when: expression(overlay.when),
-        each: cut < 0 ? overlay.each : `${map(overlay.each.slice(0, cut))}${overlay.each.slice(cut)}`, link: { ...overlay.link, nodeId: map(overlay.link.nodeId) } };
+        each: cut < 0 ? overlay.each : `${map(overlay.each.slice(0, cut))}${overlay.each.slice(cut)}`, link: { ...overlay.link, nodeId: map(overlay.link.nodeId) },
+        handle: overlay.handle ? { ...overlay.handle, key: remapKey(overlay.handle.key, map), x: expression(overlay.handle.x), y: expression(overlay.handle.y), pivotX: expression(overlay.handle.pivotX), pivotY: expression(overlay.handle.pivotY), value: expression(overlay.handle.value) } : null };
     }),
     valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
     recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })) })),

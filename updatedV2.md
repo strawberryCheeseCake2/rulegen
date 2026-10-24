@@ -1,6 +1,6 @@
 # Rulegen 요구사항 V2 (최신본)
 
-최종 갱신: 2026-10-15 (Collection별 코드 모듈, 즉시 brush, concern별 targeted inspection)
+최종 갱신: 2026-10-22 (시작 시 프레임 배치 유지, Live 없앰, overlay handle, 숨은 값의 overlay, property 패널의 제안 파라미터)
 
 `init.md` 원문과 이후 대화에서 요청한 내용을 현재 동작 기준으로 하나로 정리한 문서입니다. 예전 요청 중 지금의 동작과 맞지 않는 내용(visual feature 태그, subfeature·rule widget, Features/Rules/Code/Brush 탭, 프레임 단위 state machine, procedural brush 생성, 스케치와 분리된 generated result 프레임)은 지우고 최신 요구사항으로 덮어썼습니다. 이전 형식 호환은 지원하지 않습니다(19절).
 
@@ -275,7 +275,8 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - **Concern Autocomplete**: concern 입력칸 아래 **Autocomplete** 버튼을 누르면 AI가 inspection annotation(과 지금까지 쓴 글)을 보고 concern 문장을 최대 3개 제안한다(`concern` intent, `prompts/concern.md`). 버튼을 누를 때만 요청하고, 자동으로는 요청하지 않는다.
   - 아무것도 안 썼으면 가장 그럴듯한 제안이 입력칸의 placeholder로 보이고 **Tab**으로 넣는다. 쓰기 시작했으면 그 글로 시작하는 제안의 나머지가 회색으로 이어 보이고 **Tab**으로 완성한다. 아래 제안을 눌러서 고를 수도 있다.
   - 표시도 글도 없거나 다른 AI 작업 중이면 버튼이 꺼진다. 다시 누르면 이전 요청을 대신하고, 응답이 오기 전에 표시가 바뀌었으면 그 응답은 버리고 다시 누르라고 안내한다.
-  - AI는 annotation이 그려진 결과 이미지, 표시 좌표와 색·굵기, brush 노드의 이름·설명·transformation·property·state 이름만 받는다(값이나 코드는 받지 않는다). 제안은 표시한 그림 위치가 아니라 brush에 대한 질문(크기·간격·개수, 겹침·정렬, 동작)으로, 쉬운 한국어 한 문장으로 쓴다.
+  - AI는 annotation이 그려진 결과 이미지, 표시 좌표와 색·굵기, brush 노드의 이름·설명·transformation·property·state 이름만 받는다(값이나 코드는 받지 않는다). 제안은 표시한 그림 위치가 아니라 brush의 한 측면(크기·간격·개수·휘는 정도, 겹침·정렬, 동작)으로, 쉬운 한국어 한 문장으로 쓴다.
+  - **바꾸고 싶은 것에 초점**(2026-10-24): 사용자는 코드를 디버깅하는 게 아니라 그림을 다듬는 중이다. 그래서 제안은 "왜 …지?" 같은 원인·오류 질문이 아니라 표시가 가리키는 **무엇을 어느 쪽으로 바꾸고 싶은지**로 쓴다(예: "잎 끝을 더 휘게 하고 싶어", "하트 사이 간격을 더 넓히고 싶어"). 방향을 알 수 없으면 "…을 보고 조절하고 싶어"로 쓴다. 표시는 의도로 읽는다(동그라미 = 이것을 조절, 화살표 = 이쪽으로 늘이기·휘기·옮기기, 두 표시 사이 = 거리·관계, 덧그린 모양 = 이렇게, X = 줄이기·없애기, 손글씨 = 그대로). 사용자가 "왜"로 쓰기 시작했으면 첫 제안은 그 글을 이어 완성하고, 나머지 제안은 바꿀 것을 말한다. `inspect`도 이런 concern이면 그 양을 정하는 값을 모든 항목에 보여 주고, 그 방향으로 바꾸는 handle과 값 수정을 준다.
   - 화면 작업(busy)이나 프레임 오류를 만들지 않는 요청이다. AI history에는 "Concern 제안"으로 남고, 복원해도 프로젝트는 바뀌지 않는다.
 - **획 개수**: Inspection annotation 하나(와 그것으로 만든 targeted 도구)는 획을 최대 **128개**까지 보관한다(이전 64개). 넘으면 가장 오래된 획부터 빠지고, AI에도 128개까지 보낸다.
 - **Annotation 펜 설정**: Inspection annotation 패널의 Pen 아래에서 다음에 그릴 자국의 **색**(6가지 기본색과 색 선택), **굵기**(1–30px, 프레임 900×600 기준이라 확대하면 같이 커짐), **투명도**(10–100%)를 정한다. 미리보기 선이 함께 보인다.
@@ -384,6 +385,73 @@ Semantic transformation의 property마다 그 property에 맞게 **직접 만든
   - Property를 AI로 다시 만들거나 revision을 적용해도, widget이 조절하던 값들이 남아 있으면 handle이 유지된다.
   - 앞서 만든 프레임 위 metaphor handle(Pull·Stretch 등)은 이 방식으로 대체했다. 예전 형식의 handle은 프로젝트를 열 때 빠진다.
 
+## 35. 시작할 때 프레임 배치가 일렬로 돌아가던 문제
+
+- 증상: 앱을 다시 열면(저장된 프로젝트를 불러오면) 옮겨 둔 프레임들이 오른쪽으로 일렬(x 1040, 2080 …, y 0)로 다시 놓이고, 그 배치가 다시 저장됐다.
+- 원인: 보드(`freeform-workspace.tsx`)의 화면 맞춤(크기 감시 콜백, 처음 렌더의 fit)이 그 렌더의 레이아웃 전체에 camera만 바꿔 넣어 저장했다. 이 콜백이 저장된 프로젝트를 불러온 **뒤에** 실행되면, 아직 프레임 위치가 없던 처음 렌더의 기본 레이아웃으로 workspace를 덮어썼다. 위치가 없는 프레임은 일렬의 다음 칸으로 배치되었다. 타이밍에 따라 일어나서, 저장된 camera가 없으면 처음 새로고침부터, 있으면 몇 번째 새로고침에서 일어났다(headless Chrome으로 재현).
+- 수정: 보드가 workspace를 바꾸는 모든 곳(화면 맞춤, 줌, 휠, 이동, 프레임 드래그, 위치 채우기)이 **그때의 최신 레이아웃을 받아 필요한 부분만 바꾸는 갱신**으로 보낸다. 처음 화면 맞춤은 camera가 이미 있으면 아무것도 하지 않는다.
+- 검증: headless Chrome에서 흩어 놓은 배치로 8번 새로고침해도 위치·camera가 유지되고(camera가 없으면 모든 프레임에 맞춤), 프레임 헤더 드래그는 줌에 맞게 옮겨지는 것을 확인했다. 이미 일렬로 저장된 배치는 되돌릴 수 없다.
+
+## 34. 입력은 입력 이벤트로만 끝낸다 (코드 계약)
+
+- 문제: 생성된 수풀 brush 코드가 `draw`에서 매 프레임 `p.focused === false`이면 드래그를 취소했다. Brush 도구는 사용자의 포인터를 결과 iframe에 이벤트로 넣어 주므로 iframe에 포커스가 없을 수 있고, 그래서 드래그가 시작 1ms 만에 `cancelled`로 끝났다. 그 뒤에도 수풀은 입력 기록으로 계속 그려졌지만 상태 머신은 hover에 머물러, 손을 뗄 때 `released` 전이와 inspection 단계 기록이 일어나지 않았다.
+- 규칙(`contracts/scene-code.md`, `contracts/interaction.md`): 누르기·드래그는 입력 이벤트(`mouseReleased`, `touchEnded`, touch cancel, 설명된 키)로만 끝낸다. `draw`나 매 프레임 검사에서 `p.focused`, `p.mouseIsPressed`, `p.touches`, `document.hasFocus()`로 끝내거나 취소하지 않는다. Host가 누르기마다 떼기 이벤트를 준다.
+- 새로 생성·수정되는 코드부터 적용된다. 이미 만든 brush는 코드를 다시 생성해야 바뀐다.
+
+## 33. Inspection의 Live 없앰
+
+- Inspection 패널의 **Live** 버튼과 Live 상태(단계를 고르지 않고 실행 중인 결과를 따라가기)를 없앴다. Live에서는 결과는 실시간으로 그려지는데 overlay·handle은 마지막 기록 단계의 값으로 계산되어 둘이 어긋났다(예: 수풀 8개가 그려졌는데 overlay는 기록된 2개에만).
+- 이제 Inspection·Inspection annotation·Targeted inspection 도구를 쓰는 동안 결과는 항상 **보고 있는 단계**에 고정된다. 단계를 고르지 않았으면 **가장 최근 단계**다. 새 단계가 기록되면 그 단계로 따라간다. 타임라인의 → 와 End는 마지막 단계에서 멈추고, Esc로 Live로 가는 동작도 없다.
+- Brush 도구 등 다른 도구로 바꾸면 결과는 고정이 풀리고 실제 최신 상태에서 계속 실행된다(30절의 실행 상태 복원).
+- 저장된 상태의 `cursor: null`은 "가장 최근 단계"로 읽는다(`heldIndex`). AI에는 그 단계 번호를 보낸다.
+
+## 32. Overlay handle: 오버레이를 잡아 값 조절 (Targeted inspection)
+
+- Targeted inspection의 overlay마다 **handle**(프레임 위의 잡을 곳)이 붙을 수 있다. 끌면 그 overlay가 보여 주는 값(constraint, 또는 제안한 숨은 파라미터)이 바뀌고, 결과가 실시간으로 다시 그려진다. Overlay와 handle도 새 값으로 다시 계산되어 따라온다. 예: 잎이 휘는 정도면 잎 끝을 끌면 실제 잎이 휘고, 크기면 모서리를 끌면 커진다.
+- **슬라이더가 아니라 concern에 맞춘 조작**이다. AI(`inspect`)가 overlay마다 정한다.
+  - **무엇을 잡나**(`x`, `y`): 그 값이 움직이는 바로 그 부분(잎 끝, item 모서리, 두 번째 item, 팔 끝, 줄의 마지막 item, 경로 위 점). 식이 그 값을 읽으므로 끄는 동안 잡은 곳도 따라 움직인다. `each` overlay면 조건(`when`)이 맞는 앞의 item 몇 개(최대 8개)에 하나씩 생긴다.
+  - **어떻게 움직이나**(`gesture`): `drag`(자유롭게 끌기: 휘게, 당기기), `rotate`(`pivot` 둘레로 돌리기: 각도, 벌어짐, 기울기), `slide`(pivot에서 handle로 가는 선을 따라: 길이, 거리, 줄 위의 개수, 경로 위의 시간).
+  - **포인터 → 값**(`value`): 잡은 곳이 포인터 아래 오도록 하는 역함수 식이다. overlay 수식과 같은 계산기로 계산하고(코드 실행 없음), 포인터(`hx`, `hy`), 시작 위치(`sx`, `sy`, `dx`, `dy`), 시작 값(`start`), pivot 기준 각도·거리(`angle`, `startAngle`, `dist`, `startDist`)를 읽는다. 끄는 동안에는 시작할 때의 item·값으로 계산한다.
+  - `hint`: 하는 일을 쉬운 말로(예: "끝을 끌어 휘게"). 마우스를 올리면 보이고, 끄는 동안 handle 옆에 hint와 지금 값이 보인다.
+  - 상태·전이, 기록된 item별 값(그린 속도 등), 색·선택값을 보여 주는 overlay에는 handle이 없다.
+- **모양**: drag는 동그라미, rotate는 동그라미 안 호, slide는 마름모. 끄는 동안 rotate는 pivot 둘레의 원, slide는 선, drag는 시작점에서 이어지는 선이 점선으로 보인다. handle을 잡으면 그 overlay가 연결된 것도 강조된다.
+- **값 적용: 그 단계에서만(what-if)**:
+  - 값의 범위로 clamp하고 step에 맞게 반올림한다(토글은 0.5부터 켜짐).
+  - 끈 값은 property가 아니라 **보고 있는 단계에만** 저장된다(단계의 `edits`). 결과는 그 단계에 고정되어 그 값으로 다시 그려지고(고정된 단계를 그릴 때만 값을 덮어쓰고 그린 뒤 되돌림), overlay·handle도 그 값으로 계산된다. **property 값, 다른 단계, 다른 도구로 돌아갔을 때의 실행 결과는 그대로다.** 다른 단계의 잔상은 그 단계 자신의 값으로 그린다.
+  - Inspection 패널의 constraint 표에서 그 값은 주황색으로, "이 단계만 (기록 …)" 표시와 함께 보인다. ×로 기록된 값으로 되돌린다. 단계를 지우면(Reset history) 함께 지워진다. AI(Inspect again)에는 그 단계의 값으로 보낸다.
+  - **항목 하나만**: `each` overlay의 handle은 그려진 항목 하나(예: 한 획에서 나온 불꽃 7개 중 하나)에 붙는다. 코드가 그 값을 항목별로 읽으면(`m.v("<key>", id)`, 항목 기록의 `id`) 그 단계에서 **그 항목만** 바뀐다(단계의 `itemEdits`). 결과도 그 항목만 다시 그리고, overlay·handle도 그 항목만 새 값으로 계산한다. constraint 표에는 "항목 n개만"으로 보이고 ×로 함께 되돌린다.
+    - 런타임: `m.v(key, id)`는 고정된 단계를 그리는 동안 그 항목의 what-if 값을 돌려주고, 그 밖에는 `m.v(key)`와 같다. 항목 값이 있는 동안 `m.memo`는 캐시를 쓰지 않는다(다른 항목의 결과가 섞이지 않도록).
+    - 코드 계약(`contracts/scene-code.md`): 입력으로 만든 항목 기록마다 고정 `id`(`${g.id}:${i}` 등)를 두고, 항목 모양을 정하는 값은 그 항목 계산 안에서 `m.v("<key>", id)`로 읽는다.
+    - **반드시 그 항목만**(2026-10-24): `each` overlay의 handle은 어떤 경우에도 다른 항목을 바꾸지 않는다. 예전에는 코드가 값을 항목별로 읽지 않거나 항목 기록에 `id`가 없으면 그 단계 항목 전체에 적용했다. 지금 불꽃 brush는 `curl`을 반복문 밖에서 한 번 읽고 기록에 `id`도 없어서, 모든 불꽃이 함께 바뀌었다. 이제는 다음처럼 한다.
+      - Inspect(`records`)가 handle에 필요한 코드 수정을 함께 준다. 항목 기록(부분 기록이면 그것이 속한 항목의 id)에 고정 `id`를 넣고, handle이 바꾸는 값을 그 항목 계산 안에서 `m.v("<key>", id)`로 읽게 한다(`perItem`에 key를 적는다). 제안 파라미터라면 그 `edits`가 처음부터 `m.v("<key>", id)`로 읽는다. 이 수정은 값을 읽는 위치만 바꾸고 계산은 바꾸지 않으므로, 항목별 값이 없으면 그림은 그대로다. 결과가 오면 자동 적용된다.
+      - 서버는 `perItem`의 key를 수정된 코드가 정말 항목별로 읽는지 검사한다. 그리고 `each` overlay의 handle은 (records와, 제안 파라미터면 그 수정까지 적용한) 코드가 그 key를 항목별로 읽을 때만 남긴다. 아니면 handle을 빼고, 요약에 "손잡이 n개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다"를 붙인다.
+      - 프레임에서는 끄는 순간의 코드로 다시 확인한다. 항목에 id가 없거나 코드가 항목별로 읽지 않으면 **아무것도 바꾸지 않고** Inspect again을 안내한다(전체에 적용하던 대체 동작은 없앴다).
+      - 부분 기록(불꽃 끝 5개)이 같은 불꽃의 id를 가지면, 끝 하나를 끌 때 그 불꽃의 값이 바뀌고 그 불꽃의 끝 handle들이 함께 움직인다. 다른 불꽃은 그대로다.
+    - **아직 없는 값 읽기(`m.opt`)**: 자동 적용되는 `records` 수정이 아직 Accept하지 않은 제안 파라미터를 `m.v("<key>")`로 읽으면, 그 값이 없어서 프로그램이 "Unknown value"로 멈췄다. Fix with AI로 고친 뒤 다시 inspect하면 같은 수정이 또 적용되어 무한 반복됐다(`flame-envelope/valley-height-scale`, `flame-unit/side-fullness`). 이제 서버가 records 수정 안의 제안 파라미터 읽기를 `m.opt(<지금 코드의 값>, "<key>"[, id])`로 바꾼다. 런타임의 `m.opt`는 값이 있으면 `m.v`와 같고, 없으면(Accept 전, Reject 뒤) 그 값을 준다. 코드 계약에는 앱만 쓰는 호출이니 고칠 때 그대로 두라고 적었다.
+  - 결과 그림이 안 바뀌던 문제: 고정 단계를 what-if 값으로 그린 직후, 메시지 처리 끝의 공통 코드가 원래 값으로 한 번 더 그려 화면(캡처)을 덮었다. 그래서 overlay만 움직이고 그림은 그대로였다. 고정 단계를 그린 뒤 바로 끝나게 고쳤다(headless Chrome에서 끄는 대로 불꽃이 넓어지는 것과, 항목별로 읽는 코드에서 잡은 불꽃 하나만 바뀌는 것을 확인).
+  - 한계: 고정된 단계를 다시 그릴 때 `setup`은 다시 실행하지 않으므로, `setup`에서만 읽는 값은 what-if가 반영되지 않는다.
+  - **아직 Accept하지 않은 제안 파라미터**의 handle을 처음 잡으면, 코드가 그 값을 읽도록 자동으로 property로 노출(Accept)한 뒤 그 단계의 what-if로 적용한다. Instance에서는 다른 구조 변경처럼 detach 안내가 먼저 뜬다.
+- 서버: handle이 바꾸는 key가 그 brush의 숫자·토글 constraint이거나 남은 제안 파라미터이고, 식이 계산기로 읽히는(허용된 변수·함수만 쓰는) 것만 남긴다. 아니면 handle만 빼고 overlay는 남긴다. 다른 프레임(instance)에서는 key와 식의 노드 id가 그 프레임 id로 바뀐다. 이전 overlay는 handle 없이 읽는다.
+- 검증: handle 위치·역함수(slide·rotate·drag), item별 handle과 조건, clamp·step, 서버 필터, id 변환, 단계별 what-if(그 단계만 바뀜, 잔상은 자기 값, 되돌리기, 패널 표시), 고정 단계를 what-if 값으로 그린 뒤 실제 값 복원, 프레임 위 handle 표시를 테스트했다(전체 169개 통과, typecheck 통과). 실제 AI가 concern마다 알맞은 handle을 만드는지와 브라우저에서 끄는 동작은 아직 확인하지 못했다.
+
+## 31. 숨은 값도 overlay로 (Targeted inspection)
+
+- **문제**: overlay는 property 값(`p`)과 실행 상태(`m.store`)만 읽을 수 있었다. 코드에 고정된 값(예: 수풀 잎이 휘는 정도를 정하는 곡선 제어점 비율)은 property가 아니어서, concern이 바로 그 값인데도 AI는 옆의 다른 property(잎 끝 개수)를 overlay로 보여 주었다. 숨은 파라미터 제안(28절)과 overlay는 서로 연결되지 않았고, 서버는 지금 있는 property에 연결되지 않은 overlay를 버렸다.
+- **제안한 파라미터를 overlay가 바로 읽는다**:
+  - AI는 숨은 상수를 `parameters`로 제안하면서, 같은 응답의 overlay에서 그 key(`<노드>/<새 property id>`)를 `p("…")`로 읽고 `link.kind: "parameter"`로 연결할 수 있다.
+  - 단계에 그 key가 없으면(아직 Accept 전, Accept 전에 기록된 단계, Undo apply 뒤) **지금 코드의 값**(제안의 `value`)으로 계산한다. 그때 코드는 실제로 그 상수를 쓰므로 맞는 값이다. Accept 뒤에 기록된 단계는 property 값을 읽어 슬라이더를 따라간다. Reject해도 코드에는 상수가 그대로라서 overlay는 남는다.
+  - 서버는 parameter를 먼저 검사하고, 통과한 parameter에 연결된 overlay만 남긴다. 버린 parameter에 연결되거나 그 key를 읽는 overlay도 함께 버린다.
+  - 프롬프트: concern이 숨은 상수에 달려 있으면 옆의 property 대신 그 상수를 제안하고 overlay로 보여 준다. 첫 번째 제안은 concern이 묻는 바로 그 양을 정하는 상수다. 숫자만 띄우지 않고 그 상수가 각 item에 하는 일(예: 굽힘 거리)을 코드처럼 계산해 그린다.
+- **배율(scale) 제안**: 하나의 양이 여러 상수로 정해지면(곡선의 제어점 비율 여러 개) `form: "scale"`로 제안한다. 코드는 그 상수들에 `m.v(key)`를 곱하고, 값은 1(지금 그림 그대로)이며 1보다 작게도 크게도 갈 수 있어야 한다(서버가 확인). 카드에는 "배율 ×1"로 보인다. 이전 제안은 `constant`로 읽는다.
+- **item 안 부분의 값**: 수풀의 잎처럼 item 안 부분마다 다른 값(잎 끝·제어점 위치, 굽힘)은 `records`로 기록하게 한다. `each`는 한 단계 배열만 돌므로, 부분 기록은 item 목록 옆의 평평한 목록(부분마다 자기 위치)으로 만들고, item 목록을 다시 만드는 곳에서 함께 새로 만든다.
+- **우측 property 패널의 제안 파라미터**:
+  - Targeted inspection 도구를 쓰는 동안, 아직 정하지 않은 제안 파라미터는 우측 패널(Semantic transformations)에서 **그것이 들어갈 transformation 카드 안**, 그 property들 뒤에 **희미한 property 카드**(점선, 빗금, "제안" 표시)로 보인다. 슬라이더는 읽기 전용이고 값은 지금 코드의 값(배율이면 "배율 ×1")이다. 이유(`reason`)도 함께 보인다.
+  - 카드에서 바로 **Accept**(그 transformation의 property로 추가, 코드 재생성 없음)나 **Reject**를 할 수 있다. Accept하면 일반 property 카드가 되고, Reject하면 카드가 빠진다(Inspection 패널 HIDDEN PARAMETERS 카드의 **다시 보기**로 되돌림). Instance에서 Accept하면 detach 안내가 뜬다.
+  - Inspection 패널 HIDDEN PARAMETERS 카드의 제목을 누르면 그 노드가 선택되고 우측 패널의 그 카드가 **강조**되고 스크롤되어 보인다. 그 parameter의 overlay나 범례를 눌러도 같다. Accept한 뒤에는 같은 강조가 그 property 카드를 가리킨다. Inspection 패널의 Constraint 표에는 넣지 않는다.
+- **`when`은 item마다 계산한다**: `each` overlay의 조건이 item을 읽을 수 있다(예: `item("side") == 0`). 예전에는 조건을 item 없이 한 번만 계산해서, item을 읽는 조건이면 overlay가 아예 그려지지 않았다(수풀 잎 끝 굽힘 overlay가 안 보인 원인).
+- **모듈을 바꿔 끼우면 단계를 하나 기록한다**: 숨은 파라미터 Accept나 항목 기록(`records`)으로 모듈만 바뀌면, 실행 중인 결과가 새 코드로 그린 뒤 "이 시점의 값" 단계를 남긴다. 그래서 Live에서도 새 코드가 만든 기록(예: 잎별 굽힘 목록)을 overlay가 바로 읽는다. 예전에는 마지막 단계가 수정 전에 기록된 것이라 Live에서는 보이지 않았다.
+- 검증: 제안 값 대체(Accept 전·후 단계), 서버 필터(버린 제안의 overlay 제거), 배율 검사, 우측 패널의 희미한 제안 카드(transformation 안 위치, 읽기 전용, 강조, Accept/Reject), item별 `when`을 테스트했다(전체 162개 통과, typecheck 통과). 모듈 교체 뒤 단계 기록은 실제 브라우저에서 확인하지 못했다. 실제 AI가 수풀 굽힘 concern에 배율 제안과 그것을 읽는 overlay를 만드는지는 아직 확인하지 못했다.
+
 ## 30. Targeted inspection 단계 이동
 
 - **모든 단계에 캔버스 배지**: 예전 배지는 각 overlay의 첫 item을 잔상(ghost)으로 그린 것에서만 만들었다. 다른 단계와 정확히 같은 자리의 잔상은 빼므로 그 단계의 배지도 사라졌다. 그래서 item이 쌓이기만 하는 brush(수풀처럼 첫 item이 늘 같은 자리)에서는 캔버스에서 그 단계들로 갈 수 없었다. 이제 배지는 잔상과 따로, 기록된 모든 단계에서 계산한다(`stepBadges`). 같은 자리의 단계들은 배지 하나를 함께 쓴다. 배지에는 보고 있는 단계(또는 가장 가까운 단계) 번호와 `+n`이 표시되고, 클릭할 때마다 그중 다음 단계로 간다(끝에서 처음으로). 툴팁에 그 단계들이 나온다. 그 단계에 그릴 item이 없으면(아직 아무것도 그리지 않은 단계) 배지도 없다. 그런 단계는 패널의 ◀ ▶와 타임라인으로 간다.
@@ -405,6 +473,7 @@ Semantic transformation의 property마다 그 property에 맞게 **직접 만든
   - inspect 결과가 오면 자동으로 적용된다. 숨은 파라미터 Accept처럼 모듈만 실행 중에 바꿔 끼우므로 그린 것이 유지되고, Undo apply로 되돌릴 수 있다.
   - 결과 패널의 ITEM RECORDS가 적용 여부를 보여준다. 되돌린 뒤에는 **기록 추가**로 다시 적용한다.
   - 예전에 이 상황에서 숫자를 아예 빼던 프롬프트 규칙("기록이 없으면 보류")은 이것으로 바꿨다.
+  - **잘린 기록 수정**(2026-10-24): 코드 수정 한 조각(`replace`)의 길이 제한이 800자였다. 불꽃마다 끝을 기록하는 반복문처럼 긴 수정은 구조화 응답에서 800자에서 잘렸고, 올바른 코드가 아니어서 서버가 버렸다. 그런데 그 기록(예: `flameTips`)을 읽는 overlay는 남아서, 읽을 배열이 없으니 overlay가 하나도 그려지지 않았다. 이제 한도는 `find` 1500자, `replace` 4000자다. 기록 수정이 버려지면, 그 수정이 추가하려던 필드가 기록된 store에 아직 없는 경우 그 필드를 읽는 overlay도 함께 뺀다(`each`·`item()`·`s()`·`len()`·handle 식). 요약 끝에는 "오버레이 n개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요"를 붙인다.
 - **보고 있는 단계는 지금 코드로 다시 그린 값을 읽는다**: 단계를 고르면 결과가 그 snapshot에서 다시 그려진다. 그때 iframe이 그린 직후의 store를 restore id와 함께 보낸다. 그 단계의 overlay는 기록된 store 대신 이 값을 읽는다. 그래서 코드가 기록을 추가하기 전에 기록된 단계에서도, 지금 코드로 다시 계산한 item별 값(`m.history()`에서 매 프레임 다시 만드는 item)이 보인다. 다른 단계의 잔상은 기록된 store를 그대로 쓴다.
 - **읽을 수 없는 라벨은 숨긴다**: 식의 한 부분이라도 읽을 수 없으면(그 단계에 없는 값·필드) "?"를 넣지 않고 라벨 전체를 보이지 않는다.
 - **코드 계약**(`prompts/contracts/scene-code.md`): 그려진 item 기록에는 위치·크기와 함께, item마다 다르게 정해진 값(그린 속도, 자기 개수·크기·각도·색 선택)을 같은 기록의 필드로 둔다. 예: `{ x, y, w, h, speed, tips }`. 다른 구조에 따로 두지 않는다. 이 계약은 새로 생성·수정되는 코드부터 적용된다. 이미 만든 brush는 Inspect again 때 `records`로 기록이 추가된다.

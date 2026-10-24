@@ -185,6 +185,9 @@ rulegenApply();
 export const SCENE_DRIVER = `
 ${SCENE_DRIVER_MARK}
 let rulegenLive = [], rulegenStarted = false;
+// What-if values of single drawn items (by item id), set only while an inspection draws a held step.
+let rulegenItemValues = {};
+const rulegenItemsActive = () => Object.keys(rulegenItemValues).length > 0;
 // Input history: every press-drag-release on the canvas, in canvas pixels with ms since its press,
 // shared by all modules (m.history()). Modules derive what they draw from it with the current values,
 // so changing a value adjusts what is already there instead of only what comes next.
@@ -230,7 +233,14 @@ function rulegenInstance(entry) {
   const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
   const m = {
     p,
-    v(key) { const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k); for (const deps of inst.memoStack) deps.set(k, rulegenParams[k]); return rulegenParams[k]; },
+    // v(key, item): the value as one drawn item (its id) has it: an inspection what-if may set it for that item only.
+    v(key, item) {
+      const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k);
+      const own = item === undefined || item === null ? undefined : rulegenItemValues[String(item)], value = own && k in own ? own[k] : rulegenParams[k];
+      for (const deps of inst.memoStack) deps.set(k, value); return value;
+    },
+    // opt(fallback, key, item): a value that may not exist yet (a suggested parameter an inspection's records read): the fallback until it does.
+    opt(fallback, key, item) { try { return m.v(key, item); } catch (error) { return fallback; } },
     box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
@@ -238,7 +248,8 @@ function rulegenInstance(entry) {
     memo(key, compute) {
       const k = typeof key === 'string' ? key : JSON.stringify(key);
       if (k.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
-      const hit = inst.memo.get(k);
+      // While some item has its own what-if value, results are computed afresh (a cached one may be another item's).
+      const hit = rulegenItemsActive() ? undefined : inst.memo.get(k);
       // A value read while computing (m.v) that changed since makes the entry stale, even if the key does not name it.
       if (hit && hit.deps.every(([dk, dv]) => rulegenParams[dk] === dv)) {
         hit.used = rulegenFrameNo;

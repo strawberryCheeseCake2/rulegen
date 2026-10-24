@@ -1,5 +1,5 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
-import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, sameFocus, stepValues, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import type { ScalarValue, Scene } from "../lib/scene/schema";
 import { parameterStatus, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
@@ -13,6 +13,8 @@ type Props = {
   /** The inspected frame (the active one) and every frame the brush is in, so another can be inspected. */
   frameId?: string; frames?: { id: string; name: string; master: boolean }[]; onFrame?: (frameId: string) => void;
   onCursor: (index: number | null) => void; onClear: () => void;
+  /** Take back a what-if value set at the step looked at (a handle dragged there). */
+  onResetEdit?: (key: string) => void;
   /** The selected targeted inspection tool (kind "targeted"). */
   targeted?: TargetedTool;
   onFocus: (focus: InspectionFocus | null) => void; onConcern: (text: string) => void; onClearMarks: () => void;
@@ -40,24 +42,35 @@ type Props = {
   recommendationKey?: (item: Recommendation) => string;
 };
 
+type Suggestion = ParameterSuggestion & { rejected?: boolean };
+const parameterFocus = (item: Pick<ParameterSuggestion, "nodeId" | "id">): InspectionFocus => ({ kind: "parameter", nodeId: item.nodeId, id: item.id });
+/** What the code does with a suggested value now: the constant it uses, or a scale of 1 on the constants it multiplies. */
+const suggestedRange = (item: ParameterSuggestion) => {
+  const value = item.value;
+  if (item.form === "scale" && value.type === "number") return `배율 ×${formatScalar(value.value)} (${formatScalar(value.min)}–${formatScalar(value.max)})`;
+  return value.type === "number" ? `${formatScalar(value.value)}${value.unit} (${formatScalar(value.min)}–${formatScalar(value.max)})` : value.type === "toggle" ? (value.value ? "켜짐" : "꺼짐") : String(value.value);
+};
 /**
  * Constants the code hard-codes that the concern depends on, suggested as new
  * properties. Pending: accept (exposes it, no regeneration) or reject. Accepted:
  * a control right here to try values. Rejected: folded, can be brought back.
+ * Clicking one highlights it in the constraint table (and what overlays show it).
  */
-function HiddenParameters({ items, scene, busy, onAccept, onReject, onValue }: { items: (ParameterSuggestion & { rejected?: boolean })[]; scene: Scene; busy: boolean;
+function HiddenParameters({ items, scene, busy, focus, onFocus, onAccept, onReject, onValue }: { items: Suggestion[]; scene: Scene; busy: boolean;
+  focus: InspectionFocus | null; onFocus: (focus: InspectionFocus) => void;
   onAccept?: Props["onAcceptParameter"]; onReject?: Props["onRejectParameter"]; onValue?: Props["onParameterValue"] }) {
-  const range = (value: ScalarValue) => value.type === "number" ? `${formatScalar(value.value)}${value.unit} (${formatScalar(value.min)}–${formatScalar(value.max)})` : value.type === "toggle" ? (value.value ? "켜짐" : "꺼짐") : String(value.value);
   return <div className="inspection-parameters"><span className="section-kicker">HIDDEN PARAMETERS</span>
-    <span className="inspection-muted">코드에 고정된 값 중 이 concern에 관련된 것입니다. Accept하면 property로 추가되어 바로 조절할 수 있습니다(코드 재생성 없음).</span>
+    <span className="inspection-muted">코드에 고정된 값 중 이 concern에 관련된 것입니다. Overlay는 Accept 전에도 지금 코드의 값으로 보여줍니다. Accept하면 property로 추가되어 바로 조절할 수 있습니다(코드 재생성 없음).</span>
     {items.map((item, i) => {
       const status = parameterStatus(item, scene), node = findNode(scene, item.nodeId), transformation = node?.transformations.find(entry => entry.id === item.transformationId);
       const property = node ? findProperty(node, item.id) : undefined, value = property && property.value.type !== "algorithm" ? property.value : null;
-      return <div key={`${item.nodeId}:${item.id}`} className={`inspection-parameter ${status}`}>
-        <b><em>{status === "accepted" ? "추가됨" : status === "rejected" ? "거절됨" : "제안"}</em>{item.label}<span>{node?.name ?? item.nodeId} · {transformation?.label ?? item.transformationId}</span></b>
+      const focused = sameFocus(focus, parameterFocus(item));
+      return <div key={`${item.nodeId}:${item.id}`} className={`inspection-parameter ${status} ${focused ? "focused" : ""}`}>
+        <button type="button" className="inspection-parameter-head" aria-pressed={focused} title="Highlight it in the properties panel" onClick={() => onFocus(parameterFocus(item))}>
+          <b><em>{status === "accepted" ? "추가됨" : status === "rejected" ? "거절됨" : "제안"}</em>{item.label}<span>{node?.name ?? item.nodeId} · {transformation?.label ?? item.transformationId}</span></b></button>
         {status !== "rejected" && <span>{item.reason}</span>}
         {status === "pending" && <>
-          <code>지금 코드의 값 {range(item.value)}</code>
+          <code>지금 코드의 값 {suggestedRange(item)}</code>
           <div className="inspection-parameter-actions">
             <button type="button" className="accept" disabled={busy || !onAccept} onClick={() => onAccept?.(item, i)}><Icon name="plus" size={11} />Accept</button>
             <button type="button" disabled={busy || !onReject} onClick={() => onReject?.(i, true)}>Reject</button>
@@ -88,8 +101,6 @@ function ParameterControl({ label, value, disabled, onChange }: { label: string;
   return <label className="inspection-parameter-control"><select aria-label={label} value={value.value} disabled={disabled} onChange={e => onChange(e.target.value)}>{value.options.map(option => <option key={option}>{option}</option>)}</select></label>;
 }
 
-const sameFocus = (a: InspectionFocus | null, b: InspectionFocus) => Boolean(a && a.kind === b.kind && a.nodeId === b.nodeId && a.id === b.id);
-
 type Step = InspectionState["steps"][number];
 /** Where each step sits on the timeline (0..1): by time, but never closer than a minimum gap so every mark stays reachable. */
 export function timelinePositions(steps: Pick<Step, "at">[]) {
@@ -104,7 +115,7 @@ const seconds = (ms: number) => `${ms < 0 ? "" : "+"}${(ms / 1000).toFixed(ms < 
 
 /**
  * Recorded steps as a timeline: hover a mark for its event, click or drag along
- * the track to move between steps (arrow keys, Home/End; Live follows the result).
+ * the track to move between steps (arrow keys, Home/End). The result is held at the step looked at (the latest unless another is picked).
  */
 function StepTimeline({ steps, cursor, label, onCursor }: { steps: Step[]; cursor: number | null; label: (step: Step) => { event: string; detail: string }; onCursor: (index: number | null) => void }) {
   const track = useRef<HTMLDivElement>(null), scrubbing = useRef(false);
@@ -116,23 +127,23 @@ function StepTimeline({ steps, cursor, label, onCursor }: { steps: Step[]; curso
   const pick = (clientX: number) => { if (steps.length) { const index = nearest(clientX); if (index !== cursor) onCursor(index); } };
   const key = (e: React.KeyboardEvent) => {
     if (!steps.length) return;
-    const index = cursor ?? steps.length;
-    const next = e.key === "ArrowLeft" ? Math.max(0, index - 1) : e.key === "ArrowRight" ? (index + 1 >= steps.length ? null : index + 1) : e.key === "Home" ? 0 : e.key === "End" ? steps.length - 1 : e.key === "Escape" ? null : undefined;
+    const index = cursor ?? steps.length - 1;
+    const next = e.key === "ArrowLeft" ? Math.max(0, index - 1) : e.key === "ArrowRight" ? Math.min(steps.length - 1, index + 1) : e.key === "Home" ? 0 : e.key === "End" ? steps.length - 1 : undefined;
     if (next === undefined) return;
     e.preventDefault(); onCursor(next);
   };
   return <div className="inspection-timeline">
     <div ref={track} className={`timeline-track ${steps.length ? "" : "empty"}`} role="slider" tabIndex={0} aria-label="Recorded steps timeline" aria-valuemin={1} aria-valuemax={Math.max(1, steps.length)}
-      aria-valuenow={cursor === null ? steps.length : cursor + 1} aria-valuetext={cursor === null ? "Live" : `Step ${cursor + 1}: ${label(steps[cursor]).event}`}
+      aria-valuenow={(cursor ?? steps.length - 1) + 1} aria-valuetext={steps.length ? `Step ${(cursor ?? steps.length - 1) + 1}: ${label(steps[cursor ?? steps.length - 1]).event}` : "No steps"}
       onKeyDown={key}
       onPointerDown={e => { if (!steps.length) return; scrubbing.current = true; e.currentTarget.setPointerCapture(e.pointerId); pick(e.clientX); }}
       onPointerMove={e => { if (scrubbing.current) pick(e.clientX); }}
       onPointerUp={() => { scrubbing.current = false; }} onPointerCancel={() => { scrubbing.current = false; }}>
       <span className="timeline-rail" />
-      {cursor !== null && steps[cursor] && <span className="timeline-progress" style={{ width: at(positions[cursor]) }} />}
+      {steps.length > 0 && <span className="timeline-progress" style={{ width: at(positions[cursor ?? steps.length - 1]) }} />}
       {steps.map((item, i) => {
         const text = label(item);
-        return <span key={item.id} className={`timeline-mark ${item.nodeId ? "transition" : "capture"} ${i === cursor ? "current" : ""}`} style={{ left: at(positions[i]) }} aria-label={`Step ${i + 1}: ${text.event}`}>
+        return <span key={item.id} className={`timeline-mark ${item.nodeId ? "transition" : "capture"} ${i === (cursor ?? steps.length - 1) ? "current" : ""}`} style={{ left: at(positions[i]) }} aria-label={`Step ${i + 1}: ${text.event}`}>
           <i />
           <span className="timeline-tip" role="tooltip"><b>{text.event}</b><span>{text.detail}</span><small>Step {i + 1} · {seconds(item.at - steps[0].at)}</small></span>
         </span>;
@@ -214,21 +225,20 @@ export function InspectionPanel(props: Props) {
         <button aria-label="Previous step" disabled={!steps.length || index <= 0} onClick={() => props.onCursor(Math.max(0, index - 1))}>◀</button>
         <output>{steps.length ? `${index + 1} / ${steps.length}` : `0 / ${MAX_STEPS}`}</output>
         <button aria-label="Next step" disabled={!steps.length || index >= steps.length - 1} onClick={() => props.onCursor(Math.min(steps.length - 1, index + 1))}>▶</button>
-        <button className={state.cursor === null ? "live" : ""} title="Follow the running result" onClick={() => props.onCursor(null)}>Live</button>
       </span>
       {confirmReset && steps.length ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm reset">
           {steps.length}개 단계를 지울까요?
           <button className="danger" onClick={() => { setConfirmReset(false); props.onClear(); }}>Reset</button>
           <button onClick={() => setConfirmReset(false)}>Cancel</button>
         </span>
-        : <button title={`Delete this brush's recorded history in this frame (${steps.length} steps) and follow the result live`} disabled={!steps.length} onClick={() => setConfirmReset(true)}><Icon name="trash" size={12} />Reset history</button>}
+        : <button title={`Delete this brush's recorded history in this frame (${steps.length} steps) `} disabled={!steps.length} onClick={() => setConfirmReset(true)}><Icon name="trash" size={12} />Reset history</button>}
     </div>
     <StepTimeline steps={steps} cursor={state.cursor} label={stepLabel} onCursor={props.onCursor} />
     {!steps.length && <div className="inspection-timeline-hint"><span className="inspection-hint">{props.running ? `결과가 상태를 바꿀 때마다 자동으로 기록됩니다 (최대 ${MAX_STEPS}개). Brush 도구로 이 프레임의 brush를 움직여 보세요.` : "이 프레임의 결과를 먼저 생성해주세요."}</span></div>}
     <div className="inspection-content">
       <section className="inspection-side">
         {step && <div className="inspection-step-detail">
-          <span className="section-kicker">STEP {index + 1}{state.cursor === null ? " · LIVE" : ""}</span>
+          <span className="section-kicker">STEP {index + 1}</span>
           {step.nodeId ? <>
             <strong>{node(step.nodeId)?.name}</strong>
             <div className="inspection-chips">
@@ -295,7 +305,7 @@ export function InspectionPanel(props: Props) {
             {result.valueFixes.length > 1 && <button className="inspection-apply-all" disabled={busy} onClick={() => props.onApplyChanges(result.valueFixes)}>Apply all values</button>}
           </div>}
           {result.records && <ItemRecords item={result.records} applied={recordingApplied(scene, props.code ?? "", result.records)} busy={busy} onApply={props.onApplyRecording} />}
-          {result.parameters.length > 0 && <HiddenParameters items={result.parameters} scene={scene} busy={busy} onAccept={props.onAcceptParameter} onReject={props.onRejectParameter} onValue={props.onParameterValue} />}
+          {result.parameters.length > 0 && <HiddenParameters items={result.parameters} scene={scene} busy={busy} focus={state.focus} onFocus={focus} onAccept={props.onAcceptParameter} onReject={props.onRejectParameter} onValue={props.onParameterValue} />}
           {result.recommendations.length > 0 && <div className="inspection-recommendations"><div className="inspection-applied-bar"><span className="section-kicker">RECOMMENDATIONS</span>
             {/* Undo / redo a whole applied recommendation: scene, code and prompt together. */}
             {props.applied && (props.applied.past.length > 0 || props.applied.future.length > 0) && (confirmStep ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm undo">
@@ -324,16 +334,22 @@ export function InspectionPanel(props: Props) {
       <section className="inspection-table" aria-label="Constraint values">
         <table><thead><tr><th>Constraint</th><th>Value</th><th>Δ</th><th>Steps</th></tr></thead><tbody>
           {rows.map(row => {
-            const value = step?.values[row.key], previous = steps[index - 1]?.values[row.key];
+            // A what-if value set at this step only (by a handle) shows over the recorded one.
+            const value = stepValues(step)?.[row.key], previous = stepValues(steps[index - 1])?.[row.key], edited = Boolean(step?.edits && row.key in step.edits);
+            // Single drawn items with their own what-if value of it at this step.
+            const items = Object.values(step?.itemEdits ?? {}).filter(own => row.key in own).length;
             const delta = typeof value === "number" && typeof previous === "number" && value !== previous ? value - previous : null;
-            const numbers = steps.map(item => item.values[row.key]).filter((item): item is number => typeof item === "number");
+            const numbers = steps.map(item => stepValues(item)![row.key]).filter((item): item is number => typeof item === "number");
             const low = Math.min(...numbers), high = Math.max(...numbers);
             const item: InspectionFocus = { kind: "constraint", nodeId: row.binding.nodeId, id: row.binding.path[0] };
-            return <tr key={row.key} className={`${changed.has(row.key) ? "changed" : ""} ${sameFocus(state.focus, item) ? "focused" : ""}`} onClick={() => focus(item)}>
-              <td><span className="inspection-node">{row.node}</span><span>{row.transformation && `${row.transformation} · `}<b>{row.property}</b>{row.path && ` › ${row.path}`}</span></td>
+            return <tr key={row.key} className={`${changed.has(row.key) ? "changed" : ""} ${edited || items ? "edited" : ""} ${sameFocus(state.focus, item) ? "focused" : ""}`} onClick={() => focus(item)}>
+              <td><span className="inspection-node">{row.node}</span><span>{row.transformation && `${row.transformation} · `}<b>{row.property}</b>{row.path && ` › ${row.path}`}</span>
+                {(edited || items > 0) && <span className="inspection-step-edit" title={edited ? `Recorded ${formatScalar(step!.values[row.key])}; this step is drawn with ${formatScalar(value)} only` : `${items} drawn item(s) at this step have their own value`}>
+                  {edited ? `이 단계만 (기록 ${formatScalar(step!.values[row.key])})` : ""}{edited && items ? " · " : ""}{items ? `항목 ${items}개만` : ""}
+                  {props.onResetEdit && <button type="button" aria-label={`Reset ${row.property} at this step`} title="Back to the recorded value" onClick={e => { e.stopPropagation(); props.onResetEdit!(row.key); }}><Icon name="close" size={9} /></button>}</span>}</td>
               <td className="inspection-value">{row.binding.type === "color" && typeof value === "string" ? <i className="inspection-color" style={{ background: value }} /> : null}{formatScalar(value)}</td>
               <td className="inspection-delta">{delta !== null ? `${delta > 0 ? "+" : ""}${formatScalar(delta)}` : changed.has(row.key) ? "changed" : ""}</td>
-              <td className="inspection-trace">{steps.map((item, i) => { const v = item.values[row.key];
+              <td className="inspection-trace">{steps.map((item, i) => { const v = stepValues(item)![row.key];
                 const height = typeof v === "number" && high > low ? 3 + (v - low) / (high - low) * 13 : 8;
                 return <i key={item.id} className={i === index ? "current" : ""} title={`${i + 1}: ${formatScalar(v)}`} style={{ height, background: row.binding.type === "color" && typeof v === "string" ? v : undefined }} />; })}</td>
             </tr>;

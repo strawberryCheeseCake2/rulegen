@@ -5,7 +5,7 @@ export type WorkspaceHandle = { fit: () => void; focus: (id: FrameId) => void; z
 type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode };
 /** A relation drawn between two frames (a proxy frame → the frame it controls). */
 export type FrameLink = { from: FrameId; to: FrameId; label: string };
-type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; onChange: (layout: WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void };
+type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; /** Always given an update of the latest layout (never a whole layout from a render that may be older). */ onChange: (update: (current: WorkspaceLayout) => WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void };
 export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function FreeformWorkspace(props, ref) {
   const positions = ensureFramePositions(props.layout.frames, props.frames.map(f => f.id));
   const layout = positions === props.layout.frames ? props.layout : { ...props.layout, frames: positions };
@@ -13,18 +13,29 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
   const drag = useRef<{ pointer: number; x: number; y: number; frame?: FrameId } | null>(null);
   const [space, setSpace] = useState(false), [dragging, setDragging] = useState(false);
   const camera = layout.camera || { zoom: .4, x: 40, y: 110 };
-  useEffect(() => { if (layout !== props.layout) props.onChange(layout); }, [layout, props.layout, props.onChange]);
-  function fit(ids?: FrameId[]) { const p = current.current, el = board.current; if (!el) return; const frames = p.frames.filter(f => !ids || ids.includes(f.id)).map(f => p.layout.frames[f.id]); p.onChange({ ...p.layout, camera: fitFrames(frames, el.clientWidth, el.clientHeight) }); }
-  function zoom(amount: number) { const p = current.current, el = board.current; if (!el) return; const c = p.layout.camera || camera; p.onChange({ ...p.layout, camera: zoomAt(c, c.zoom + amount, { x: el.clientWidth / 2, y: el.clientHeight / 2 }) }); }
+  // Every change is an update of the latest layout: a callback from an older render (a resize right after the
+  // project loads) must not put back that render's layout and drop the frames' saved positions.
+  const ids = props.frames.map(f => f.id).join("|");
+  useEffect(() => { if (layout !== props.layout) props.onChange(current => { const frames = ensureFramePositions(current.frames, ids.split("|")); return frames === current.frames ? current : { ...current, frames }; }); }, [layout, props.layout, props.onChange, ids]);
+  const cameraOf = (current: WorkspaceLayout) => current.camera || { zoom: .4, x: 40, y: 110 };
+  /** Fit the camera to the frames (`unset`: only when there is no camera yet, e.g. on the first layout). */
+  function fit(only?: FrameId[], unset = false) {
+    const p = current.current, el = board.current; if (!el) return;
+    const { clientWidth: width, clientHeight: height } = el, shown = p.frames.map(f => f.id).filter(id => !only || only.includes(id));
+    p.onChange(current => unset && current.camera ? current : { ...current, camera: fitFrames(shown.map(id => current.frames[id]).filter(Boolean), width, height) });
+  }
+  function zoom(amount: number) { const p = current.current, el = board.current; if (!el) return; const anchor = { x: el.clientWidth / 2, y: el.clientHeight / 2 }; p.onChange(current => { const c = cameraOf(current); return { ...current, camera: zoomAt(c, c.zoom + amount, anchor) }; }); }
   useImperativeHandle(ref, () => ({ fit: () => fit(), focus: id => fit([id]), zoom }));
-  useEffect(() => { const el = board.current!; const observer = new ResizeObserver(() => { if (!current.current.layout.camera) fit(); }); observer.observe(el); return () => observer.disconnect(); }, []);
-  useEffect(() => { if (!props.layout.camera) fit(); }, [props.layout.camera]);
+  useEffect(() => { const el = board.current!; const observer = new ResizeObserver(() => fit(undefined, true)); observer.observe(el); return () => observer.disconnect(); }, []);
+  useEffect(() => { if (!props.layout.camera) fit(undefined, true); }, [props.layout.camera]);
   useEffect(() => {
     const down = (e: KeyboardEvent) => { if ((e.target as Element).closest("input,textarea,select,[contenteditable]")) return; if (e.code === "Space") { e.preventDefault(); setSpace(true); } if (e.key === "Home") { e.preventDefault(); fit(); } };
     const up = (e: KeyboardEvent) => { if (e.code === "Space") setSpace(false); };
     const blur = () => { setSpace(false); drag.current = null; setDragging(false); };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
-    const wheel = (e: WheelEvent) => { if ((e.target as Element).closest("button")) return; e.preventDefault(); const p = current.current, c = p.layout.camera || camera; const bounds = board.current!.getBoundingClientRect(); const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bounds.height : 1; p.onChange({ ...p.layout, camera: e.ctrlKey || e.metaKey ? zoomAt(c, c.zoom * Math.exp(-e.deltaY * .008), { x: e.clientX - bounds.left, y: e.clientY - bounds.top }) : { ...c, x: c.x - e.deltaX * factor, y: c.y - e.deltaY * factor } }); };
+    const wheel = (e: WheelEvent) => { if ((e.target as Element).closest("button")) return; e.preventDefault(); const p = current.current; const bounds = board.current!.getBoundingClientRect(); const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bounds.height : 1;
+      const zooming = e.ctrlKey || e.metaKey, scale = Math.exp(-e.deltaY * .008), anchor = { x: e.clientX - bounds.left, y: e.clientY - bounds.top }, dx = e.deltaX * factor, dy = e.deltaY * factor;
+      p.onChange(current => { const c = cameraOf(current); return { ...current, camera: zooming ? zoomAt(c, c.zoom * scale, anchor) : { ...c, x: c.x - dx, y: c.y - dy } }; }); };
     board.current!.addEventListener("wheel", wheel, { passive: false });
     return () => { window.removeEventListener("keydown", down); window.removeEventListener("keyup", up); window.removeEventListener("blur", blur); board.current?.removeEventListener("wheel", wheel); };
   }, []);
@@ -37,9 +48,9 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
     if (e.button !== 0 && e.button !== 1) return;
     e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); drag.current = { pointer: e.pointerId, x: e.clientX, y: e.clientY, ...(header ? { frame: header.dataset.frameHandle as FrameId } : {}) }; setDragging(true);
   }} onPointerMove={e => {
-    const d = drag.current; if (!d || d.pointer !== e.pointerId) return; const p = current.current, c = p.layout.camera || camera, dx = e.clientX - d.x, dy = e.clientY - d.y;
-    if (d.frame) p.onChange({ ...p.layout, frames: { ...p.layout.frames, [d.frame]: { x: p.layout.frames[d.frame].x + dx / c.zoom, y: p.layout.frames[d.frame].y + dy / c.zoom } } });
-    else p.onChange({ ...p.layout, camera: { ...c, x: c.x + dx, y: c.y + dy } });
+    const d = drag.current; if (!d || d.pointer !== e.pointerId) return; const p = current.current, dx = e.clientX - d.x, dy = e.clientY - d.y, frame = d.frame;
+    if (frame) p.onChange(current => { const c = cameraOf(current), at = current.frames[frame] ?? positions[frame]; return at ? { ...current, frames: { ...current.frames, [frame]: { x: at.x + dx / c.zoom, y: at.y + dy / c.zoom } } } : current; });
+    else p.onChange(current => { const c = cameraOf(current); return { ...current, camera: { ...c, x: c.x + dx, y: c.y + dy } }; });
     d.x = e.clientX; d.y = e.clientY;
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div className="board-top-hint"><span className="eyebrow">FREEFORM WORKSPACE</span><span>Sketch → features → a new frame</span></div>

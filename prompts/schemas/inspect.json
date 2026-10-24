@@ -64,7 +64,8 @@
                 "enum": [
                   "constraint",
                   "state",
-                  "transition"
+                  "transition",
+                  "parameter"
                 ]
               },
               "nodeId": {
@@ -92,6 +93,66 @@
             "default": "",
             "type": "string",
             "maxLength": 200
+          },
+          "handle": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "maxLength": 1200
+                  },
+                  "gesture": {
+                    "type": "string",
+                    "enum": [
+                      "drag",
+                      "rotate",
+                      "slide"
+                    ]
+                  },
+                  "x": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "y": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "pivotX": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "pivotY": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 600
+                  },
+                  "hint": {
+                    "type": "string",
+                    "maxLength": 80
+                  }
+                },
+                "required": [
+                  "key",
+                  "gesture",
+                  "x",
+                  "y",
+                  "pivotX",
+                  "pivotY",
+                  "value",
+                  "hint"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -106,7 +167,8 @@
           "color",
           "link",
           "when",
-          "each"
+          "each",
+          "handle"
         ],
         "additionalProperties": false
       }
@@ -282,6 +344,14 @@
             "type": "string",
             "maxLength": 600
           },
+          "form": {
+            "default": "constant",
+            "type": "string",
+            "enum": [
+              "constant",
+              "scale"
+            ]
+          },
           "value": {
             "anyOf": [
               {
@@ -399,12 +469,12 @@
                 "find": {
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 600
+                  "maxLength": 1500
                 },
                 "replace": {
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 800
+                  "maxLength": 4000
                 }
               },
               "required": [
@@ -422,6 +492,7 @@
           "label",
           "effect",
           "description",
+          "form",
           "value",
           "reason",
           "edits"
@@ -440,7 +511,6 @@
               "maxLength": 80
             },
             "fields": {
-              "minItems": 1,
               "maxItems": 6,
               "type": "array",
               "items": {
@@ -449,13 +519,22 @@
                 "pattern": "^[A-Za-z_$][\\w$]*$"
               }
             },
+            "perItem": {
+              "default": [],
+              "maxItems": 6,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 200
+              }
+            },
             "reason": {
               "type": "string",
               "maxLength": 400
             },
             "edits": {
               "minItems": 1,
-              "maxItems": 4,
+              "maxItems": 6,
               "type": "array",
               "items": {
                 "type": "object",
@@ -463,12 +542,12 @@
                   "find": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 600
+                    "maxLength": 1500
                   },
                   "replace": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 800
+                    "maxLength": 4000
                   }
                 },
                 "required": [
@@ -482,6 +561,7 @@
           "required": [
             "nodeId",
             "fields",
+            "perItem",
             "reason",
             "edits"
           ],

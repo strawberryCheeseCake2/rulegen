@@ -11,8 +11,9 @@ import { validateScene } from "../lib/scene/validate";
 import { sceneBindings, sceneValues } from "../lib/scene/values";
 import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
-import { moduleKeyOf, parameterProblem, recordingProblem } from "../lib/hidden-parameters";
-import { concernSuggestionsSchema, inspectResultSchema, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
+import { readsPerItem } from "../lib/item-values";
+import { concernSuggestionsSchema, handleProblem, inspectResultSchema, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
 
@@ -119,19 +120,44 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     finalize: (input, output: InspectResult) => {
       const nodes = new Map(input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)).map(node => [node.id, node]));
       const keys = new Set(input.inspection!.constraints.map(row => row.key));
+      // A hidden parameter is kept only if its edits apply to the module and the result is valid code.
+      const parameters = (output.parameters ?? []).filter((item, i, all) => all.findIndex(other => other.nodeId === item.nodeId && other.id === item.id) === i
+        && nodes.has(item.nodeId) && !parameterProblem(input.scene!, input.previous, item, parsesModule));
+      // Overlays may show a suggested parameter (link and p("…")), only one that is kept.
+      const dropped = new Set((output.parameters ?? []).filter(item => !parameters.includes(item)).map(suggestionKey));
       const linked = (kind: string, nodeId: string, id: string) => {
         const node = nodes.get(nodeId); if (!node) return false;
+        if (kind === "parameter") return parameters.some(item => item.nodeId === nodeId && item.id === id);
         if (kind === "constraint") return input.inspection!.constraints.some(row => row.nodeId === nodeId && row.propertyId === id);
         if (kind === "transformation") return node.transformations.some(item => item.id === id);
         return Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
       };
+      // A handle changes a number or toggle of the brush (or of a kept suggestion); one that cannot is dropped, the overlay stays.
+      const specs = new Map<string, { type: string }>([...input.inspection!.constraints.map(row => [row.key, { type: row.type }] as const), ...parameters.map(item => [suggestionKey(item), item.value] as const)]);
+      const handled = (overlay: InspectResult["overlays"][number]) => overlay.handle && !handleProblem(overlay.handle, specs.get(overlay.handle.key)) ? overlay : { ...overlay, handle: null };
       const change = (item: { key: string; stateId: string; nodeId?: string }) => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(node => node.machine?.states.some(state => state.id === item.stateId)));
-      return { ...output, overlays: output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)), valueFixes: output.valueFixes.filter(change),
-        // A hidden parameter is kept only if its edits apply to the module and the result is valid code.
-        parameters: (output.parameters ?? []).filter((item, i, all) => all.findIndex(other => other.nodeId === item.nodeId && other.id === item.id) === i
-          && nodes.has(item.nodeId) && !parameterProblem(input.scene!, input.previous, item, parsesModule)),
-        // Fields added to the item records: kept only if the edits apply to the brush's module and the result is valid code.
-        records: output.records && nodes.has(output.records.nodeId) && !recordingProblem(input.scene!, input.previous, output.records, parsesModule) ? output.records : null,
+      // Fields added to the item records: kept only if the edits apply to the brush's module and the result is valid code.
+      // They are applied at once: a read of a suggested parameter (not a value until accepted) falls back to the code's value.
+      const guarded = output.records && guardSuggestedReads(output.records, output.parameters ?? []);
+      const records = guarded && nodes.has(guarded.nodeId) && !recordingProblem(input.scene!, input.previous, guarded, parsesModule) ? guarded : null;
+      // Dropped: the fields it would add that the stores do not have already cannot be drawn, nor the overlays that read them.
+      const stores = JSON.stringify(input.inspection!.steps.map(step => step.runtime?.stores ?? {}));
+      const unrecorded = new Set(output.records && !records ? output.records.fields.filter(field => !stores.includes(`"${field}":`)) : []);
+      const drawable = output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id) && ![...overlayKeys(item)].some(key => dropped.has(key)));
+      const overlays = drawable.filter(item => ![...overlayStoreFields(item)].some(field => unrecorded.has(field)));
+      // A grip on one item of an `each` overlay changes that item only: the code (with the records, and the suggestion
+      // once accepted) must read its value per item, m.v(key, id). One that would change every item is dropped.
+      const patched = (code: string, nodeId: string, edits: { find: string; replace: string }[]) => {
+        const key = moduleKeyOf(input.scene!, nodeId), module = key ? programModules(code).get(key) : undefined; if (!module) return code;
+        const edited = applyParameterEdits(module, edits); return "error" in edited ? code : code.replace(module, () => edited.module);
+      };
+      const recorded = records ? patched(input.previous, records.nodeId, records.edits) : input.previous;
+      const perItem = (key: string) => { const suggestion = parameters.find(item => suggestionKey(item) === key); return readsPerItem(suggestion ? patched(recorded, suggestion.nodeId, suggestion.edits) : recorded, key); };
+      const gripped = overlays.map(handled), shared = gripped.filter(item => item.each && item.handle && !perItem(item.handle.key)).length;
+      const note = (overlays.length < drawable.length ? ` (항목 기록을 추가하는 코드가 올바르지 않아 오버레이 ${drawable.length - overlays.length}개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요.)` : "")
+        + (shared ? ` (손잡이 ${shared}개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다. Inspect again으로 다시 시도해주세요.)` : "");
+      return { ...output, summary: output.summary.slice(0, 1500 - note.length) + note, overlays: gripped.map(item => item.each && item.handle && !perItem(item.handle.key) ? { ...item, handle: null } : item), valueFixes: output.valueFixes.filter(change),
+        parameters, records,
         recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : item.kind === "add-transformation" ? (nodes.get(item.nodeId)?.transformations.length ?? MAX_TRANSFORMATIONS) < MAX_TRANSFORMATIONS : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
           targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [] })) };
     },

@@ -23,12 +23,13 @@ import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
 import { brushesFor, brushGroup, brushNodeIds, brushRole, brushRoots, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
-import { addMark, addStep, DEFAULT_MARK_STYLE, eraseStyledMarks, filterValues, machineInspection, markStyleAt, markStyleSchema, remapResult, resultInFrame, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { addMark, addStep, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { subScene } from "../lib/scene/graph";
 import { sceneValues } from "../lib/scene/values";
 import { prepareBrushFor, startBrushGesture } from "../studio/brush-actions";
 import { programModules } from "../lib/scene/machines";
+import { parameterStatus, suggestionKey, type ParameterSuggestion } from "../lib/hidden-parameters";
 import { acceptParameter, applyChanges, applyRecording, applyRecommendation, appliedCurrent, concernMarksKey, inspectConcern, suggestConcerns, inspectionFor, recommendationKey, stepApplied, targetedName, withInspection } from "../studio/inspection-actions";
 import type { TraceStep } from "../components/code-preview";
 import { besideFramePosition, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
@@ -38,7 +39,7 @@ import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
 import { createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
 import { createSketchPanel, clearedResultAnnotations, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
-import { emptyScene } from "../lib/scene/schema";
+import { emptyScene, type Scene } from "../lib/scene/schema";
 import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
 import { findNode } from "../lib/scene/graph";
 import { syncScene } from "../lib/scene/machines";
@@ -702,6 +703,61 @@ export default function Home() {
     setDetachPrompt({ frameId, rootId: role.rootId, brushId: role.brush.id, nodeName: findNode(owner.scene, role.rootId)?.name || role.brush.name, what, apply });
   }
   const guardEach = (nodeIds: string[], what: string, apply: () => void) => { const id = nodeIds.find(item => { const role = brushRole(scene, activeSketch, item, brushes); return role && !role.master; }); if (id) guard(id, what, apply); else apply(); };
+  /** Expose a hidden parameter the selected targeted tool suggests (on an instance it asks first, like other structural changes). */
+  function acceptSuggested(item: ParameterSuggestion) {
+    guardEach([item.nodeId], "semantic transformation", () => { void acceptParameter(deps, activeSketch, item).then(added => { if (added) setToast(`「${item.label}」을(를) property로 추가했습니다. 바로 조절할 수 있습니다.`); }); });
+  }
+  /**
+   * A drag of a targeted overlay's handle: a what-if value of the step looked at
+   * only. A grip on one item of an `each` overlay changes that item's value only
+   * (its record id; the code reads it with `m.v(key, id)`), never the others: when the
+   * code cannot draw one item with its own value, nothing changes and the user is told.
+   * The result held at that step is drawn with it; the property, the other steps and the
+   * running result keep theirs. A suggested parameter is exposed first so the code
+   * reads it (on the master; an instance asks to detach first).
+   */
+  const handleDrag = useRef<{ frameId: string; key: string; item: string | null; each: boolean; accepting: boolean; last: number | boolean | null; ended: boolean } | null>(null);
+  function overlayHandle(frameId: string, phase: "start" | "move" | "end", key: string, value: number | boolean | null, item: string | null, each: boolean) {
+    const owner = panelsRef.current[frameId], brush = activeBrush; if (!owner || !brush) return;
+    const flush = (drag: NonNullable<typeof handleDrag.current>) => {
+      if (drag.accepting || handleDrag.current !== drag) return;
+      // Checked with the code as it is now (an accepted suggestion has just changed it).
+      const single = drag.each && drag.item !== null && readsPerItem(panelsRef.current[drag.frameId]?.generated?.code ?? "", drag.key);
+      if (drag.each && !single) {
+        handleDrag.current = null;
+        setToast(drag.item === null ? "이 항목에는 id가 없어 이 항목만 바꿀 수 없습니다. Inspect again으로 코드가 항목마다 id를 기록하게 해주세요."
+          : "이 brush 코드는 이 값을 항목마다 따로 읽지 않아 이 항목만 바꿀 수 없습니다. Inspect again으로 코드가 항목별로 읽게 해주세요.");
+        return;
+      }
+      if (drag.last !== null) editHeldStep(drag.frameId, brush.id, drag.key, drag.last, single ? drag.item! : undefined);
+      if (drag.ended) handleDrag.current = null;
+    };
+    if (phase === "start") {
+      const suggestion = targetedIn(frameId, owner)?.result.parameters.find(item => suggestionKey(item) === key && parameterStatus(item, owner.scene) === "pending");
+      const role = suggestion ? brushRole(owner.scene, frameId, suggestion.nodeId, brushesRef.current) : null;
+      if (suggestion && role && !role.master) { handleDrag.current = null; acceptSuggested(suggestion); return; }
+      const drag = { frameId, key, item, each, accepting: Boolean(suggestion), last: null, ended: false };
+      handleDrag.current = drag;
+      if (suggestion) void acceptParameter(deps, frameId, suggestion).then(added => {
+        drag.accepting = false;
+        if (!added) { if (handleDrag.current === drag) handleDrag.current = null; return; }
+        setToast(`「${suggestion.label}」을(를) property로 추가했습니다. 이 단계에서 끌어 보세요.`); flush(drag);
+      });
+      return;
+    }
+    const drag = handleDrag.current; if (!drag || drag.frameId !== frameId || drag.key !== key) return;
+    if (value !== null) drag.last = value;
+    if (phase === "end") drag.ended = true;
+    flush(drag);
+  }
+  /** Set (or with null, take back) a what-if value of the step a brush's inspection holds in a frame. */
+  function editHeldStep(frameId: string, brushId: string, key: string, value: Scalar | null, item?: string) {
+    updatePanel(frameId, previous => { const state = inspectionFor(previous, brushId), at = heldIndex(state); return at === null ? {} : withInspection(previous, editStep(state, at, key, value, item)); });
+  }
+  /** Reject (or bring back) a suggested hidden parameter of the selected targeted tool, by its place in the list. */
+  function rejectSuggested(index: number, rejected: boolean) {
+    if (activeTargeted && activeBrush) patchTargeted(activeBrush.id, activeTargeted.id, entry => ({ ...entry, result: { ...entry.result, parameters: entry.result.parameters.map((item, i) => i === index ? { ...item, rejected } : item) } }));
+  }
   /** The instance's module in its frame's program (what the new brush runs). */
   const instanceCode = (owner: SketchPanel, rootId: string) => { const root = findNode(owner.scene, rootId); return root && owner.generated ? programModules(owner.generated.code).get(root.codeModule ?? root.id) ?? "" : ""; };
   /** Detach an instance: it becomes the master of a new brush (with the old brush's targeted tools and this frame's recorded steps). */
@@ -827,14 +883,17 @@ export default function Home() {
     const transformDrawing = Boolean(owner.transformDraft?.annotating && id === activeSketch);
     const inspected = inspectionKind && activeBrush && id === activeSketch && brushNodeIds(owner.scene, activeBrush, id).length > 0 ? inspectionFor(owner, activeBrush.id) : null;
     // The step held in the result (stepping through the inspection); overlays there read the stores as it is drawn now.
-    const restoreId = inspected && inspected.cursor !== null && inspected.steps[inspected.cursor] ? `${inspected.brushId}:${inspected.steps[inspected.cursor].id}` : null;
+    // The result is held at the step looked at (the latest unless another is picked).
+    const heldAt = inspected ? heldIndex(inspected) : null;
+    const restoreId = inspected && heldAt !== null ? `${inspected.brushId}:${inspected.steps[heldAt].id}` : null;
     const drawn = restoreId && drawnStores[id]?.restore === restoreId ? drawnStores[id].stores : null;
+    const targetedResult = inspected && inspectionKind === "targeted" ? targetedIn(id, owner)?.result || null : null;
     return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${interacting ? "frame-interacting" : ""} ${dropTarget === id ? "node-drop-target" : ""} ${transformDrawing ? "transform-drawing" : ""} ${inspectionEraser && inspectionKind === "inspect-annotate" && id === activeSketch ? "inspection-erasing" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
       onPointerEnter={() => { if (playingBrush) prepareBrushFor(deps, playingBrush, id); }}
       onPointerDown={e => { if (!interacting && !transformDrawing && tool === "select" && !(e.target as Element).closest(".scene-node, .property-handles")) frameEdits.select(null); }}
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: inspected!.steps[inspected!.cursor!].runtime } : null} onDrawn={(restore, stores) => setDrawnStores(current => ({ ...current, [id]: { restore, stores } }))} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: inspected!.steps[heldAt!].runtime, params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits } : null} onDrawn={(restore, stores) => setDrawnStores(current => ({ ...current, [id]: { restore, stores } }))} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
       <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush" && !(inspectionEraser && parseBrushTool(name)?.kind === "inspect-annotate")}
         gestureStyle={name => parseBrushTool(name)?.kind === "inspect-annotate" && !transformDrawing ? inspectionPen : undefined} gestureTool={name => { if (transformDrawing) return true; const kind = parseBrushTool(name)?.kind; return kind === "brush" || kind === "inspect-annotate"; }}
@@ -849,7 +908,8 @@ export default function Home() {
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
       {owner.transformDraft && owner.transformDraft.marks.length > 0 && <svg className="transform-marks" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Regeneration annotation">
         {owner.transformDraft.marks.map((mark, i) => <polyline key={i} vectorEffect="non-scaling-stroke" points={mark.map(point => `${point.x * 900},${point.y * 600}`).join(" ")} />)}</svg>}
-      {inspected && <InspectionOverlay state={inspected} marks={inspectionKind === "inspect-annotate" ? inspected.marks : []} markStyles={inspected.markStyles} result={inspectionKind === "targeted" ? targetedIn(id, owner)?.result || null : null} drawn={drawn} liveValues={filterValues(sceneValues(owner.scene), brushNodeIds(owner.scene, activeBrush!, id))} clickable={inspectionKind !== "inspect-annotate"} zoom={boardZoom} onFocus={focus => focusInspection(id, focus)}
+      {inspected && <InspectionOverlay state={inspected} marks={inspectionKind === "inspect-annotate" ? inspected.marks : []} markStyles={inspected.markStyles} result={targetedResult} drawn={drawn}
+        specs={targetedResult ? valueSpecs(owner.scene, brushNodeIds(owner.scene, activeBrush!, id), targetedResult.parameters) : undefined} onHandle={(phase, key, value, item, each) => overlayHandle(id, phase, key, value, item, each)} liveValues={filterValues(sceneValues(owner.scene), brushNodeIds(owner.scene, activeBrush!, id))} clickable={inspectionKind !== "inspect-annotate"} zoom={boardZoom} onFocus={focus => focusInspection(id, focus)}
         onStep={index => patchInspection(id, { cursor: index })} stepName={index => stepName(owner.scene, inspected.steps[index])} />}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
@@ -926,7 +986,10 @@ export default function Home() {
     {node && nodeRole && <BrushRoleBanner role={nodeRole} nodeName={node.name} masterFrame={masterFrame(nodeRole.brush)} onMaster={() => goToMaster(nodeRole.brush)}
       onDetach={() => detachInstance(activeSketch, nodeRole.rootId, nodeRole.brush.id)} onAdopt={() => adoptMaster(activeSketch, nodeRole.rootId, nodeRole.brush.id)}
       onDelete={busy ? undefined : () => { edits.removeIds([nodeRole.rootId]); setToast(nodeRole.master ? `${nodeRole.brush.name}의 master를 지웠습니다. Brush는 저장된 사본으로 계속 쓸 수 있습니다 (Layers에서 되돌리기).` : `${nodeRole.brush.name} brush stamp를 지웠습니다 (Layers에서 되돌리기).`); }} />}
-    {node ? (() => { const transform = (apply: () => void) => guard(node.id, "semantic transformation", apply), machine = (apply: () => void) => guard(node.id, "state machine", apply); return <PropertyInspector node={node} transformations={inspectedTransformations(panel, node)} library={scene.algorithms} state={nodeState} busy={busy} clip={clip}
+    {node ? (() => { const transform = (apply: () => void) => guard(node.id, "semantic transformation", apply), machine = (apply: () => void) => guard(node.id, "state machine", apply);
+      // The selected targeted tool's hidden parameters on this node, not decided yet: faint in the transformation they would join.
+      const suggested = inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result.parameters ?? [] : [];
+      return <PropertyInspector node={node} transformations={inspectedTransformations(panel, node)} library={scene.algorithms} state={nodeState} busy={busy} clip={clip}
       onNode={patch => "description" in patch ? guard(node.id, "설명", () => edits.editNode(node.id, patch)) : edits.editNode(node.id, patch)} onTransformation={(id, patch) => transform(() => edits.editTransformation(node.id, id, patch))}
       onAddTransformation={() => transform(() => edits.addTransformation(node.id))} onRemoveTransformation={id => transform(() => edits.removeTransformation(node.id, id))} onMoveTransformation={(id, offset) => transform(() => edits.moveTransformation(node.id, id, offset))} onChooseState={stateId => edits.chooseState(node.id, stateId)}
       onState={patch => nodeState && machine(() => edits.editState(node.id, nodeState.id, patch))} onTransition={(id, patch) => machine(() => edits.editTransition(node.id, id, patch))}
@@ -938,7 +1001,9 @@ export default function Home() {
       onDraftSubmit={() => { const draft = panel.transformDraft; if (!draft) return; updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, annotating: false } } : {}); void ai.regenerate(draft.nodeId, draft.target, draft.instruction, draft.marks); }}
       onDraftCancel={() => updatePanel(activeSketch, { transformDraft: null })}
       onMinimalExample={transformationId => { void ai.minimalExample(node.id, transformationId); }}
-      highlightPropertyId={(focus => inspectionKind && focus?.kind === "constraint" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
+      highlightPropertyId={(focus => inspectionKind && (focus?.kind === "constraint" || focus?.kind === "parameter") && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
+      suggestions={suggested.map((item, index) => ({ item, index })).filter(({ item }) => item.nodeId === node.id && parameterStatus(item, scene) === "pending")}
+      onAcceptSuggestion={index => suggested[index] && acceptSuggested(suggested[index])} onRejectSuggestion={index => rejectSuggested(index, true)}
       highlightTransformationId={(focus => inspectionKind && focus?.kind === "transformation" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
       onMakePen={(propertyId, path) => edits.makePen({ nodeId: node.id, propertyId, path })}
       onHandle={(propertyId, handle) => edits.handle(node.id, propertyId, handle)} onDesignHandles={(target, instruction) => { void ai.suggestHandles(node.id, target, instruction); }}
@@ -1004,7 +1069,7 @@ export default function Home() {
         onFix: () => { void ai.generateCode(true); } }}
       inspectionPanel={inspectionKind && activeBrush ? <InspectionPanel brush={activeBrush} kind={inspectionKind} scene={scene} nodeIds={brushNodeIds(scene, activeBrush, activeSketch)} state={inspectionFor(panel, activeBrush.id)} busy={busy} running={Boolean(panel.executable)}
         frameId={activeSketch} frames={brushFrames(activeBrush)} onFrame={frameId => inspectFrame(frameId, activeBrush)}
-        onCursor={cursor => patchInspection(activeSketch, { cursor })} onClear={() => patchInspection(activeSketch, { steps: [], cursor: null, focus: null })}
+        onCursor={cursor => patchInspection(activeSketch, { cursor })} onResetEdit={key => editHeldStep(activeSketch, activeBrush.id, key, null)} onClear={() => patchInspection(activeSketch, { steps: [], cursor: null, focus: null })}
         onFocus={focus => focusInspection(activeSketch, focus)}
         eraser={inspectionEraser} onEraser={setInspectionEraser}
         onConcern={concern => patchInspection(activeSketch, { concern })} onClearMarks={() => patchInspection(activeSketch, { marks: [], markStyles: [] })}
@@ -1016,8 +1081,7 @@ export default function Home() {
         onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`「${entry.title}」을(를) 다시 적용했습니다.`); }}
         onApplyChanges={changes => applyChanges(deps, activeSketch, changes)}
         code={panel.generated?.code} onApplyRecording={item => { void applyRecording(deps, activeSketch, item).then(done => { if (done) setToast(`그려진 항목마다 ${item.fields.join(", ")}을(를) 기록하도록 코드를 고쳤습니다.`); }); }}
-        onAcceptParameter={item => guardEach([item.nodeId], "semantic transformation", () => { void acceptParameter(deps, activeSketch, item).then(added => { if (added) setToast(`「${item.label}」을(를) property로 추가했습니다. 바로 조절할 수 있습니다.`); }); })}
-        onRejectParameter={(index, rejected) => { if (activeTargeted) patchTargeted(activeBrush.id, activeTargeted.id, entry => ({ ...entry, result: { ...entry.result, parameters: entry.result.parameters.map((item, i) => i === index ? { ...item, rejected } : item) } })); }}
+        onAcceptParameter={acceptSuggested} onRejectParameter={rejectSuggested}
         onParameterValue={(nodeId, propertyId, value) => edits.scalar(nodeId, propertyId, [], value)}
         onApplyRecommendation={(recommendation, index, listed) => recommendation.kind === "value" ? void applyRecommendation(deps, activeSketch, recommendation, recommendationKey(listed))
           : guardEach([recommendation.nodeId], recommendation.kind === "transformation" || recommendation.kind === "add-transformation" ? "semantic transformation" : "state machine", () => { void applyTargetedRecommendation(activeBrush, recommendation, index, listed); })} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}

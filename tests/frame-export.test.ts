@@ -36,7 +36,7 @@ test("a frame exports as one JSON: nodes with constraints, each state's full con
   const instance = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, id: "orb-2", codeId: "orb" } : node) };
   const tool = { id: "t1", name: "원 크기", concern: "원 크기가 궁금해", marks: [[{ x: .5, y: .5 }, { x: .6, y: .25 }]], markStyles: [{ color: "#e0457b", width: 12, opacity: .6 }],
     result: { summary: "원이 커집니다", valueFixes: [{ key: "orb/radius", stateId: "moving", value: 50, reason: "줄입니다" }],
-      overlays: [{ id: "size", kind: "rect" as const, name: "크기", x: "p(\"orb/@x\")", y: "0", w: "p(\"orb/radius\")", h: "1", label: "", color: "#e0457b", link: { kind: "constraint" as const, nodeId: "orb", id: "radius" }, when: "", each: "orb:dots" }],
+      overlays: [{ id: "size", kind: "rect" as const, name: "크기", x: "p(\"orb/@x\")", y: "0", w: "p(\"orb/radius\")", h: "1", label: "", color: "#e0457b", link: { kind: "constraint" as const, nodeId: "orb", id: "radius" }, when: "", each: "orb:dots", handle: null }],
       recommendations: [{ kind: "add-transformation" as const, nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "", changes: [], addedId: "pulse" }], parameters: [], records: null } };
   const withTools = frameExport({ id: "sketch-2", name: "Sketch 2", scene: instance, generated: null, brushes: [{ id: "b1", name: "Orb", roots: ["orb-2"], targeted: [tool] }] });
   const exported = withTools.brushes[0].targetedInspections[0];
