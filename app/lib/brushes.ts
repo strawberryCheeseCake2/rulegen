@@ -2,7 +2,7 @@ import { z } from "zod";
 import { descendantIds, findNode, subScene } from "./scene/graph";
 import type { Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
-import { markStyleSchema, MAX_MARKS, targetedResultSchema } from "./inspection";
+import { markStyleSchema, MAX_MARKS, MAX_OVERLAY_UPDATES, overlayUpdateSchema, targetedResultSchema } from "./inspection";
 
 // A Brush is a reusable collection ("Brush Stamp"). Every root collection AI
 // creates becomes a brush tool group in the toolbar: its brush tool stamps the
@@ -14,6 +14,8 @@ export const targetedToolSchema = z.object({
   marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).max(2000)).max(MAX_MARKS),
   markStyles: z.array(markStyleSchema).max(MAX_MARKS).default([]),
   result: targetedResultSchema,
+  /** Overlays rebuilt for an applied recommendation (see overlayUpdateSchema), newest last. */
+  overlayUpdates: z.array(overlayUpdateSchema).max(MAX_OVERLAY_UPDATES).default([]),
 });
 export type TargetedTool = z.infer<typeof targetedToolSchema>;
 export const MAX_TARGETED = 12;

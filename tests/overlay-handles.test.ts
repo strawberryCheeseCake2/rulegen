@@ -156,7 +156,7 @@ test("one drawn item can have its own what-if: the runtime gives it to m.v(key, 
   assert.equal(editStep(state, 0, "orb/radius", null).steps[0].itemEdits, undefined, "taking the key back clears its item values too");
   // The frame sets them only while drawing the held step.
   const { readFileSync } = await import("node:fs");
-  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /if\(items\)rulegenItemValues=pinnedItems\|\|\{\};try\{forceRender=true;p\.redraw\(\);reportDrawn\(\);\}finally\{if\(items\)rulegenItemValues=\{\};\}/);
+  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /if\(items\)rulegenItemValues=pinnedItems\|\|\{\};[^}]*try\{forceRender=true;p\.redraw\(\);reportDrawn\(.*?\);\}finally\{if\(items\)rulegenItemValues=\{\};/);
 });
 
 test("a grip on one item changes that item only: the code is made to read the value per item, or the grip is not offered", async () => {

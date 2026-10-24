@@ -23,7 +23,11 @@ type Props = {
   specs?: Record<string, ScalarValue>;
   /** `item`: the id of the drawn item the grip is on (its what-if is that item's only, when the code reads the value per item). */
   /** `item`: the id of the drawn item the grip is on; `each`: the grip is on one item of an `each` overlay (with an id or not). */
-  onHandle?: (phase: "start" | "move" | "end", key: string, value: number | boolean | null, item: string | null, each: boolean) => void;
+  onHandle?: (phase: "start" | "move" | "end", key: string, value: number | boolean | null, item: string | null, each: boolean,
+    /** How far the pointer has gone from where the drag began, and how far that was from the pivot (a "drag" has none: Infinity), in canvas pixels. */
+    motion?: { moved: number; reach: number }) => void;
+  /** One moment only (an exploration frame): no step badge, step numbers or path through the steps. */
+  plain?: boolean;
 };
 
 /**
@@ -37,7 +41,7 @@ const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props
   : kind === "ellipse" ? <ellipse cx={x + w / 2} cy={y + h / 2} rx={Math.abs(w / 2)} ry={Math.abs(h / 2)} {...props} />
   : kind === "line" ? <line x1={x} y1={y} x2={x + w} y2={y + h} {...props} /> : null;
 
-export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle }: Props) {
+export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain }: Props) {
   // The step being looked at (the latest unless another is picked): overlays are recomputed from its values and stores; the other steps show as ghosts.
   const index = heldIndex(state) ?? -1, step = state.steps[index];
   // Suggested parameters are read at the value the code uses wherever a step does not record them (not accepted yet, or recorded before).
@@ -54,10 +58,11 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
     const current = dragging.current; if (!current || current.pointerId !== e.pointerId) return;
     e.preventDefault(); e.stopPropagation();
     const value = clampValue(specs?.[current.grip.handle.key], dragValue(current.grip, current.drag, canvasPoint(e)));
-    const item = itemIdOf(current.grip.scope.item), each = Boolean(current.grip.overlay.each);
-    if (value !== null) onHandle?.("move", current.grip.handle.key, value, item, each);
+    const item = itemIdOf(current.grip.scope.item), each = Boolean(current.grip.overlay.each), pointer = canvasPoint(e), drag = current.drag;
+    const motion = { moved: Math.hypot(pointer.x - drag.sx, pointer.y - drag.sy), reach: current.grip.handle.gesture === "drag" ? Infinity : Math.hypot(drag.sx - drag.px, drag.sy - drag.py) };
+    if (value !== null) onHandle?.("move", current.grip.handle.key, value, item, each, motion);
     setActive({ key: current.grip.handle.key, grip: current.grip.key, value: value ?? active?.value ?? null });
-    if (phase === "end") { dragging.current = null; setActive(null); onHandle?.("end", current.grip.handle.key, value, item, each); }
+    if (phase === "end") { dragging.current = null; setActive(null); onHandle?.("end", current.grip.handle.key, value, item, each, motion); }
   };
   const text = 12 / Math.max(.2, zoom);
   const uid = useId().replace(/:/g, ""), badge = 7 / Math.max(.2, zoom);
@@ -68,8 +73,8 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
     return item.overlay.kind === "line" ? { x: item.x + item.w, y: item.y + item.h } : item.overlay.kind === "label" ? { x: item.x - badge * 1.6, y: item.y - badge } : { x: right, y: top };
   };
   // Every step has a badge, also where its overlay sits exactly where another step's does (those share one badge and are walked through by clicking it).
-  const badges = result ? stepBadges(result.overlays, state.steps, index, spotOf, liveValues, drawn, fallback) : [];
-  const paths = (result?.overlays ?? []).filter(overlay => !overlay.each).map(overlay => ({ overlay, points: marked.filter(item => item.overlay.id === overlay.id).sort((a, b) => a.step - b.step)
+  const badges = result && !plain ? stepBadges(result.overlays, state.steps, index, spotOf, liveValues, drawn, fallback) : [];
+  const paths = (plain ? [] : result?.overlays ?? []).filter(overlay => !overlay.each).map(overlay => ({ overlay, points: marked.filter(item => item.overlay.id === overlay.id).sort((a, b) => a.step - b.step)
     .map(item => item.overlay.kind === "line" || item.overlay.kind === "label" ? { x: item.x, y: item.y } : { x: item.x + item.w / 2, y: item.y + item.h / 2 }) }))
     .filter(path => path.points.length > 1 && path.points.some(point => Math.hypot(point.x - path.points[0].x, point.y - path.points[0].y) > 2));
   const current = placed.filter(item => !item.ghost), byKey = new Map(current.map(item => [item.key, item]));
@@ -79,7 +84,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
     anchor: item.overlay.kind === "line" ? { x: item.x + item.w, y: item.y + item.h } : item.overlay.kind === "label" ? { x: item.x, y: item.y } : { x: Math.min(item.x, item.x + item.w), y: Math.min(item.y, item.y + item.h) - 4 },
   })), text, { width: W, height: H }, badges.map(item => ({ x: item.x - badge, y: item.y - badge, width: badge * 2, height: badge * 2 })));
   return <div className="inspection-overlay" aria-label="Inspection overlay">
-    {step && <span className="inspection-step-badge">Step {index + 1} / {state.steps.length}</span>}
+    {step && !plain && <span className="inspection-step-badge">Step {index + 1} / {state.steps.length}</span>}
     <svg ref={svg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
       {marks.map((mark, i) => { const style = markStyleAt(markStyles, i);
         return <polyline key={i} className="inspection-mark" points={mark.map(p => `${p.x * W},${p.y * H}`).join(" ")} style={{ stroke: style.color, strokeWidth: style.width, opacity: style.opacity }} />; })}

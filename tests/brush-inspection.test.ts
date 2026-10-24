@@ -451,9 +451,9 @@ test("an applied new-transformation recommendation reads as the transformation i
   await withMockedAI(() => ({ summary: "후", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
     await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "꼬리가 궁금해", inspection }), new AbortController().signal);
     const context = JSON.parse(calls[0].input[0].content[0].text);
-    assert.deepEqual(context.appliedRecommendation, { title: "꼬리 추가", detail: "d", nodeId: "orb", addedTransformationId: added.id });
+    assert.deepEqual(context.appliedRecommendation, { kind: "add-transformation", title: "꼬리 추가", detail: "d", nodeId: "orb", addedTransformationId: added.id });
     assert.equal(context.previousSummary, "전"); assert.deepEqual(context.previousOverlays.map((item: { id: string }) => item.id), ["size"]);
-    assert.match(calls[0].instructions, /After a recommendation added a transformation/);
+    assert.match(calls[0].instructions, /After a recommendation was applied/);
   });
   await withMockedAI(() => ({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
     await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", inspection: { ...inspection, update: null } }), new AbortController().signal);
@@ -489,4 +489,49 @@ test("inspection annotation marks keep their own color, width and opacity; the p
   const props = { tool: brushTool("inspect", brush.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
     busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [brush], groupTools: {}, openGroup: brush.id } as Record<string, unknown>;
   assert.match(renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never)), /class="brush-group-body"><div class="brush-group-tools">/, "the group panel's tools sit in a scrolling body");
+});
+
+test("Update overlays: an applied recommendation's item rebuilds the overlays for it, and Undo apply brings the previous ones back", async () => {
+  const { overlayPart, overlaysAfterApplied, overlaysUpdatedFor, targetedResultSchema } = await import("../app/lib/inspection");
+  const scene = sampleScene(), [brush] = makeBrushes(scene), noop = () => {};
+  const overlay = (id: string) => ({ id, kind: "rect" as const, name: id, x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "constraint" as const, nodeId: "orb", id: "radius" } });
+  const listed = { kind: "value" as const, nodeId: "orb", targetId: "", targetIds: [], title: "원 줄이기", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 12 }] };
+  const old = targetedResultSchema.parse({ summary: "전", overlays: [overlay("old")], valueFixes: [], recommendations: [listed] });
+  const fresh = { ...old, summary: "후", overlays: targetedResultSchema.parse({ summary: "s", overlays: [overlay("new")], valueFixes: [], recommendations: [] }).overlays };
+  const updated = { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: fresh, overlayUpdates: [{ appliedIds: ["rec", "rec-records"], before: overlayPart(old), after: overlayPart(fresh) }] };
+  assert.ok(overlaysUpdatedFor(updated, "rec")); assert.ok(overlaysUpdatedFor(updated, "rec-records"));
+  // Undoing the recommendation (or the item records the update applied) brings back the overlays before it; redoing the last brings the update back.
+  const undone = overlaysAfterApplied(updated, "rec-records", "undo");
+  assert.deepEqual(undone.result.overlays.map(item => item.id), ["old"]); assert.equal(undone.result.summary, "전"); assert.deepEqual(undone.result.recommendations, [listed], "the list stays");
+  assert.equal(overlaysAfterApplied(undone, "rec", "undo"), undone, "already back");
+  assert.equal(overlaysAfterApplied(undone, "rec", "redo"), undone, "the recommendation alone: its records are not back yet");
+  assert.deepEqual(overlaysAfterApplied(undone, "rec-records", "redo").result.overlays.map(item => item.id), ["new"]);
+  assert.deepEqual(overlaysAfterApplied(updated, "rec", "undo").result.overlays.map(item => item.id), ["old"]);
+  const inspectedSince = { ...updated, result: { ...fresh, summary: "Inspect again" } };
+  assert.equal(overlaysAfterApplied(inspectedSince, "rec", "undo"), inspectedSince, "an Inspect again since is kept");
+  assert.equal(overlaysAfterApplied(updated, "other", "undo"), updated);
+
+  // The button is in the item of an applied recommendation.
+  const tool = { ...updated, result: old, overlayUpdates: [] };
+  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, recommendationKey: (item: { kind: string; title: string }) => `${item.kind}:${item.title}`,
+    onUpdateOverlays: noop, overlaysUpdated: () => false, applied: { past: [], future: [], undoClean: false, redoClean: false },
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
+  assert.doesNotMatch(renderToStaticMarkup(createElement(InspectionPanel, props as never)), /Update overlays/, "not applied yet");
+  const applied = { ...props, applied: { past: [{ id: "rec", title: "원 줄이기", key: "value:원 줄이기" }], future: [], undoClean: true, redoClean: false } };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, applied as never));
+  assert.match(html, /class="inspection-recommendation applied[^"]*">(?:(?!class="inspection-recommendation ).)*class="inspection-overlay-update">.*?Update overlays<\/button>/s, "inside the recommendation's item");
+  const after = renderToStaticMarkup(createElement(InspectionPanel, { ...applied, overlaysUpdated: (id: string) => id === "rec" } as never));
+  assert.match(after, /✓ overlay를 이 적용에 맞게 고쳤습니다 · Undo apply로 함께 되돌아갑니다/); assert.match(after, /Update overlays again/);
+
+  // AI gets what was applied: its kind, target and value changes.
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints: [], steps: [],
+    update: { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: listed.changes, summary: "전", overlays: [overlay("old")] } };
+  await withMockedAI(() => ({ summary: "후", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+    await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기", inspection }), new AbortController().signal);
+    assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).appliedRecommendation, { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: listed.changes });
+  });
+  const { readFileSync } = await import("node:fs");
+  const home = readFileSync("app/routes/home.tsx", "utf8");
+  assert.match(home, /stepApplied\(deps, activeSketch, "undo"\);[^\n]*followApplied\(entry\.id, "undo"\)/, "Undo apply takes the overlays back with it");
+  assert.match(home, /stepApplied\(deps, activeSketch, "redo"\);[^\n]*followApplied\(entry\.id, "redo"\)/);
 });

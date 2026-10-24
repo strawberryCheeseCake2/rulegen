@@ -185,6 +185,36 @@ export const targetedResultSchema = inspectResultSchema.extend({ recommendations
   /** A suggested parameter the user turned down keeps `rejected`. */
   parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
+
+// Overlays after an applied recommendation: the user rebuilds a targeted tool's
+// overlays for what was applied ("Update overlays"). The parts it replaced are kept
+// with the applied entries they follow, so Undo apply brings them back.
+const overlayPartSchema = targetedResultSchema.pick({ summary: true, overlays: true, valueFixes: true, parameters: true, records: true });
+export type OverlayPart = z.infer<typeof overlayPartSchema>;
+export const overlayUpdateSchema = z.object({
+  /** The applied entries it follows: the recommendation's, then the item records the update applied (if any). */
+  appliedIds: z.array(z.string().max(80)).min(1).max(4),
+  before: overlayPartSchema, after: overlayPartSchema,
+});
+export type OverlayUpdate = z.infer<typeof overlayUpdateSchema>;
+export const MAX_OVERLAY_UPDATES = 10;
+/** The parts of a result an overlay update replaces (the recommendations stay the list the user works from). */
+export const overlayPart = (result: OverlayPart): OverlayPart => ({ summary: result.summary, overlays: result.overlays, valueFixes: result.valueFixes, parameters: result.parameters, records: result.records });
+const samePart = (a: OverlayPart, b: OverlayPart) => JSON.stringify(overlayPart(a)) === JSON.stringify(overlayPart(b));
+/**
+ * The tool after an applied entry was undone or redone: undoing any entry an update
+ * follows brings back the overlays before it; redoing the last one brings the updated
+ * ones back. Only while the tool still shows the other side (an Inspect again since is kept).
+ */
+export function overlaysAfterApplied<T extends { result: InspectResult; overlayUpdates: OverlayUpdate[] }>(tool: T, appliedId: string, direction: "undo" | "redo"): T {
+  const update = [...tool.overlayUpdates].reverse().find(item => direction === "undo" ? item.appliedIds.includes(appliedId) : item.appliedIds.at(-1) === appliedId);
+  if (!update) return tool;
+  const [from, to] = direction === "undo" ? [update.after, update.before] : [update.before, update.after];
+  return samePart(tool.result, from) ? { ...tool, result: { ...tool.result, ...to } } : tool;
+}
+/** Whether the tool shows overlays updated for this applied entry. */
+export const overlaysUpdatedFor = (tool: { result: InspectResult; overlayUpdates?: OverlayUpdate[] }, appliedId: string) =>
+  (tool.overlayUpdates ?? []).some(item => item.appliedIds.includes(appliedId) && samePart(tool.result, item.after));
 export type Recommendation = InspectResult["recommendations"][number];
 /** A result as given (older results have no `parameters` or `records`). */
 export type InspectResultInput = Omit<InspectResult, "parameters" | "records"> & { parameters?: InspectResult["parameters"]; records?: InspectResult["records"] };
@@ -215,7 +245,9 @@ export type Overlay = z.input<typeof overlaySchema>;
 // Numbers, + - * / %, comparisons, && || !, parentheses, a few functions, and
 // readers for the step: p("key") values, s("root", "path") the module's m.store,
 // prev/delta against the previous step, in/elapsed for machine states, item("path")
-// and i inside `each`, step/steps for the position in the history.
+// and i inside `each`, step/steps for the position in the history; in an exploration
+// frame pathX(t)/pathY(t)/nearest(x, y) relate execution progress to the path execution goes
+// along, and nearestStep(x, y) is how many steps are done once the step nearest (x, y) is.
 
 /** What an overlay reads at one step. `fallback`: values for keys a step does not record (suggested parameters, at the value the code uses). */
 export type OverlayContext = {
@@ -278,6 +310,17 @@ export function pointsBox(list: unknown[]): PointsBox | undefined {
 }
 /** The recorded input (m.history() gestures) is read by overlays as the store of this pseudo root. */
 export const INPUT_ROOT = "@input";
+/** The whole recorded input path ({ x, y } points, gesture after gesture) in an exploration frame, read by pathX, pathY and nearest. */
+export const PATH_ROOT = "@path";
+const pathPoints = (context: OverlayContext) => { const path = context.stores[PATH_ROOT]; return Array.isArray(path) ? path.filter(isPoint) : []; };
+/** The input point executed last at progress t (0..1): with n points, point j is executed from t = (j + 1) / n. */
+const pathPoint = (context: OverlayContext, t: number) => { const path = pathPoints(context); return path.length && Number.isFinite(t) ? path[Math.max(0, Math.min(path.length - 1, Math.ceil(t * path.length) - 1))] : undefined; };
+/** The progress at which the input point nearest (x, y) is executed. */
+function nearestProgress(context: OverlayContext, x: number, y: number) {
+  const path = pathPoints(context); if (!path.length || !Number.isFinite(x) || !Number.isFinite(y)) return NaN;
+  let best = 0; for (let j = 1; j < path.length; j++) if (Math.hypot(path[j].x - x, path[j].y - y) < Math.hypot(path[best].x - x, path[best].y - y)) best = j;
+  return (best + 1) / path.length;
+}
 
 /** Evaluate an overlay expression at one step; NaN when a value is missing or not a number. */
 export function evaluate(source: string, input: Record<string, Scalar> | OverlayContext): number {
@@ -302,6 +345,9 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
     } else if (name === "item") value = numeric(pathValue(context.item, text("item()")));
     else if (name === "in") { const node = text("in()"); expect(","); value = Number(context.states[node]?.id === text("in()")); }
     else if (name === "elapsed") value = context.states[text("elapsed()")]?.elapsed ?? NaN;
+    else if (name === "pathX" || name === "pathY") { const point = pathPoint(context, or()); value = point ? (name === "pathX" ? point.x : point.y) : NaN; }
+    else if (name === "nearest") { const x = or(); expect(","); value = nearestProgress(context, x, or()); }
+    else if (name === "nearestStep") { const x = or(); expect(","); value = Math.round(nearestProgress(context, x, or()) * pathPoints(context).length); }
     else {
       const fn = FUNCTIONS[name]; if (!fn) throw new Error(`알 수 없는 함수: ${name}`);
       const args = [or()];

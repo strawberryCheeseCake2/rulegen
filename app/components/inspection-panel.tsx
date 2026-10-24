@@ -22,6 +22,10 @@ type Props = {
   onInspect: () => void;
   onApplyChanges: (changes: Change[]) => void; /** Apply a recommendation as it reads now (an added transformation is that transformation); `index` in the list, `listed` as stored. */
   onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
+  /** Rebuild the targeted tool's overlays for a recommendation that was applied (Undo apply brings the previous ones back). */
+  onUpdateOverlays?: (listed: Recommendation) => void;
+  /** Whether the tool shows overlays updated for this applied entry. */
+  overlaysUpdated?: (appliedId: string) => boolean;
   /** Switch to another tool of the group (a toolbar tool id). */
   onTool: (toolId: string) => void;
   /** Hidden parameters the targeted inspection suggests (by index in its list): accept exposes it, reject (or bring back) marks it; an accepted one is adjusted here. */
@@ -38,6 +42,13 @@ type Props = {
   pen?: MarkStyle; onPen?: (pen: MarkStyle) => void;
   /** Autocomplete: concerns AI suggested from the inspection annotation (and the typed start), asked with onSuggest; the first that continues the text is shown as its completion (Tab). */
   suggestions?: { items: string[]; loading: boolean; error: string }; onSuggest?: () => void;
+  /**
+   * Open an exploration frame beside this one with the same brush marks: control execution with a metaphoric
+   * handle ("execution"; the cause when `index` is null) or try a recommendation's key values ("parameters").
+   */
+  onExplore?: (mode: "execution" | "parameters", index: number | null) => void;
+  /** Whether that exploration frame is open (the button then goes to it). */
+  exploring?: (mode: "execution" | "parameters", index: number | null) => boolean;
   /** Which recommendation an applied entry was (its key). */
   recommendationKey?: (item: Recommendation) => string;
 };
@@ -196,6 +207,11 @@ export function InspectionPanel(props: Props) {
     return item.nodeId ? { event: via?.label || via?.id || "시간/직접 이동", detail: stepTitle(item) } : { event: stepTitle(item), detail: "이 시점의 값" };
   };
   const result = targeted?.result ?? null;
+  /** A button that opens (or goes to) an exploration frame. */
+  const explore = (mode: "execution" | "parameters", index: number | null) => props.onExplore && <button type="button" className={`inspection-explore-button ${mode}`} disabled={busy}
+    title={mode === "execution" ? "Open a new frame with the same brush marks and run their execution back and forth with a gesture" : "Open a new frame with the same brush marks and drag this recommendation's key values on it"}
+    onClick={() => props.onExplore!(mode, index)}>
+    <Icon name={mode === "execution" ? "play" : "target"} size={11} />{mode === "execution" ? "Execution 조절해보기" : "핵심 파라미터 조절해보기"}{props.exploring?.(mode, index) && <small>열림 · 이동</small>}</button>;
   /** The node and part a recommendation changes, named as the user sees them. */
   const recommendationTargets = (item: Recommendation): { node: string; label: string; focus: InspectionFocus }[] => {
     if (item.kind === "value") return item.changes.flatMap(change => {
@@ -297,6 +313,8 @@ export function InspectionPanel(props: Props) {
         </div>}
         {result && <div className="inspection-result">
           <p>{result.summary}</p>
+          {/* The cause as a process: run the brush's execution under the hand in a frame of its own (its values already have handles here). */}
+          {props.onExplore && <div className="inspection-explore"><span className="inspection-muted">이 과정을 손으로 실행해 보기</span>{explore("execution", null)}</div>}
           {result.overlays.length > 0 && <div className="inspection-legend">{result.overlays.map(overlay => <button key={overlay.id} className={sameFocus(state.focus, overlay.link) ? "focused" : ""} onClick={() => focus(overlay.link)}>
             <i style={{ background: overlay.color }} />{overlay.name || overlay.label.replace(/\$\{[^}]*\}/g, "…").trim() || overlay.id}</button>)}</div>}
           {result.valueFixes.length > 0 && <div className="inspection-fixes"><span className="section-kicker">VALUE FIX</span>
@@ -319,14 +337,21 @@ export function InspectionPanel(props: Props) {
                   onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>)}</div>
             {result.recommendations.map((listed, i) => {
               // A new transformation it already added reads as that transformation (back to "new" if it is undone).
-              const item = currentRecommendation(listed, scene), added = item !== listed, applied = props.recommendationKey && props.applied?.past.some(entry => entry.key === props.recommendationKey!(listed));
+              const item = currentRecommendation(listed, scene), added = item !== listed, appliedEntry = props.recommendationKey ? [...(props.applied?.past ?? [])].reverse().find(entry => entry.key === props.recommendationKey!(listed)) : undefined, applied = Boolean(appliedEntry);
               return <div key={i} className={`inspection-recommendation ${applied ? "applied" : ""} ${added ? "added" : ""}`}><b><em>{item.kind === "value" ? "값" : item.kind === "transformation" ? (added ? "Transformation · 추가됨" : "Transformation") : item.kind === "add-transformation" ? "새 Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
               {/* What it changes: click to highlight it (the transformation card, the property, or the state/transition in the graph). */}
               <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
                 aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
               <span>{item.detail}</span>
+              {/* Understand it by hand before (or after) applying it, in a frame of its own. */}
+              {props.onExplore && <div className="inspection-explore">{explore("execution", i)}{explore("parameters", i)}</div>}
               <button disabled={busy} title={added ? "Refine the transformation this recommendation added" : undefined} onClick={() => props.onApplyRecommendation(item, i, listed)}>{item.kind === "value" ? "Apply values" : item.kind === "add-transformation" ? "Add with AI" : "Apply with AI"}</button>
-              {applied && <small className="inspection-applied-mark">✓ 적용됨{added ? " · 위 transformation으로 추가되었습니다" : ""} · Undo apply로 되돌릴 수 있습니다</small>}</div>;
+              {applied && <small className="inspection-applied-mark">✓ 적용됨{added ? " · 위 transformation으로 추가되었습니다" : ""} · Undo apply로 되돌릴 수 있습니다</small>}
+              {/* The overlays follow what was applied when asked; Undo apply takes them back with it. */}
+              {appliedEntry && targeted && props.onUpdateOverlays && <div className="inspection-overlay-update">
+                {props.overlaysUpdated?.(appliedEntry.id) && <small className="inspection-applied-mark">✓ overlay를 이 적용에 맞게 고쳤습니다 · Undo apply로 함께 되돌아갑니다</small>}
+                <button disabled={busy} title="Rebuild this inspection's overlays for the scene and code after this recommendation" onClick={() => props.onUpdateOverlays!(listed)}>
+                  <Icon name="target" size={12} />{props.overlaysUpdated?.(appliedEntry.id) ? "Update overlays again" : "Update overlays"}</button></div>}</div>;
             })}
           </div>}
         </div>}

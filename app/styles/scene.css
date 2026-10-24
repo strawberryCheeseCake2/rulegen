@@ -392,6 +392,7 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-fix span, .inspection-recommendation span { font-size: 11px; color: #5c6e63; }
 .inspection-recommendation b { font-size: 12px; display: flex; gap: 6px; align-items: baseline; }
 .inspection-recommendation em { font-style: normal; font-size: 9.5px; padding: 1px 5px; border-radius: 3px; background: #edf2ef; color: #4a6656; }
+.inspection-overlay-update { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; padding-top: 6px; border-top: 1px dashed #dfe6e1; }
 .inspection-recommendation.added em { background: #e3f1ea; color: #23684f; }
 .inspection-table { overflow: auto; min-width: 0; }
 .inspection-table table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -619,3 +620,44 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-parameter-control { display: flex; align-items: center; gap: 8px; font-size: 11px; }
 .inspection-parameter-control input[type=range] { flex: 1; min-width: 0; }
 .inspection-parameter-control output { min-width: 52px; text-align: right; color: #34493e; font-variant-numeric: tabular-nums; }
+
+/* Exploration: buttons in the inspection panel, and the frame on the board (same brush marks, its own handles). */
+.inspection-explore { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
+.inspection-explore-button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 12px; border: 1px solid #c9d7ee; background: #f3f7fe; color: #2a4f86; font-size: 11px; cursor: pointer; }
+.inspection-explore-button.parameters { border-color: #e6d3c0; background: #fdf7f1; color: #8a5320; }
+.inspection-explore-button:hover:not(:disabled) { filter: brightness(.97); }
+.inspection-explore-button small { margin-left: 2px; padding: 0 5px; border-radius: 8px; background: #ffffffb0; font-size: 10px; }
+.world-frame.frame-explore { outline: 2px dashed #b7c6e6; outline-offset: 3px; }
+/* The frame shows the drawing only; its controls sit right under it (outside the 900×600 canvas), so they never cover the marks. */
+.explore-frame-surface { position: relative; width: 900px; height: 600px; background: #fffefa; }
+.explore-frame-surface > .isolated-code-render { position: absolute; inset: 0; overflow: hidden; }
+.explore-frame-surface > .inspection-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.explore-bar { position: absolute; left: 0; right: 0; top: calc(100% + 14px); z-index: 3; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #fffffcf0; border: 1px solid #dfe6e1; box-shadow: 0 4px 14px #0000000f; font-size: 12px; color: #34403a; }
+.explore-bar p { margin: 0; line-height: 1.45; }
+.explore-status { display: inline-flex; align-items: center; gap: 8px; color: #4f6347; }
+.explore-status .loading-spinner { width: 12px; height: 12px; }
+.explore-status.error { color: #a33b2b; }
+.explore-scrub { display: flex; align-items: center; gap: 8px; }
+.explore-scrub input { flex: 1; }
+.explore-scrub output { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; color: #5b6b61; }
+.explore-scrub button, .explore-status button, .explore-values button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 7px; cursor: pointer; }
+.explore-values { display: flex; flex-wrap: wrap; gap: 6px; }
+.explore-values > span { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px 2px 8px; border-radius: 10px; background: #f2f5f3; }
+.explore-ghost { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .16; pointer-events: none; z-index: 1; }
+.explore-frame-surface:focus { outline: none; }
+.explore-stepper { display: flex; align-items: center; gap: 6px; }
+.explore-stepper output { min-width: 84px; text-align: center; font-variant-numeric: tabular-nums; color: #5b6b61; }
+.explore-stepper output b { color: #2a4f86; font-size: 14px; }
+.explore-stepper button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 8px; cursor: pointer; font-size: 12px; }
+.explore-stepper button.primary { border-color: #2a4f86; background: #2a4f86; color: #fff; }
+.explore-stepper button:disabled { opacity: .45; cursor: default; }
+.explore-step-now { display: flex; flex-direction: column; gap: 3px; }
+.explore-step-now > span { display: flex; align-items: baseline; gap: 6px; }
+.explore-step-now em { flex: none; width: 52px; font-style: normal; font-size: 10px; color: #8a978f; }
+.explore-step-now b { color: #2f3a34; }
+.explore-step-now i { font-style: normal; font-size: 10px; padding: 0 6px; border-radius: 8px; background: #eef3fc; color: #2a4f86; }
+.explore-stages { display: flex; flex-wrap: wrap; gap: 4px; max-height: 52px; overflow: auto; }
+.explore-stages button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d5ddd8; background: #fff; border-radius: 10px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+.explore-stages button small { color: #8a978f; font-variant-numeric: tabular-nums; }
+.explore-stages button.current { border-color: #2a4f86; background: #eef3fc; color: #2a4f86; }
+.explore-explain { color: #4f5d55; font-size: 11px; line-height: 1.45; }

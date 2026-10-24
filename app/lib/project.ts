@@ -19,8 +19,10 @@ export const projectSchema = z.object({ version: z.literal(2), name: z.string().
   // A proxy frame goes with its target frame.
   const proxyFrames = [...new Map(project.proxyFrames.filter(frame => ids.includes(frame.targetFrameId)).map(frame => [frame.id, frame])).values()];
   return { ...project, sketchPanels, proxyFrames, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
-    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(project.workspace.frames, [...ids, ...proxyFrames.map(frame => frame.id)]) } };
+    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(withoutExplore(project.workspace.frames), [...ids, ...proxyFrames.map(frame => frame.id)]) } };
 });
+/** Exploration frames are not saved: their spots on the board go too. */
+const withoutExplore = <T extends Record<string, unknown>>(frames: T) => Object.fromEntries(Object.entries(frames).filter(([id]) => !id.startsWith("explore-"))) as T;
 export function exampleStrokes(): Stroke[] {
   const strokes: Stroke[] = [];
   function branch(x: number, y: number, length: number, angle: number, depth: number, seed: number) {

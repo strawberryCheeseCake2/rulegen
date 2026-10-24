@@ -103,8 +103,9 @@ export function sceneBlock(scene: Scene, previous?: Block) {
   const params = { ...previous?.params, ...sceneValues(scene) };
   const machines = machineValues(scene);
   for (const [id, machine] of Object.entries(machines)) for (const state of machine.states) state.params = { ...previous?.machines[id]?.states.find(item => item.id === state.id)?.params, ...state.params };
-  return `${SCENE_START}\nconst rulegenParams = ${JSON.stringify(params, null, 2)};\nconst rulegenMachines = ${JSON.stringify(machines, null, 2)};\nconst rulegenInstances = ${JSON.stringify(sceneInstances(scene), null, 2)};\n${SCENE_END}`;
+  return blockText({ params, machines, instances: sceneInstances(scene) });
 }
+const blockText = (block: Block) => `${SCENE_START}\nconst rulegenParams = ${JSON.stringify(block.params, null, 2)};\nconst rulegenMachines = ${JSON.stringify(block.machines, null, 2)};\nconst rulegenInstances = ${JSON.stringify(block.instances, null, 2)};\n${SCENE_END}`;
 
 function readBlock(source: string) {
   const start = source.indexOf(SCENE_START), endMarker = source.indexOf(`\n${SCENE_END}`, start);
@@ -128,6 +129,12 @@ export function syncScene(source: string, scene: Scene) {
   const found = readBlock(source);
   if (!found) return source;
   return source.slice(0, found.start) + sceneBlock(scene, found.block) + source.slice(found.end);
+}
+/** The source with values the scene does not have added to its host block (a preview's new values); existing ones stay. */
+export function addHostParams(source: string, params: Record<string, unknown>) {
+  const found = readBlock(source);
+  if (!found || !Object.keys(params).length) return source;
+  return source.slice(0, found.start) + blockText({ ...found.block, params: { ...params, ...found.block.params } }) + source.slice(found.end);
 }
 export const hasSceneBlock = (source: string) => Boolean(readBlock(source));
 /** Current live values of a source's host block (what the sandbox can receive without a reload). */
@@ -188,6 +195,83 @@ let rulegenLive = [], rulegenStarted = false;
 // What-if values of single drawn items (by item id), set only while an inspection draws a held step.
 let rulegenItemValues = {};
 const rulegenItemsActive = () => Object.keys(rulegenItemValues).length > 0;
+// One run of the brush's code, recorded as its execution (only while an exploration frame draws a held moment):
+// every checkpoint the code passes (m.trace(label, data): an internal operation and the state it works on) and
+// every drawing call, in the order they run. With a budget, drawing calls after that many events are not drawn,
+// so the picture is what execution has made up to there; checkpoints are still recorded (what comes next).
+// Only the brush explored is recorded (its roots): other brushes in the frame draw as usual.
+let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = null;
+const RULEGEN_MAX_EVENTS = 3000;
+const RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];
+const RULEGEN_VERTICES = { vertex: [0, 1], curveVertex: [0, 1], bezierVertex: [4, 5], quadraticVertex: [2, 3] };
+function rulegenRunStart(budget, roots) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null }; rulegenShape = null; }
+/** Whether the code running now is recorded (a run, and the module drawing is one of its roots). */
+const rulegenRunOwn = () => Boolean(rulegenRun) && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));
+function rulegenRunEnd() { const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events }; }
+const rulegenRound = value => Math.round(value * 10) / 10;
+/** The box of points (in the code's coordinates) on the canvas, through the current transform. */
+function rulegenBox(points) {
+  const ctx = p.drawingContext, matrix = ctx && typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;
+  const xs = [], ys = [];
+  for (const [x, y] of points) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    xs.push(matrix ? (matrix.a * x + matrix.c * y + matrix.e) / density : x); ys.push(matrix ? (matrix.b * x + matrix.d * y + matrix.f) / density : y);
+  }
+  if (!xs.length) return null;
+  const x = Math.min(...xs), y = Math.min(...ys);
+  return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) };
+}
+function rulegenShapePoints(name, a) {
+  const n = i => Number(a[i]);
+  if (name === 'endShape') return rulegenShape || [];
+  if (name === 'ellipse' || name === 'circle' || name === 'arc') { const w = n(2), h = name === 'circle' ? w : Number.isFinite(n(3)) ? n(3) : w; return [[n(0) - w / 2, n(1) - h / 2], [n(0) + w / 2, n(1) + h / 2]]; }
+  if (name === 'rect' || name === 'square') { const w = n(2), h = name === 'square' ? w : Number.isFinite(n(3)) ? n(3) : w; return [[n(0), n(1)], [n(0) + w, n(1) + h]]; }
+  if (name === 'text') return [[n(1), n(2)]];
+  if (name === 'image') return [[n(1), n(2)], [n(1) + (Number.isFinite(n(3)) ? n(3) : 0), n(2) + (Number.isFinite(n(4)) ? n(4) : 0)]];
+  const points = []; for (let i = 0; i + 1 < a.length; i += 2) points.push([n(i), n(i + 1)]); return points;
+}
+/** Record one event of the run; whether it is still within the budget (to be drawn). */
+function rulegenEvent(event) {
+  const run = rulegenRun; run.total++;
+  if (run.events.length < RULEGEN_MAX_EVENTS) run.events.push(Object.assign({ index: run.total - 1, label: run.label }, event));
+  return run.budget === null || run.total <= run.budget;
+}
+for (const name of RULEGEN_SHAPES) {
+  const base = p[name]; if (typeof base !== 'function') continue;
+  p[name] = function (...args) {
+    // Calls a drawing call makes itself (square → rect) are part of it.
+    if (!rulegenRunOwn() || rulegenInOp) return base.apply(p, args);
+    const box = rulegenBox(rulegenShapePoints(name, args)); if (name === 'endShape') rulegenShape = null;
+    if (!rulegenEvent(Object.assign({ kind: name }, box || {}))) return p;
+    rulegenInOp++; try { return base.apply(p, args); } finally { rulegenInOp--; }
+  };
+}
+{ const begin = p.beginShape; if (typeof begin === 'function') p.beginShape = function (...args) { if (rulegenRunOwn()) rulegenShape = []; return begin.apply(p, args); }; }
+for (const name of Object.keys(RULEGEN_VERTICES)) {
+  const base = p[name]; if (typeof base !== 'function') continue;
+  p[name] = function (...args) { if (rulegenRunOwn() && rulegenShape && rulegenShape.length < 4000) { const [i, j] = RULEGEN_VERTICES[name]; rulegenShape.push([Number(args[i]), Number(args[j])]); } return base.apply(p, args); };
+}
+/** Checkpoint data made small: lists of more than 200 items keep every k-th (and the last), numbers keep one decimal. */
+function rulegenThin(value, depth) {
+  if (typeof value === 'number') return Math.round(value * 10) / 10;
+  if (!value || typeof value !== 'object' || depth > 6) return value;
+  if (Array.isArray(value)) {
+    const step = Math.ceil(value.length / 200), kept = step > 1 ? value.filter((item, i) => i % step === 0 || i === value.length - 1) : value;
+    return kept.map(item => rulegenThin(item, depth + 1));
+  }
+  const out = {}; for (const key of Object.keys(value)) out[key] = rulegenThin(value[key], depth + 1); return out;
+}
+/** Where a checkpoint is: its data's x, y, or the box of the points in it. */
+function rulegenDataBox(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (Number.isFinite(data.x) && Number.isFinite(data.y)) return { x: rulegenRound(data.x), y: rulegenRound(data.y), w: Number.isFinite(data.w) ? rulegenRound(data.w) : 0, h: Number.isFinite(data.h) ? rulegenRound(data.h) : 0 };
+  const points = [];
+  const walk = (value, depth) => { if (points.length > 2000 || depth > 4 || !value || typeof value !== 'object') return; if (Number.isFinite(value.x) && Number.isFinite(value.y)) { points.push([value.x, value.y]); return; } for (const key of Object.keys(value)) walk(value[key], depth + 1); };
+  walk(data, 0);
+  if (!points.length) return null;
+  const xs = points.map(q => q[0]), ys = points.map(q => q[1]), x = Math.min(...xs), y = Math.min(...ys);
+  return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) };
+}
 // Input history: every press-drag-release on the canvas, in canvas pixels with ms since its press,
 // shared by all modules (m.history()). Modules derive what they draw from it with the current values,
 // so changing a value adjusts what is already there instead of only what comes next.
@@ -245,11 +329,22 @@ function rulegenInstance(entry) {
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
     history() { inst.usesHistory = true; return rulegenGestures; },
+    // trace(label, data): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.
+    trace(label, data) {
+      if (!rulegenRun || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;
+      rulegenRun.label = String(label).slice(0, 120);
+      // Long lists are thinned (a point list keeps its shape: every k-th point and the last), never dropped.
+      let plain = rulegenThin(rulegenPlain(data, 0), 0);
+      if (plain !== undefined && JSON.stringify(plain).length > 30000) plain = Object.fromEntries(Object.entries(plain && typeof plain === 'object' ? plain : {}).filter(([, value]) => value === null || typeof value !== 'object'));
+      const last = rulegenRun.events[rulegenRun.events.length - 1], box = rulegenDataBox(plain) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});
+      rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain }, box));
+    },
     memo(key, compute) {
       const k = typeof key === 'string' ? key : JSON.stringify(key);
       if (k.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
       // While some item has its own what-if value, results are computed afresh (a cached one may be another item's).
-      const hit = rulegenItemsActive() ? undefined : inst.memo.get(k);
+      // During a recorded run too: the run is the code executing, checkpoints included.
+      const hit = rulegenItemsActive() || rulegenRun ? undefined : inst.memo.get(k);
       // A value read while computing (m.v) that changed since makes the entry stale, even if the key does not name it.
       if (hit && hit.deps.every(([dk, dv]) => rulegenParams[dk] === dv)) {
         hit.used = rulegenFrameNo;
@@ -334,10 +429,11 @@ function rulegenRestore(snapshot) {
   if (Array.isArray(snapshot.history)) {
     rulegenInputReset();
     // Restored gestures keep their id and rev (their memoized results stay valid); new ones get new ids.
+    // One saved while it was still being drawn (done: false) comes back unfinished.
     for (const g of snapshot.history) if (g && Array.isArray(g.points)) {
       const id = Number.isInteger(g.id) && g.id > 0 ? g.id : ++rulegenGestureIds;
       rulegenGestureIds = Math.max(rulegenGestureIds, id);
-      rulegenGestures.push({ id, rev: Number.isInteger(g.rev) ? g.rev : 0, points: g.points.filter(q => q && Number.isFinite(q.x) && Number.isFinite(q.y)).map(q => ({ x: q.x, y: q.y, t: Number(q.t) || 0 })), done: true });
+      rulegenGestures.push({ id, rev: Number.isInteger(g.rev) ? g.rev : 0, points: g.points.filter(q => q && Number.isFinite(q.x) && Number.isFinite(q.y)).map(q => ({ x: q.x, y: q.y, t: Number(q.t) || 0 })), done: g.done !== false });
     }
   }
   if (typeof p.randomSeed === 'function') p.randomSeed(snapshot.seed);
@@ -365,7 +461,8 @@ p.draw = () => {
   rulegenFrameNo++;
   for (const inst of rulegenLive) {
     if (!inst.handlers.draw || rulegenParams[encodeURIComponent(inst.entry.root) + '/@visible'] === false) continue;
-    p.push(); try { inst.handlers.draw(); } finally { p.pop(); }
+    rulegenRunRoot = inst.entry.root;
+    p.push(); try { inst.handlers.draw(); } finally { p.pop(); rulegenRunRoot = null; }
   }
   // Results not used for a while (old values, gestures that are gone) are dropped.
   if (rulegenFrameNo % 120 === 0) for (const inst of rulegenLive) for (const [k, entry] of inst.memo) if (rulegenFrameNo - entry.used > RULEGEN_MEMO_IDLE) inst.memo.delete(k);

@@ -14,6 +14,7 @@ import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
 import { concernSuggestionsSchema, handleProblem, inspectResultSchema, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
 
@@ -50,7 +51,7 @@ const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
@@ -113,8 +114,10 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
       // The modules that draw the brush, to find constants the concern depends on (hidden parameters).
       code: brushModules(input),
-      // A recommendation was applied and added a transformation: the overlays are rebuilt to show it too.
-      ...(input.inspection!.update ? { appliedRecommendation: { title: input.inspection!.update.title, detail: input.inspection!.update.detail, nodeId: input.inspection!.update.nodeId, addedTransformationId: input.inspection!.update.transformationId },
+      // A recommendation was applied (values, a transformation changed or added, a state or transition): the overlays are rebuilt for it.
+      ...(input.inspection!.update ? { appliedRecommendation: { kind: input.inspection!.update.kind, title: input.inspection!.update.title, detail: input.inspection!.update.detail, nodeId: input.inspection!.update.nodeId,
+          ...(input.inspection!.update.targetId ? { targetId: input.inspection!.update.targetId } : {}), ...(input.inspection!.update.transformationId ? { addedTransformationId: input.inspection!.update.transformationId } : {}),
+          ...(input.inspection!.update.changes.length ? { changes: input.inspection!.update.changes } : {}) },
         previousSummary: input.inspection!.update.summary, previousOverlays: input.inspection!.update.overlays } : {}) }),
     /** Drop anything that points outside the brush, so overlays and fixes stay applicable. */
     finalize: (input, output: InspectResult) => {
@@ -176,6 +179,59 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const items = output.suggestions.map(item => item.replace(/\s+/g, " ").trim()).filter(item => item && item !== typed.trim() && !seen.has(item) && seen.add(item));
       if (!items.length) throw new Error("제안할 concern을 만들지 못했습니다.");
       return { suggestions: [...items.filter(item => typed && item.startsWith(typed)), ...items.filter(item => !typed || !item.startsWith(typed))] };
+    },
+  },
+  explore: {
+    schema: exploreResultSchema, maxTokens: () => 16000, effort: "medium",
+    check: input => !input.scene || !input.inspection || !input.explore ? "탐색할 brush와 기록이 필요합니다." : !input.inspection.steps.length ? "먼저 brush를 움직여 단계를 기록해주세요." : undefined,
+    context: input => ({ mode: input.explore!.mode, concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
+      algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, input: input.explore!.input, canvas,
+      code: brushModules(input), inspection: { summary: input.explore!.summary, overlays: input.explore!.overlays },
+      ...(input.explore!.recommendation ? { recommendation: input.explore!.recommendation } : {}) }),
+    /** Keep only what this frame can run: a preview that applies to the module, values it reads, handles on values it has. */
+    finalize: (input, output: ExploreResult) => {
+      const explore = input.explore!, nodes = new Map(input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)).map(node => [node.id, node]));
+      const notes: string[] = [];
+      // A preview only for a recommendation that is not in the code yet (a value one is drawn with its values instead);
+      // checkpoints of the code's execution (edits that only add m.trace calls) for running it.
+      const previewing = Boolean(explore.recommendation && !explore.recommendation.applied && explore.recommendation.kind !== "value");
+      const execution = explore.mode === "execution";
+      let edits = output.edits.filter(edit => nodes.has(edit.nodeId) && (previewing || (execution && traceOnly(edit))));
+      const program = edits.length ? exploreProgram(input.previous, input.scene!, { edits, values: [] }) : null;
+      const modules = (code: string) => [...new Set(edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))].map(key => programModules(code).get(key) ?? "");
+      if (program && ("error" in program || !modules(program.code).every(parsesModule))) { edits = []; notes.push(previewing ? "추천을 미리 적용하는 코드를 만들지 못해 지금 코드로 보여줍니다." : "실행 과정을 기록하는 코드를 넣지 못해 그리는 순서만 보여줍니다."); }
+      const edited = edits.map(edit => edit.replace).join("\n");
+      // A preview value is one the edits read and the node does not have yet.
+      const values = output.values.filter((value, i, all) => all.findIndex(other => other.nodeId === value.nodeId && other.id === value.id) === i && nodes.has(value.nodeId)
+        && !input.inspection!.constraints.some(row => row.nodeId === value.nodeId && row.propertyId === value.id)
+        && (value.value.type !== "number" || (value.value.min <= value.value.value && value.value.value <= value.value.max && value.value.min < value.value.max))
+        && new RegExp(`m\\.(?:v|opt)\\(\\s*(?:[^,()]*,\\s*)?["'][^"']*/${value.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).test(edited));
+      // Code that reads a value that is not there stops: edits reading a dropped one go too.
+      if (edits.length && output.values.some(value => !values.includes(value) && edited.includes(`/${value.id}"`))) { edits = []; notes.push("미리보기 코드가 올바르지 않은 값을 읽어 지금 코드로 보여줍니다."); }
+      const kept = edits.length ? values : [];
+      const specs = new Map<string, { type: string }>([...input.inspection!.constraints.map(row => [row.key, { type: row.type }] as const), ...kept.map(value => [previewKey(value), value.value] as const)]);
+      const linked = (kind: string, nodeId: string, id: string) => {
+        const node = nodes.get(nodeId); if (!node) return false;
+        if (kind === "parameter") return kept.some(value => value.nodeId === nodeId && value.id === id);
+        if (kind === "constraint") return input.inspection!.constraints.some(row => row.nodeId === nodeId && row.propertyId === id);
+        return Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
+      };
+      // Execution: the handle runs execution (and only it); parameters: handles change the brush's values or the preview's.
+      const usable = (handle: NonNullable<ExploreResult["overlays"][number]["handle"]>) => execution
+        ? handle.key === EXEC_KEY && !handleProblem(handle, { type: "number" })
+        : handle.key !== EXEC_KEY && !handleProblem(handle, specs.get(handle.key));
+      const overlays = output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)).map(item => item.handle && usable(item.handle) ? item : { ...item, handle: null });
+      if (!overlays.some(item => item.handle)) throw new Error(execution ? "execution을 조절할 손잡이를 만들지 못했습니다. 다시 시도해주세요." : "조절할 핵심 값의 손잡이를 만들지 못했습니다. 다시 시도해주세요.");
+      // Steps only when there are steps to move between; a range too narrow to move in is the whole.
+      const axis = output.axis === "steps" && input.inspection!.steps.length < 2 ? "input" : output.axis;
+      const [from, to] = output.to - output.from >= .02 ? [output.from, output.to] : [0, 1];
+      // The kinds of operation a run's steps are, named once each: only those the kept checkpoints take (`op: n`).
+      const ops = new Set(edits.flatMap(edit => [...edit.replace.matchAll(/\bop\s*:\s*(\d+)/g)].map(match => Number(match[1]))));
+      const named = execution && axis === "run" ? output.stages.filter((stage, i, all) => all.findIndex(other => other.op === stage.op) === i) : [];
+      const stages = named.filter(stage => ops.has(stage.op)), lost = named.filter(stage => !ops.has(stage.op));
+      if (lost.length) notes.push(`${lost.map(stage => `「${stage.name}」`).join(", ")} 단계는 코드에 넣지 못해 빠졌습니다. 다시 만들면 들어갈 수 있습니다.`);
+      const note = notes.length ? ` (${notes.join(" ")})` : "";
+      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, overlays, stages };
     },
   },
   handles: {

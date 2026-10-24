@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { Viewport } from "./schema";
 
-// Frames on the board are sketch frames (drawn on, rendering their own result)
-// and proxy frames (running the direct manipulation handles of a node of a sketch frame).
+// Frames on the board are sketch frames (drawn on, rendering their own result),
+// proxy frames (running the direct manipulation handles of a node of a sketch frame)
+// and exploration frames (a brush's marks to try execution or values on; not saved).
 
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const defaultFrames = () => ({ source: { x: 0, y: 0 } });
@@ -12,8 +13,10 @@ export const workspaceSchema = z.object({
   frames: z.object({ source: position.default(() => defaultFrames().source) }).catchall(position).default(defaultFrames),
 });
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
-export type FrameId = "source" | `sketch-${string}` | `proxy-${string}`;
+export type FrameId = "source" | `sketch-${string}` | `proxy-${string}` | `explore-${string}`;
 export const FRAME_WIDTH = 900, FRAME_HEIGHT = 600, FRAME_GAP_X = 140, FRAME_GAP_Y = 140;
+/** Room an exploration frame's controls take under it. */
+export const EXPLORE_BAR_HEIGHT = 260;
 
 export function removeWorkspaceFrame(layout: WorkspaceLayout, id: FrameId): WorkspaceLayout {
   if (id === "source") return { ...layout, hiddenFrames: [...new Set([...layout.hiddenFrames, "source" as const])] };
@@ -37,9 +40,10 @@ export function nextSketchPosition(frames: WorkspaceLayout["frames"]) {
 /** A free spot right of `fromId` (then below it), for frames derived from another frame. */
 export function besideFramePosition(frames: WorkspaceLayout["frames"], fromId: string) {
   const origin = frames[fromId] || frames.source || { x: 0, y: 0 };
-  const taken = sketchPositions(frames);
+  // An exploration frame has its controls under it: that space is taken too.
+  const taken = Object.entries(frames).map(([id, at]) => ({ ...at, h: id.startsWith("explore-") ? FRAME_HEIGHT + EXPLORE_BAR_HEIGHT : FRAME_HEIGHT }));
   const candidate = { x: origin.x + FRAME_WIDTH + FRAME_GAP_X, y: origin.y };
-  while (taken.some(f => Math.abs(f.x - candidate.x) < FRAME_WIDTH && Math.abs(f.y - candidate.y) < FRAME_HEIGHT)) candidate.y += FRAME_HEIGHT + FRAME_GAP_Y;
+  while (taken.some(f => Math.abs(f.x - candidate.x) < FRAME_WIDTH && (f.y <= candidate.y ? candidate.y - f.y < f.h : f.y - candidate.y < FRAME_HEIGHT))) candidate.y += FRAME_HEIGHT + FRAME_GAP_Y;
   return candidate;
 }
 export function zoomAt(camera: Viewport, zoom: number, anchor: { x: number; y: number }): Viewport {

@@ -26,13 +26,17 @@ export type TraceStep = { nodeId: string | null; from: string | null; to: string
 /** A recorded step to hold the sketch at: its runtime, and what-if values it is drawn with (that step only). */
 export type RestorePoint = { id: string; runtime: unknown; params?: Record<string, unknown>;
   /** What-if values of single drawn items (by item id), read by m.v(key, id). */
-  items?: Record<string, Record<string, unknown>> } | null;
+  items?: Record<string, Record<string, unknown>>;
+  /** Record the held moment's drawing as one run of the code (an exploration frame), drawing only `budget` events of it (null: all). */
+  run?: { budget: number | null; roots?: string[] } } | null;
+/** One run of the code as executed: checkpoints (m.trace) and drawing calls in order, with where each is on the canvas. */
+export type ExecutionRun = { total: number; events: { index: number; kind: string; label: string; x?: number; y?: number; w?: number; h?: number; root?: string; data?: unknown }[] };
 export type StateJump = { nodeId: string; stateId: string; revision: number } | null;
 type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean;
   /** Show the running sketch (a hidden one is not drawn by the browser) without giving it input. */
   visible?: boolean;
   /** Esc pressed inside the running sketch (it has the keyboard while it takes input). */
-  onEscape?: () => void; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; /** The stores as the held step is drawn now (by the current code and values), with its restore id. */ onDrawn?: (restoreId: string, stores: Record<string, unknown>) => void; onStatesChange?: (states: Record<string, string>) => void };
+  onEscape?: () => void; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; /** The stores as the held step is drawn now (by the current code and values), with its restore id (and the run, when one was asked for). */ onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; /** Every picture the sketch shows (a capture). */ onCapture?: (image: string) => void; onStatesChange?: (states: Record<string, string>) => void };
 
 /**
  * Runs a prepared sketch in an isolated iframe. The sketch is reloaded only when
@@ -68,10 +72,10 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
   };
   const sendRestore = () => {
     if (!ready.current) return;
-    const point = current.current.restore ?? null, id = point && point.runtime ? point.id : null, params = id === null ? null : point!.params ?? null, items = id === null ? null : point!.items ?? null;
-    const key = id === null ? null : `${id}|${JSON.stringify(params)}|${JSON.stringify(items)}`;
+    const point = current.current.restore ?? null, id = point && point.runtime ? point.id : null, params = id === null ? null : point!.params ?? null, items = id === null ? null : point!.items ?? null, run = id === null ? null : point!.run ?? null;
+    const key = id === null ? null : `${id}|${JSON.stringify(params)}|${JSON.stringify(items)}|${JSON.stringify(run)}`;
     if (key === sentRestore.current) return;
-    sentRestore.current = key; post({ type: "restore", id, snapshot: id === null ? null : point!.runtime, params, items });
+    sentRestore.current = key; post({ type: "restore", id, snapshot: id === null ? null : point!.runtime, params, items, run });
   };
   useImperativeHandle(ref, () => ({ capture: () => image, emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
     isReady: () => ready.current, replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
@@ -85,7 +89,7 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
     } }));
   useEffect(sendControls, [props.jump?.revision, props.playing, props.tracing]);
   useEffect(sendValues, [executable]);
-  useEffect(sendRestore, [props.restore?.id ?? null, Boolean(props.restore?.runtime), JSON.stringify(props.restore?.params ?? null), JSON.stringify(props.restore?.items ?? null)]);
+  useEffect(sendRestore, [props.restore?.id ?? null, Boolean(props.restore?.runtime), JSON.stringify(props.restore?.params ?? null), JSON.stringify(props.restore?.items ?? null), JSON.stringify(props.restore?.run ?? null)]);
   useEffect(() => {
     const token = crypto.randomUUID();
     tokenRef.current = token; ready.current = false; loaded.current = structure; aliases.current.clear(); sentJump.current = null; sentRestore.current = null; lastStates.current = "";
@@ -105,7 +109,7 @@ let tracing=false,traceQueue=[],lastEmit=null;
 const paramsNow=()=>typeof rulegenParams!=='undefined'?Object.assign({},rulegenParams):{};
 // Each transition keeps the runtime state of its own moment: several can happen within one frame (a state left at once), and each step must restore to its own state.
 // A selected step (pinned) is held exactly: no transition happens and none is recorded while it is shown.
-let pinned=null,pinnedId=null,pinnedParams=null,pinnedItems=null,lastPlaying=true;
+let pinned=null,pinnedId=null,pinnedParams=null,pinnedItems=null,pinnedRun=null,lastPlaying=true;
 // The running state when a step was first held, so Live goes back to it (holding a step puts that step's state into the sketch).
 let beforePinned=null;
 const snapshotNow=()=>{try{return typeof rulegenSnapshot==='function'?rulegenSnapshot():null;}catch(error){return null;}};
@@ -151,9 +155,10 @@ function replay(points){if(!points.length)return;
 // Draw the pinned step: its state is put back, drawn once, and put back again, so the sketch's own draw cannot move it on.
 // What-if values of the pinned step go over the values for that drawing only; restoring again puts the real ones back.
 // Single items' what-if values are read by m.v(key, id) during that drawing only.
-function showPinned(){rulegenRestore(pinned);if(pinnedParams)for(const key of Object.keys(pinnedParams))if(key in rulegenParams)rulegenParams[key]=pinnedParams[key];const items=typeof rulegenItemValues!=='undefined';if(items)rulegenItemValues=pinnedItems||{};try{forceRender=true;p.redraw();reportDrawn();}finally{if(items)rulegenItemValues={};}rulegenRestore(pinned);}
+// An exploration frame records that drawing as one run of the code (checkpoints and drawing calls), drawing only its budget of it.
+function showPinned(){rulegenRestore(pinned);if(pinnedParams)for(const key of Object.keys(pinnedParams))if(key in rulegenParams)rulegenParams[key]=pinnedParams[key];const items=typeof rulegenItemValues!=='undefined';if(items)rulegenItemValues=pinnedItems||{};const running=Boolean(pinnedRun)&&typeof rulegenRunStart==='function';if(running)rulegenRunStart(pinnedRun.budget,pinnedRun.roots);try{forceRender=true;p.redraw();reportDrawn(running?rulegenRunEnd():null);}finally{if(items)rulegenItemValues={};if(running&&rulegenRun)rulegenRunEnd();}rulegenRestore(pinned);}
 // The stores as the running code draws the restored step (read by inspection overlays at that step).
-function reportDrawn(){if(typeof rulegenLive==='undefined'||typeof rulegenPlain!=='function')return;const stores={};for(const inst of rulegenLive)stores[inst.entry.root]=rulegenPlain(inst.store,0);parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},drawn:stores,drawnFor:pinnedId},'*');}
+function reportDrawn(run){if(typeof rulegenLive==='undefined'||typeof rulegenPlain!=='function')return;const stores={};for(const inst of rulegenLive)stores[inst.entry.root]=rulegenPlain(inst.store,0);parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},drawn:stores,drawnFor:pinnedId,run:run||null},'*');}
 function capture(){const canvas=document.querySelector('canvas');if(canvas)parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},image:canvas.toDataURL('image/png'),states:hasMachine()?Object.fromEntries(Object.keys(rulegenState).map(id=>[id,rulegenState[id].id])):null},'*');}
 // changed: the value keys that just changed; only setups that read one of them run again (older programs run every setup).
 function rerender(changed){budgetReset();if(typeof rulegenSetup==='function'){if(!changed||changed.size)rulegenSetup(changed);}else setup();forceRender=true;p.redraw();capture();}
@@ -170,8 +175,8 @@ window.addEventListener('message',event=>{
     }else if(event.data.type==='replay' && Array.isArray(event.data.points)){replay(event.data.points.filter(point=>point&&Number.isFinite(point.x)&&Number.isFinite(point.y)&&Number.isFinite(point.t)));return;
     }else if(event.data.type==='pointer' && ['mousemove','mousedown','mouseup'].includes(event.data.kind) && Number.isFinite(event.data.x) && Number.isFinite(event.data.y)){fire(event.data.kind,{x:event.data.x,y:event.data.y});if(event.data.kind==='mouseup')fire('click',{x:event.data.x,y:event.data.y});return;
     }else if(event.data.type==='restore'){
-      if(event.data.snapshot&&typeof rulegenRestore==='function'){if(!pinned)beforePinned=snapshotNow();pinned=event.data.snapshot;pinnedId=typeof event.data.id==='string'?event.data.id:null;pinnedParams=event.data.params&&typeof event.data.params==='object'?event.data.params:null;pinnedItems=event.data.items&&typeof event.data.items==='object'?event.data.items:null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();return;}
-      else if(pinned){pinned=null;pinnedId=null;pinnedParams=null;pinnedItems=null;if(beforePinned&&typeof rulegenRestore==='function')rulegenRestore(beforePinned);beforePinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;forceRender=true;if(lastPlaying&&wasLooping)p.loop();else p.redraw();}
+      if(event.data.snapshot&&typeof rulegenRestore==='function'){if(!pinned)beforePinned=snapshotNow();pinned=event.data.snapshot;pinnedId=typeof event.data.id==='string'?event.data.id:null;pinnedParams=event.data.params&&typeof event.data.params==='object'?event.data.params:null;pinnedItems=event.data.items&&typeof event.data.items==='object'?event.data.items:null;pinnedRun=event.data.run&&typeof event.data.run==='object'?event.data.run:null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();return;}
+      else if(pinned){pinned=null;pinnedId=null;pinnedParams=null;pinnedItems=null;pinnedRun=null;if(beforePinned&&typeof rulegenRestore==='function')rulegenRestore(beforePinned);beforePinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;forceRender=true;if(lastPlaying&&wasLooping)p.loop();else p.redraw();}
     }else if(event.data.type==='event' && hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
       const before=Object.assign({},rulegenParams);
@@ -204,7 +209,10 @@ p.draw=()=>{budgetReset();try{
       if (event.data.escape) { current.current.onEscape?.(); return; }
       if (event.data.ready) { ready.current = true; sentJump.current = null; sendControls(); sendValues(); sendRestore(); }
       if (typeof event.data.error === "string") current.current.onError(event.data.error.slice(0, 500));
-      if (event.data.drawn && typeof event.data.drawn === "object" && typeof event.data.drawnFor === "string" && event.data.drawnFor === sentRestore.current && JSON.stringify(event.data.drawn).length < 1_500_000) current.current.onDrawn?.(event.data.drawnFor, event.data.drawn);
+      if (event.data.drawn && typeof event.data.drawn === "object" && typeof event.data.drawnFor === "string" && sentRestore.current?.startsWith(`${event.data.drawnFor}|`) && JSON.stringify(event.data.drawn).length < 1_500_000) {
+        const run = event.data.run && typeof event.data.run === "object" && Number.isFinite(event.data.run.total) && Array.isArray(event.data.run.events) && JSON.stringify(event.data.run).length < 3_000_000 ? event.data.run as ExecutionRun : undefined;
+        current.current.onDrawn?.(event.data.drawnFor, event.data.drawn, run);
+      }
       const trace = event.data.trace;
       if (trace && typeof trace === "object" && trace.params && typeof trace.params === "object") {
         const text = (value: unknown) => typeof value === "string" ? value.slice(0, 80) : null;
@@ -216,7 +224,7 @@ p.draw=()=>{budgetReset();try{
         const key = JSON.stringify(states);
         if (key !== lastStates.current) { lastStates.current = key; current.current.onStatesChange?.(states); }
       }
-      if (typeof event.data.image === "string" && /^data:image\/png;base64,/.test(event.data.image) && event.data.image.length < 8_000_000) setImage(event.data.image);
+      if (typeof event.data.image === "string" && /^data:image\/png;base64,/.test(event.data.image) && event.data.image.length < 8_000_000) { setImage(event.data.image); current.current.onCapture?.(event.data.image); }
     };
     window.addEventListener("message", receive); return () => { clearTimeout(timer); window.removeEventListener("message", receive); };
   }, [structure]);
