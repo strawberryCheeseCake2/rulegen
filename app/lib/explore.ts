@@ -4,6 +4,7 @@ import { overlaySchema, type InspectionStep, type InspectResult, type Recommenda
 export { PATH_ROOT } from "./inspection";
 import { findNode } from "./scene/graph";
 import { addHostParams, programModules, sceneInstances } from "./scene/machines";
+import { SKETCH_SHAPES } from "./sketch-gestures";
 import { idSchema, numberValueSchema, toggleValueSchema, type Scene } from "./scene/schema";
 import { bindingKey } from "./scene/values";
 
@@ -51,6 +52,17 @@ export const exploreResultSchema = z.object({
   stages: z.array(z.object({ op: z.number().int().min(1).max(9), name: z.string().min(1).max(40), explain: z.string().max(300),
     /** One gesture of this operation's handle may run several steps (one continuous motion through many items); otherwise one gesture is one step. */
     many: z.boolean() })).max(6),
+  /**
+   * Operations performed by drawing a mark instead of (or as well as) dragging a handle: the mark (`shape`), where it
+   * goes (`x`, `y`, `w`, `h`: expressions like an overlay's, on what the next step works on) and what it means (`hint`).
+   * An arrow's target (`toX`, `toY`), the point list a trace follows (`path`, "<root>:<path>" as `each` reads it) and a
+   * custom mark's own shape (`template`, points in any units) are given when the shape uses them ("" / [] otherwise).
+   * Drawing it there and submitting it executes the next step of that operation.
+   */
+  sketches: z.array(z.object({ op: z.number().int().min(1).max(9), shape: z.enum(SKETCH_SHAPES),
+    x: z.string().max(400), y: z.string().max(400), w: z.string().max(400), h: z.string().max(400),
+    toX: z.string().max(400), toY: z.string().max(400), path: z.string().max(200),
+    template: z.array(z.object({ x: z.number(), y: z.number() })).max(64), hint: z.string().max(80) })).max(6),
 });
 export type ExploreResult = z.infer<typeof exploreResultSchema>;
 

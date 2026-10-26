@@ -28,9 +28,12 @@ export type RestorePoint = { id: string; runtime: unknown; params?: Record<strin
   /** What-if values of single drawn items (by item id), read by m.v(key, id). */
   items?: Record<string, Record<string, unknown>>;
   /** Record the held moment's drawing as one run of the code (an exploration frame), drawing only `budget` events of it (null: all). */
-  run?: { budget: number | null; roots?: string[] } } | null;
+  run?: { budget: number | null; roots?: string[];
+    /** The checkpoint (its number in the run) whose picture of the brush so far is drawn (m.trace's show). */
+    show?: number | null } } | null;
 /** One run of the code as executed: checkpoints (m.trace) and drawing calls in order, with where each is on the canvas. */
-export type ExecutionRun = { total: number; events: { index: number; kind: string; label: string; x?: number; y?: number; w?: number; h?: number; root?: string; data?: unknown }[] };
+export type ExecutionRun = { total: number; events: { index: number; kind: string; label: string; x?: number; y?: number; w?: number; h?: number; root?: string; data?: unknown;
+  /** A checkpoint that can draw the brush as it is after it. */ shows?: boolean }[] };
 export type StateJump = { nodeId: string; stateId: string; revision: number } | null;
 type Props = { executable: string; onError: (error: string) => void; machineEnabled?: boolean;
   /** Show the running sketch (a hidden one is not drawn by the browser) without giving it input. */
@@ -156,7 +159,7 @@ function replay(points){if(!points.length)return;
 // What-if values of the pinned step go over the values for that drawing only; restoring again puts the real ones back.
 // Single items' what-if values are read by m.v(key, id) during that drawing only.
 // An exploration frame records that drawing as one run of the code (checkpoints and drawing calls), drawing only its budget of it.
-function showPinned(){rulegenRestore(pinned);if(pinnedParams)for(const key of Object.keys(pinnedParams))if(key in rulegenParams)rulegenParams[key]=pinnedParams[key];const items=typeof rulegenItemValues!=='undefined';if(items)rulegenItemValues=pinnedItems||{};const running=Boolean(pinnedRun)&&typeof rulegenRunStart==='function';if(running)rulegenRunStart(pinnedRun.budget,pinnedRun.roots);try{forceRender=true;p.redraw();reportDrawn(running?rulegenRunEnd():null);}finally{if(items)rulegenItemValues={};if(running&&rulegenRun)rulegenRunEnd();}rulegenRestore(pinned);}
+function showPinned(){rulegenRestore(pinned);if(pinnedParams)for(const key of Object.keys(pinnedParams))if(key in rulegenParams)rulegenParams[key]=pinnedParams[key];const items=typeof rulegenItemValues!=='undefined';if(items)rulegenItemValues=pinnedItems||{};const running=Boolean(pinnedRun)&&typeof rulegenRunStart==='function';if(running)rulegenRunStart(pinnedRun.budget,pinnedRun.roots,pinnedRun.show);try{forceRender=true;p.redraw();reportDrawn(running?rulegenRunEnd():null);}finally{if(items)rulegenItemValues={};if(running&&rulegenRun)rulegenRunEnd();}rulegenRestore(pinned);}
 // The stores as the running code draws the restored step (read by inspection overlays at that step).
 function reportDrawn(run){if(typeof rulegenLive==='undefined'||typeof rulegenPlain!=='function')return;const stores={};for(const inst of rulegenLive)stores[inst.entry.root]=rulegenPlain(inst.store,0);parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},drawn:stores,drawnFor:pinnedId,run:run||null},'*');}
 function capture(){const canvas=document.querySelector('canvas');if(canvas)parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},image:canvas.toDataURL('image/png'),states:hasMachine()?Object.fromEntries(Object.keys(rulegenState).map(id=>[id,rulegenState[id].id])):null},'*');}

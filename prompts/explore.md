@@ -21,11 +21,12 @@ Inputs are as for the targeted inspection: `brushNodes`, `algorithms`, `constrai
 
 ### checkpoints: one per step
 
-For `"run"`, add checkpoints to the brush's module in `edits` (they run in this frame only; the sketch is not changed): `m.trace("<what this step does, Korean>", { op, …data })`. Each call STARTS ONE STEP, so place one at the start of each internal operation the cause or the recommendation is about, at the granularity that teaches the principle: one per item per operation (each item placed, each pair compared, each merge, each layer of each item), not one for a whole loop and not one per vertex or pixel. Put it right BEFORE the code that does the operation (and draws its result), inside the loop, so the step's drawing belongs to it. Do not add checkpoints that only announce a stage: the stages are named in `stages`.
+For `"run"`, add checkpoints to the brush's module in `edits` (they run in this frame only; the sketch is not changed): `m.trace("<what this step does, Korean>", { op, …data }[, show])`. Each call STARTS ONE STEP, so place one at the start of each internal operation the cause or the recommendation is about, at the granularity that teaches the principle: one per item per operation (each item placed, each pair compared, each merge, each layer of each item), not one for a whole loop and not one per vertex or pixel. Put it right BEFORE the code that does the operation (and draws its result), inside the loop, so the step's drawing belongs to it. Do not add checkpoints that only announce a stage: the stages are named in `stages`.
 
 - ONE VERB PER STEP. Read the code for every distinct thing it does to an item, and make each its own operation (`op`) with its own checkpoint: moving or placing it, testing it, REMOVING part of it (filtering, culling, clipping, hiding, skipping, cutting what lies inside another item), keeping it, merging, splitting, growing, turning, recoloring, connecting, collecting, drawing it. Never fold one into another's step (not "examine the outline and drop its inner part" as one step): e.g. per bush, 1 move its outline into place, 2 remove the parts inside other bushes, 3 ink what is left. A step that takes something away matters as much as one that adds: put its checkpoint where the code decides it (before the `filter`, the `continue`, the clip), with what it removes in its data. When a decision has two outcomes (kept / removed), each outcome that changes the picture is a step of its own kind.
 - WHAT THE GESTURE NEEDS goes in the data: whatever geometry the gesture you design for that operation (below) reads, under names you choose. For example: a move: where it is and where it goes (`toX`, `toY`); a removal: the part removed and the item it belongs to (`fromX`, `fromY`); a merge: both ends; a growth: the base and the tip; a turn: the pivot and the angle; a stroke: its path. These are examples, not a list to pick from: a gesture of your own needs its own points (the wind's direction for a flame that leans, the cut line for a pruned branch, the rim a droplet spreads to).
-- Code that collects first and draws everything at the end changes the canvas only at the last step: then each step's data carries what THAT step produced (the part removed, the piece kept, the result so far), so the overlays can show the step even though nothing is drawn yet.
+- THE BRUSH MARKS THEMSELVES CHANGE AT EVERY STEP. The user understands by watching the drawing change under the hand, not by reading overlays: after each step the canvas must show the brush as it is at that point of execution. Code that draws as it goes (each item drawn in the loop) does this by itself. Code that computes or collects first and draws at the end (outlines tested, parts removed, pieces kept, then inked once) draws nothing until its last step, so give each of those checkpoints a THIRD argument, `show`: `m.trace(label, data, () => { … })`, a function that draws the brush AS IT IS AFTER THIS STEP, in the brush's own look (its own drawing helpers, colors, stroke weight; copy how the module draws at the end), from the variables in scope at that point. The app calls it right there when that step is the one reached (and never otherwise; what it draws is not a step). For example, removing an inner part of bush 2: draw every bush's outline as it stands now — the parts removed so far gone (this one just now), the rest still there — so the user sees the inner line disappear; keeping a piece: draw the pieces kept so far inked; testing: draw the outlines with the one tested now slightly emphasized. When the result before the end only exists partly (a list being filled), draw what exists plus the items not processed yet as they were, so the picture stays whole and only the step's change differs from the previous step. The show function only reads and draws: it never changes a variable, the store or anything the code uses later.
+- Each step's data also carries what THAT step produced (the part removed, the piece kept), for the overlays: they point at the change, they are not the change.
 
 - The label says concretely what this step does and why, with the numbers that decide it (`` `불꽃 ${i + 1}: 앞 불꽃과 ${d.toFixed(0)}px 겹쳐 붙임` ``, `` `가지 ${depth}단: 길이 ${len.toFixed(0)} → 둘로 나눔` ``), so going through the labels explains the principle.
 - `data.op` is a NUMBER (1, 2, 3 …) naming which KIND of operation the step is (the same number for every step of that kind), as listed in `stages`.
@@ -52,7 +53,7 @@ Overlays and handles are written exactly as in a targeted inspection (same expre
 
 ### mode "execution"
 
-Axis `"run"`: give EACH kind of operation (`stages`) its OWN handle, key `"@execution"`, on an overlay shown only while the next step is of that kind (`when`: `s("@next", "op") == <op> && !s("@next", "none")`). Dragging it executes steps; dragging back takes them back (the value is clamped to whole steps, 0 … total). Design each gesture as a METAPHOR OF ITS OPERATION, performed on what the next step works on, so doing the gesture IS doing that step:
+Axis `"run"`: give EACH kind of operation (`stages`) its OWN way to perform it: a handle (below) or a sketched mark (further below). A handle has key `"@execution"`, on an overlay shown only while the next step is of that kind (`when`: `s("@next", "op") == <op> && !s("@next", "none")`). Dragging it executes steps; dragging back takes them back (the value is clamped to whole steps, 0 … total). Design each gesture as a METAPHOR OF ITS OPERATION, performed on what the next step works on, so doing the gesture IS doing that step:
 
 - the grip sits on what the next step works on: `x` = `s("@next", "cx")`, `y` = `s("@next", "cy")` (or a point of its data: where an item will grow from, the edge that will join), so after each step it jumps to the next one's subject;
 - the gesture IS the operation's verb, performed with THAT STEP'S geometry (from its data), so every operation feels different: never the same gesture for several operations (not "drag right" for all), and the direction and length come from the step, not fixed numbers.
@@ -72,7 +73,27 @@ Axis `"run"`: give EACH kind of operation (`stages`) its OWN handle, key `"@exec
 - only when an operation truly IS one continuous motion through many items (sweeping the pen along a row being placed, turning a dial through iterations of one loop) may one gesture run several of its steps: set its `many` true in `stages` (then `value` may use `nearestStep(hx, hy)` to execute up to the step pointed at). Otherwise `many` is false;
 - `hint` names the gesture and the operation in plain Korean (about 20 characters): `"위로 당겨 불꽃 피우기"`, `"옆으로 문질러 내부 덧칠"`.
 
-The other overlays (with `handle` `null`) show the step on the things themselves (before a removal: what WILL be removed, e.g. red and dashed from `@next`; after it: where it was, faint, from `@last`): what the step just executed did (`@last`: the item, the pair compared and the distance against the threshold, the merged outline), what the next step will work on (`@next`), and the plan (`each: "@steps:"`: done steps solid, coming steps faint, by `item("done")`).
+#### sketched marks: performing a step by drawing on it
+
+Some operations are done more naturally by MARKING the picture, as one would with a pen on paper, than by dragging a grip: crossing out what is removed, circling what is kept, drawing an arrow to where something goes, cutting through what is split, joining two things with a line, tapping what is chosen, ticking what is accepted, scribbling over what is erased, tracing the path something follows. For such an operation give a `sketches` entry (instead of, or as well as, its handle). The user draws the mark on the frame where it belongs; the app recognizes it and, when the user submits it, executes the next step of that operation. Use whatever modality fits each operation: one operation may be dragged, the next sketched.
+
+- `op`: the operation (as in `stages`); one entry per operation.
+- `shape`, one of:
+  - `"x"`: two crossing strokes over the thing (removing, deleting, rejecting);
+  - `"circle"`: a loop around it (keeping, selecting, grouping);
+  - `"arrow"`: one stroke from the thing to where it goes (moving, sending, assigning): give `toX`, `toY`, the destination;
+  - `"cut"`: one stroke across it from one side to the other (splitting, slicing, separating);
+  - `"line"`: one straight stroke on it (joining, connecting, aligning, measuring);
+  - `"tap"`: a single press on it (choosing, triggering, one event);
+  - `"check"`: a tick on it (accepting, passing a test);
+  - `"scribble"`: back and forth over it (erasing, filling, roughening);
+  - `"trace"`: drawing along a path (the path an item follows, an outline being inked): give `path`, the point list to follow as `"<root>:<store path>"` the way `each` reads one (e.g. `"@next:data.points"`);
+  - `"custom"`: ANY other mark that fits the operation and the picture better (a wave for a ripple, a spiral for a curl, a zigzag for a crack, a bracket for a group, a flame lick, a stitch …): give `template`, the mark itself as 8–40 points in drawing order (any units; it is matched at any size and either direction, and shown faintly in the area as a guide). Do not limit yourself to the named shapes when another mark says the operation better.
+- `x`, `y`, `w`, `h`: expressions (like an overlay's) for where the mark goes: the thing the next step works on (`s("@next", "x")` …, or a part of its data); the area is shown dashed and the mark must be on it.
+- `toX`, `toY`: the arrow's destination (`""` for other shapes); `path`: the trace's path (`""` otherwise); `template`: the custom mark (`[]` otherwise).
+- `hint` (Korean, about 20 characters): the mark and what it does, e.g. `"X로 그어 안쪽 선 지우기"`, `"동그라미로 남길 윤곽 고르기"`, `"화살표로 제자리에 보내기"`.
+
+The other overlays (with `handle` `null`) only annotate the change the drawing shows (keep them few and light; the brush marks changing is the explanation): they mark the step on the things themselves (before a removal: what WILL be removed, e.g. red and dashed from `@next`; after it: where it was, faint, from `@last`): what the step just executed did (`@last`: the item, the pair compared and the distance against the threshold, the merged outline), what the next step will work on (`@next`), and the plan (`each: "@steps:"`: done steps solid, coming steps faint, by `item("done")`).
 
 Axes `"input"` / `"steps"`: exactly one handle with key `"@execution"` (the progress 0..1, clamped to `from`..`to`), whose grip follows the progress (`pathX(p("@execution"))` …) and whose `value` is the inverse (`nearest(hx, hy)`).
 
@@ -108,6 +129,9 @@ Return exactly one object matching `prompts/schemas/explore.json`:
   "stages": [
     { "op": 1, "name": "바깥 불꽃 피우기", "explain": "불꽃마다 주황 윤곽을 따로 그립니다. 이웃과 겹쳐도 아직 각자의 모양입니다.", "many": false },
     { "op": 2, "name": "밝은 내부 덧칠", "explain": "모든 바깥 불꽃 위에 밝은 내부를 덧칠합니다. 겹친 부분의 경계가 이 칠에 덮여 하나로 이어져 보입니다.", "many": false }
+  ],
+  "sketches": [
+    { "op": 2, "shape": "scribble", "x": "s(\"@next\", \"x\")", "y": "s(\"@next\", \"y\")", "w": "s(\"@next\", \"w\")", "h": "s(\"@next\", \"h\")", "toX": "", "toY": "", "path": "", "template": [], "hint": "내부를 덧칠해 경계 덮기" }
   ],
   "edits": [
     { "nodeId": "flame-brush", "find": "for (const f of flames) drawOuter(f);", "replace": "for (const f of flames) { m.trace(`불꽃 ${f.i + 1} 바깥층: 앞 불꽃과 ${f.gap.toFixed(0)}px`, { op: 1, x: f.x - f.w / 2, y: f.y - f.h, w: f.w, h: f.h, gap: f.gap }); drawOuter(f); }" },

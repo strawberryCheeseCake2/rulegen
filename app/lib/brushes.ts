@@ -4,8 +4,8 @@ import type { Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
 import { markStyleSchema, MAX_MARKS, MAX_OVERLAY_UPDATES, overlayUpdateSchema, targetedResultSchema } from "./inspection";
 
-// A Brush is a reusable collection ("Brush Stamp"). Every root collection AI
-// creates becomes a brush tool group in the toolbar: its brush tool stamps the
+// A Brush is a reusable collection or object ("Brush Stamp"). Every root node AI
+// creates (but a background) becomes a brush tool group in the toolbar: its brush tool stamps the
 // collection into a sketch frame, and its inspection tools debug that brush only.
 
 /** A targeted inspection tool: made from one inspection annotation + concern, reusable afterwards. */
@@ -66,11 +66,20 @@ export function subBrushFor(scene: Scene, frameId: string, name: string, parent:
   return { id, name: name.slice(0, 100), color: parent?.color ?? brushColor(existing.length), sourceFrameId: frameId, nodeId: root.id, scene: subScene(scene, [root.id]), code: "", targeted: [], parentId: parent?.id ?? "" };
 }
 
-/** One brush per root collection of an AI-generated scene (nested collections are parts of it). */
+/**
+ * A root node that only fills the canvas behind everything and does nothing (a still background): not something
+ * to stamp. Anything interactive (with a state machine) is a brush, a background too.
+ */
+export const isBackdrop = (node: Pick<Scene["nodes"][number], "kind" | "region" | "machine">) => node.kind === "object" && !node.machine && node.region.w >= .95 && node.region.h >= .95;
+/**
+ * One brush per root node of an AI-generated scene: a collection (its nested nodes are parts of it), or an object
+ * standing alone at the root (a single drawn form is kept as one object); every interactive one, only a still
+ * backdrop filling the canvas is left out.
+ */
 export function brushesFor(scene: Scene, frameId: string, existing: Brush[], newId: () => string): Brush[] {
   const made: Brush[] = [];
   for (const node of scene.nodes) {
-    if (node.kind !== "collection" || node.parentId || existing.length + made.length >= MAX_BRUSHES) continue;
+    if (node.parentId || isBackdrop(node) || existing.length + made.length >= MAX_BRUSHES) continue;
     made.push({ id: newId(), name: node.name, color: brushColor(existing.length + made.length), sourceFrameId: frameId, nodeId: node.id,
       scene: subScene(scene, [node.id]), code: "", targeted: [], parentId: "" });
   }

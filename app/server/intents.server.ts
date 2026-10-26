@@ -13,7 +13,7 @@ import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
-import { concernSuggestionsSchema, handleProblem, inspectResultSchema, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { concernSuggestionsSchema, evaluate, handleProblem, inspectResultSchema, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
@@ -221,7 +221,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         ? handle.key === EXEC_KEY && !handleProblem(handle, { type: "number" })
         : handle.key !== EXEC_KEY && !handleProblem(handle, specs.get(handle.key));
       const overlays = output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)).map(item => item.handle && usable(item.handle) ? item : { ...item, handle: null });
-      if (!overlays.some(item => item.handle)) throw new Error(execution ? "execution을 조절할 손잡이를 만들지 못했습니다. 다시 시도해주세요." : "조절할 핵심 값의 손잡이를 만들지 못했습니다. 다시 시도해주세요.");
+      // A sketched mark for an operation of the run: its area must be readable (the same readers as a handle's).
+      const readable = (source: string) => { try { evaluate(source || "0", { values: {}, stores: {}, states: {}, step: 0, steps: 1, item: {}, itemIndex: 0 }); return true; } catch { return false; } };
+      // A trace needs the path it follows, a custom mark its shape.
+      const sketched = execution && output.axis === "run" ? output.sketches.filter((sketch, i, all) => all.findIndex(other => other.op === sketch.op) === i
+        && [sketch.x, sketch.y, sketch.w, sketch.h, sketch.toX, sketch.toY].every(readable)
+        && (sketch.shape !== "trace" || /^[^:]+:/.test(sketch.path)) && (sketch.shape !== "custom" || sketch.template.length >= 4)) : [];
+      if (!overlays.some(item => item.handle) && !sketched.length) throw new Error(execution ? "execution을 조절할 손잡이를 만들지 못했습니다. 다시 시도해주세요." : "조절할 핵심 값의 손잡이를 만들지 못했습니다. 다시 시도해주세요.");
       // Steps only when there are steps to move between; a range too narrow to move in is the whole.
       const axis = output.axis === "steps" && input.inspection!.steps.length < 2 ? "input" : output.axis;
       const [from, to] = output.to - output.from >= .02 ? [output.from, output.to] : [0, 1];
@@ -229,9 +235,10 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const ops = new Set(edits.flatMap(edit => [...edit.replace.matchAll(/\bop\s*:\s*(\d+)/g)].map(match => Number(match[1]))));
       const named = execution && axis === "run" ? output.stages.filter((stage, i, all) => all.findIndex(other => other.op === stage.op) === i) : [];
       const stages = named.filter(stage => ops.has(stage.op)), lost = named.filter(stage => !ops.has(stage.op));
+      const sketches = sketched.filter(sketch => ops.has(sketch.op));
       if (lost.length) notes.push(`${lost.map(stage => `「${stage.name}」`).join(", ")} 단계는 코드에 넣지 못해 빠졌습니다. 다시 만들면 들어갈 수 있습니다.`);
       const note = notes.length ? ` (${notes.join(" ")})` : "";
-      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, overlays, stages };
+      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, overlays, stages, sketches };
     },
   },
   handles: {

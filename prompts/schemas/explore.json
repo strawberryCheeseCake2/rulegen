@@ -338,6 +338,101 @@
         ],
         "additionalProperties": false
       }
+    },
+    "sketches": {
+      "maxItems": 6,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9
+          },
+          "shape": {
+            "type": "string",
+            "enum": [
+              "x",
+              "circle",
+              "arrow",
+              "cut",
+              "line",
+              "tap",
+              "check",
+              "scribble",
+              "trace",
+              "custom"
+            ]
+          },
+          "x": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "y": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "w": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "h": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "toX": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "toY": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "template": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "hint": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "op",
+          "shape",
+          "x",
+          "y",
+          "w",
+          "h",
+          "toX",
+          "toY",
+          "path",
+          "template",
+          "hint"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -348,7 +443,8 @@
     "edits",
     "values",
     "overlays",
-    "stages"
+    "stages",
+    "sketches"
   ],
   "additionalProperties": false
 }

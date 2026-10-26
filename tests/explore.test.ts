@@ -7,7 +7,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { run, sampleScene, sceneProgram, withMockedAI } from "./fixtures/scene";
 import { connectScene } from "../app/server/scene-code.server";
-import { EXEC_KEY, executedRuntime, exploreProgram, exploreResultSchema, exploreStep, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKeys, gestureRange, runStores, stageCounts, stepBlock, STEPS_ROOT, traceOnly, withoutTraces, type ExploreFrame, type ExploreResult } from "../app/lib/explore";
+import { EXEC_KEY, executedRuntime, exploreProgram, exploreResultSchema, exploreStep, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKeys, gestureRange, runSteps, runStores, stageCounts, stepBlock, STEPS_ROOT, traceOnly, withoutTraces, type ExploreFrame, type ExploreResult } from "../app/lib/explore";
 import { emptyInspection, evaluate, targetedResultSchema } from "../app/lib/inspection";
 import { addHostParams, readSceneValues } from "../app/lib/scene/machines";
 import { requestSchema } from "../app/lib/schema";
@@ -86,7 +86,7 @@ const constraints = [{ key: "orb/radius", nodeId: "orb", transformationId: "puls
 const stepInput = { id: 1, nodeId: null, from: null, to: null, transitionId: null, values: { "orb/radius": 24 }, runtime: { states: {}, stores: {} } };
 async function explore(mode: "execution" | "parameters", output: Partial<ExploreResult>, recommendation: object | null = null, steps = [stepInput]) {
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
-  return withMockedAI(() => ({ summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], overlays: [pen], stages: [], ...output }), async calls => {
+  return withMockedAI(() => ({ summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], overlays: [pen], stages: [], sketches: [], ...output }), async calls => {
     const result = exploreResultSchema.parse(await runAI(requestSchema.parse({ intent: "explore", scene, image: "data:image/png;base64,AAAA", instruction: "불꽃이 어떻게 합쳐지는지", previous: code,
       inspection: { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints, steps },
       explore: { mode, summary: "원인", overlays: [], recommendation, input: { gestures: 2, points: 10 } } }), new AbortController().signal));
@@ -149,7 +149,7 @@ test("the exploration frame draws the held marks with the execution handle and a
   const { ExploreFrameView } = await import("../app/components/explore-frame");
   const frame: ExploreFrame = { id: "explore-1", targetFrameId: "sketch-a", brushId: "b", toolId: "t", mode: "execution", source: { kind: "cause" }, name: "n", nodeIds: ["orb"],
     base: { runtime, values: { "orb/radius": 24 }, steps: [], params: {} }, executable: "", status: "ready", error: "", progress: .7, values: {},
-    result: { summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], overlays: [pen], stages: [] },
+    result: { summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], overlays: [pen], stages: [], sketches: [] },
     request: { concern: "c", inspection: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), recommendation: null } };
   const noop = () => {};
   const html = renderToStaticMarkup(createElement(ExploreFrameView, { frame, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: noop, onValue: noop, onRetry: noop, onActivate: noop }));
@@ -192,7 +192,7 @@ test("a run of the code is executed step by step: each checkpoint starts a step,
   // Without checkpoints the drawing calls are the steps.
   assert.deepEqual(exploreStep(frame(1), { total: 2, events: [{ index: 0, kind: "circle" }, { index: 1, kind: "line" }] }).budget, 1);
   const code = readFileSync("app/components/code-preview.tsx", "utf8");
-  assert.match(code, /if\(running\)rulegenRunStart\(pinnedRun\.budget,pinnedRun\.roots\);try\{forceRender=true;p\.redraw\(\);reportDrawn\(running\?rulegenRunEnd\(\):null\);/, "the held moment is drawn as a run when asked");
+  assert.match(code, /if\(running\)rulegenRunStart\(pinnedRun\.budget,pinnedRun\.roots,pinnedRun\.show\);try\{forceRender=true;p\.redraw\(\);reportDrawn\(running\?rulegenRunEnd\(\):null\);/, "the held moment is drawn as a run when asked");
   assert.match(readFileSync("app/routes/home.tsx", "utf8"), /progress: found\.axis === "run" \? 0 : found\.to/, "a run starts with no step executed");
 });
 
@@ -208,7 +208,7 @@ test("checkpoint edits only add m.trace calls; the server keeps them for executi
   assert.deepEqual((await explore("execution", { axis: "run", edits: [changed] })).result.edits, [], "the cause runs the code as it is");
   assert.deepEqual((await explore("parameters", { overlays: [radius], edits: [trace] })).result.edits, [], "checkpoints only for execution");
   assert.match(readFileSync("prompts/explore.md", "utf8"), /CONTROLLING ITS EXECUTION STEP BY STEP with metaphoric direct manipulation/);
-  assert.match(readFileSync("prompts/explore.md", "utf8"), /give EACH kind of operation \(`stages`\) its OWN handle/);
+  assert.match(readFileSync("prompts/explore.md", "utf8"), /give EACH kind of operation \(`stages`\) its OWN way to perform it: a handle \(below\) or a sketched mark/);
   // Every verb its own step and its own gesture (a removal too), shaped by that step's geometry.
   assert.match(readFileSync("prompts/explore.md", "utf8"), /ONE VERB PER STEP[^\n]*REMOVING part of it/);
   assert.match(readFileSync("prompts/explore.md", "utf8"), /the gesture IS the operation's verb, performed with THAT STEP'S geometry/);
@@ -283,6 +283,66 @@ test("checkpoint data keeps long point lists (thinned), every step has a grip, a
   const stores = runStores({ total: 1, events: [{ index: 0, kind: "trace", label: "x", data: { op: 1 } }] }, 0);
   assert.deepEqual([(stores[NEXT_ROOT] as { cx: number }).cx, (stores[NEXT_ROOT] as { cy: number }).cy], [450, 300]);
   const view = readFileSync("app/components/explore-frame.tsx", "utf8");
-  assert.match(view, /!handleGrips\(result\.overlays, stepContext\(state\.steps, 0, \{\}, stores\)\)\.some\(grip => grip\.handle\.key === EXEC_KEY\)/, "a plain grip when the next step has none");
+  assert.match(view, /!mark\s*&& !handleGrips\(result\.overlays, context\)\.some\(grip => grip\.handle\.key === EXEC_KEY\)/, "a plain grip when the next step has none");
   assert.match(view, /if \(drag\.latched !== null\) return;/); assert.match(view, /if \(!drag\.many && target !== drag\.start\) drag\.latched = target;/, "one step per drag, kept");
+});
+
+test("a step can draw the brush as it is after it (code that draws only at the end changes the picture at every step)", () => {
+  // Collect first, draw once at the end: without pictures nothing changes until the last step.
+  const program = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, sampleScene()).code.replace("    draw() {", `    draw() {
+      const kept = [];
+      for (let i = 0; i < 3; i++) { m.trace("조각 " + i + " 보존", { op: 1, x: i * 10, y: 5 }, () => { for (const k of kept.concat([i])) p.circle(k * 10, 5, 7); }); kept.push(i); }
+      for (const k of kept) p.circle(k * 10, 5, 4);`);
+  const sketch = run(program);
+  const shown = (budget: number | null, show: number | null) => { sketch.circles.length = 0; sketch.read(`rulegenRunStart(${budget}, ["tree"], ${show})`); sketch.draw(); const recorded = JSON.parse(JSON.stringify(sketch.read("rulegenRunEnd()")));
+    return { recorded, pictured: sketch.circles.filter(circle => circle[2] === 7).map(circle => circle[0]), inked: sketch.circles.filter(circle => circle[2] === 4).length }; };
+  type Recorded = { total: number; events: { index: number; kind: string; label: string; shows?: boolean }[] };
+  const full = shown(null, null) as { recorded: Recorded; pictured: number[]; inked: number };
+  assert.deepEqual([full.pictured, full.inked], [[], 3], "all of it: the code's own drawing only");
+  const steps = runSteps(full.recorded);
+  assert.equal(steps.length, 3); assert.ok(steps.every(step => step.shows));
+  // Two steps done: the second checkpoint's picture, as it was then (pieces 0 and 1), nothing of the end.
+  const two = shown(steps[2].index, 1);
+  assert.deepEqual([two.pictured, two.inked], [[0, 10], 0]);
+  assert.equal(two.recorded.total, full.recorded.total, "the picture is not part of the run (steps stay the same)");
+  assert.match(readFileSync("app/components/explore-frame.tsx", "utf8"), /show: pictured/);
+  assert.match(readFileSync("prompts/explore.md", "utf8"), /THE BRUSH MARKS THEMSELVES CHANGE AT EVERY STEP/);
+});
+
+test("a step can be performed by sketching its mark: many kinds of marks are recognized where the step is", async () => {
+  const { recognizeMark } = await import("../app/lib/sketch-gestures");
+  const area = { x: 100, y: 100, w: 80, h: 80 };
+  const line = (ax: number, ay: number, bx: number, by: number, n = 12) => Array.from({ length: n }, (_, i) => ({ x: ax + (bx - ax) * i / (n - 1), y: ay + (by - ay) * i / (n - 1) }));
+  const loop = (cx: number, cy: number, r: number) => Array.from({ length: 30 }, (_, i) => ({ x: cx + r * Math.cos(i / 29 * 2 * Math.PI), y: cy + r * Math.sin(i / 29 * 2 * Math.PI) }));
+  const x = (spec: object, strokes: { x: number; y: number }[][]) => recognizeMark({ area, ...spec } as never, strokes);
+  // X: two crossing strokes on it.
+  assert.equal(x({ shape: "x" }, [line(110, 110, 170, 170)]).ok, false); assert.match(x({ shape: "x" }, [line(110, 110, 170, 170)]).message, /두 번째 획/);
+  assert.ok(x({ shape: "x" }, [line(110, 110, 170, 170), line(170, 110, 110, 170)]).ok);
+  assert.equal(x({ shape: "x" }, [line(400, 400, 460, 460), line(460, 400, 400, 460)]).ok, false, "somewhere else");
+  assert.equal(x({ shape: "x" }, [line(110, 110, 170, 110), line(110, 130, 170, 130)]).ok, false, "not crossing");
+  // Circle around it; arrow to where it goes; a cut through it; a tap on it.
+  assert.ok(x({ shape: "circle" }, [loop(140, 140, 60)]).ok);
+  assert.ok(x({ shape: "arrow", to: { x: 400, y: 140 } }, [line(140, 140, 395, 142)]).ok);
+  assert.match(x({ shape: "arrow", to: { x: 400, y: 140 } }, [line(140, 140, 260, 140)]).message, /가야 할 자리까지/);
+  assert.ok(x({ shape: "cut" }, [line(60, 140, 230, 140)]).ok); assert.equal(x({ shape: "cut" }, [line(120, 140, 160, 140)]).ok, false, "from outside to outside");
+  assert.ok(x({ shape: "tap" }, [[{ x: 140, y: 140 }]]).ok);
+  // A check, a scribble, tracing a path.
+  assert.ok(x({ shape: "check" }, [[...line(120, 130, 135, 150, 6), ...line(135, 150, 175, 100, 10)]]).ok);
+  assert.ok(x({ shape: "scribble" }, [[...line(110, 120, 170, 125, 5), ...line(170, 125, 110, 135, 5), ...line(110, 135, 170, 145, 5), ...line(170, 145, 110, 155, 5), ...line(110, 155, 170, 160, 5)]]).ok);
+  const path = line(100, 300, 400, 300, 20);
+  assert.ok(x({ shape: "trace", path }, [line(102, 305, 398, 296)]).ok); assert.equal(x({ shape: "trace", path }, [line(102, 305, 200, 300)]).ok, false, "most of the way");
+  // Any mark AI draws: a zigzag, at another size, on the area.
+  const zigzag = [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 2, y: 0 }, { x: 3, y: 2 }, { x: 4, y: 0 }];
+  const drawnZigzag = zigzag.map(point => ({ x: 110 + point.x * 15, y: 120 + point.y * 15 })).flatMap((point, i, all) => i ? line(all[i - 1].x, all[i - 1].y, point.x, point.y, 5) : [point]);
+  assert.ok(x({ shape: "custom", template: zigzag }, [drawnZigzag]).ok);
+  assert.equal(x({ shape: "custom", template: zigzag }, [line(110, 140, 170, 140)]).ok, false, "a different mark");
+  // The server keeps a mark only with what its shape needs, for operations of the run.
+  const trace = { nodeId: "orb", find: "p.stroke(m.v(\"tree/ink\"));", replace: "p.stroke(m.v(\"tree/ink\")); m.trace(\"지우기\", { op: 1, x: 1, y: 2 });" };
+  const sketch = (shape: "x" | "trace" | "custom", more: object = {}) => ({ op: 1, shape, x: "s(\"@next\", \"x\")", y: "s(\"@next\", \"y\")", w: "40", h: "40", toX: "", toY: "", path: "", template: [], hint: "X로 지우기", ...more });
+  const kept = await explore("execution", { axis: "run", edits: [trace], stages: [{ op: 1, name: "지우기", explain: "", many: false }], overlays: [radius], sketches: [sketch("x")] });
+  assert.deepEqual(kept.result.sketches.map(item => item.shape), ["x"], "a mark alone is enough to perform an operation (no handle needed)");
+  assert.deepEqual((await explore("execution", { axis: "run", edits: [trace], overlays: [pen], sketches: [sketch("trace"), sketch("custom")] })).result.sketches, [], "a trace needs its path, a custom mark its shape");
+  const view = readFileSync("app/components/explore-frame.tsx", "utf8");
+  assert.match(view, /const submit = \(\) => \{ if \(!recognized\?\.ok\) return; setPlaying\(false\); setStrokes\(\[\]\); goTo\(done \+ 1\); \};/, "submitting a recognized mark executes the step");
+  assert.match(readFileSync("prompts/explore.md", "utf8"), /`"custom"`: ANY other mark that fits the operation/);
 });

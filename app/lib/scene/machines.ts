@@ -200,13 +200,15 @@ const rulegenItemsActive = () => Object.keys(rulegenItemValues).length > 0;
 // every drawing call, in the order they run. With a budget, drawing calls after that many events are not drawn,
 // so the picture is what execution has made up to there; checkpoints are still recorded (what comes next).
 // Only the brush explored is recorded (its roots): other brushes in the frame draw as usual.
-let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = null;
+// show: the checkpoint (by its number in the run) whose picture of the brush so far is drawn, when the code draws
+// nothing of its own until later; its drawing is not part of the run (not recorded, not counted, never cut).
+let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = null, rulegenShowing = false;
 const RULEGEN_MAX_EVENTS = 3000;
 const RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];
 const RULEGEN_VERTICES = { vertex: [0, 1], curveVertex: [0, 1], bezierVertex: [4, 5], quadraticVertex: [2, 3] };
-function rulegenRunStart(budget, roots) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null }; rulegenShape = null; }
+function rulegenRunStart(budget, roots, show) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0 }; rulegenShape = null; }
 /** Whether the code running now is recorded (a run, and the module drawing is one of its roots). */
-const rulegenRunOwn = () => Boolean(rulegenRun) && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));
+const rulegenRunOwn = () => Boolean(rulegenRun) && !rulegenShowing && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));
 function rulegenRunEnd() { const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events }; }
 const rulegenRound = value => Math.round(value * 10) / 10;
 /** The box of points (in the code's coordinates) on the canvas, through the current transform. */
@@ -329,15 +331,21 @@ function rulegenInstance(entry) {
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
     history() { inst.usesHistory = true; return rulegenGestures; },
-    // trace(label, data): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.
-    trace(label, data) {
-      if (!rulegenRun || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;
+    // trace(label, data, show): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.
+    // show(): draws the brush as it is after this step (in its own look), for code that draws nothing until later; called right here when this is the step reached.
+    trace(label, data, show) {
+      if (!rulegenRun || rulegenShowing || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;
+      const ordinal = rulegenRun.traces++;
       rulegenRun.label = String(label).slice(0, 120);
       // Long lists are thinned (a point list keeps its shape: every k-th point and the last), never dropped.
       let plain = rulegenThin(rulegenPlain(data, 0), 0);
       if (plain !== undefined && JSON.stringify(plain).length > 30000) plain = Object.fromEntries(Object.entries(plain && typeof plain === 'object' ? plain : {}).filter(([, value]) => value === null || typeof value !== 'object'));
       const last = rulegenRun.events[rulegenRun.events.length - 1], box = rulegenDataBox(plain) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});
-      rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain }, box));
+      rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain, shows: typeof show === 'function' }, box));
+      if (typeof show === 'function' && rulegenRun.show === ordinal) {
+        rulegenShowing = true; p.push();
+        try { show(); } catch (error) { /* a picture that fails is left out; the run goes on */ } finally { p.pop(); rulegenShowing = false; }
+      }
     },
     memo(key, compute) {
       const k = typeof key === 'string' ? key : JSON.stringify(key);

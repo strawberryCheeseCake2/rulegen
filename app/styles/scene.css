@@ -583,7 +583,7 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 /* ── Brush tool group panel: fixed height, scrolling body ── */
 .brush-group-popover { display: flex; flex-direction: column; }
 .brush-group-popover .pencil-popover-heading { flex: none; }
-.brush-group-body { height: min(380px, calc(100vh - 260px)); min-height: 160px; overflow-y: auto; overscroll-behavior: contain; margin-right: -10px; padding-right: 10px; scrollbar-width: thin; scrollbar-color: #cfdcd3 transparent; }
+.brush-group-body { height: min(190px, calc((100vh - 260px) / 2)); min-height: 80px; overflow-y: auto; overscroll-behavior: contain; margin-right: -10px; padding-right: 10px; scrollbar-width: thin; scrollbar-color: #cfdcd3 transparent; }
 /* Frame JSON: one frame's state machines, constraints and code, to copy. */
 .frame-json-modal .frame-json-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .frame-json-modal .frame-json-note { color: #a0563a; font-size: 12px; margin: 0; }
@@ -661,3 +661,16 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .explore-stages button small { color: #8a978f; font-variant-numeric: tabular-nums; }
 .explore-stages button.current { border-color: #2a4f86; background: #eef3fc; color: #2a4f86; }
 .explore-explain { color: #4f5d55; font-size: 11px; line-height: 1.45; }
+/* Sketched gestures: draw the step's mark where it goes, then submit it. */
+.explore-sketch { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; cursor: crosshair; touch-action: none; overflow: visible; }
+.explore-sketch-area { fill: #2a4f8608; stroke: #2a4f86; stroke-width: 1.5; stroke-dasharray: 6 4; }
+.explore-sketch-guide { fill: none; stroke: #2a4f86; stroke-width: 2; stroke-dasharray: 3 5; opacity: .5; }
+.explore-sketch-stroke { fill: none; stroke: #d6336c; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.explore-sketch-stroke.ok { stroke: #2f8a5b; }
+.explore-sketch-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fdf2f6; border: 1px solid #f3c7d6; }
+.explore-sketch-bar.ok { background: #eef8f2; border-color: #b9dfc8; }
+.explore-sketch-bar > span { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: #4f5d55; }
+.explore-sketch-bar b { color: #2f3a34; font-size: 12px; }
+.explore-sketch-bar button { border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 10px; cursor: pointer; font-size: 12px; }
+.explore-sketch-bar button.primary { border-color: #2a4f86; background: #2a4f86; color: #fff; }
+.explore-sketch-bar button:disabled { opacity: .45; cursor: default; }

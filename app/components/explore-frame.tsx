@@ -3,7 +3,8 @@ import { CodePreview, type ExecutionRun } from "./code-preview";
 import { InspectionOverlay } from "./inspection-overlay";
 import { Icon } from "./icons";
 import { EXEC_KEY, exploreStep, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKey, RUN_ROOT, gestureRange, runStores, stageCounts, STEPS_ROOT, stepOp, type ExploreFrame } from "../lib/explore";
-import { formatScalar, handleGrips, stepContext, type InspectionState, type InspectResult, type Overlay, type Scalar } from "../lib/inspection";
+import { evaluate, formatScalar, handleGrips, pathValue, stepContext, type InspectionState, type InspectResult, type Overlay, type Scalar } from "../lib/inspection";
+import { recognizeMark, SHAPE_NAMES, type MarkSpec } from "../lib/sketch-gestures";
 import type { ScalarValue } from "../lib/scene/schema";
 
 type Props = {
@@ -43,6 +44,8 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const [run, setRun] = useState<ExecutionRun | null>(null);
   const step = exploreStep(frame, running ? run : null), stepwise = running && step.done !== null && step.count !== null;
   const done = step.done ?? 0, count = step.count ?? 0;
+  // Partway through, the brush is drawn as it is after the step just executed (its checkpoint's picture, when the code draws nothing until later).
+  const pictured = step.budget !== null && done > 0 && run?.events.some(event => event.kind === "trace") ? done - 1 : null;
   const params = { ...frame.base.params, ...Object.fromEntries(Object.entries(frame.values).flatMap(([key, value]) => expand(key).map(each => [each, value]))) };
   const restoreId = `${frame.id}:${step.key}`;
   const [drawn, setDrawn] = useState<{ restore: string; stores: Record<string, unknown> } | null>(null);
@@ -64,10 +67,22 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const position = stepwise ? done : frame.progress;
   const state: InspectionState = { brushId: frame.brushId, cursor: 0, marks: [], markStyles: [], concern: "", focus: null,
     steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { ...step.values, ...previews, ...params, ...frame.values, [EXEC_KEY]: position }, runtime: step.runtime }] };
-  // Every step can be executed by hand: when no handle of the next step's operation can be placed there (its gesture
+  // A sketched mark for the next step's operation: where it goes (and where to, the path, its own shape), read like an overlay.
+  const context = stepContext(state.steps, 0, {}, stores);
+  const sketch = result && stepwise && next && !next.none ? result.sketches?.find(item => item.op === next.op) : undefined;
+  const mark: MarkSpec | null = sketch ? (() => {
+    const read = (source: string) => { try { return evaluate(source || "0", context); } catch { return NaN; } };
+    const area = { x: read(sketch.x), y: read(sketch.y), w: read(sketch.w), h: read(sketch.h) };
+    if (![area.x, area.y, area.w, area.h].every(Number.isFinite)) return null;
+    const to = sketch.toX && sketch.toY ? { x: read(sketch.toX), y: read(sketch.toY) } : null, cut = sketch.path.indexOf(":");
+    const list = cut > 0 ? pathValue(context.stores[sketch.path.slice(0, cut)], sketch.path.slice(cut + 1)) : undefined;
+    const path = Array.isArray(list) ? list.filter((point): point is { x: number; y: number } => Boolean(point) && Number.isFinite(point.x) && Number.isFinite(point.y)) : [];
+    return { shape: sketch.shape, area, to: to && Number.isFinite(to.x) && Number.isFinite(to.y) ? to : null, path, template: sketch.template };
+  })() : null;
+  // Every step can be executed by hand: when no handle or mark of the next step's operation can be placed there (it
   // reads data the step does not have), a plain grip on the step does it.
-  const unhandled = Boolean(result && stepwise && next && !next.none
-    && !handleGrips(result.overlays, stepContext(state.steps, 0, {}, stores)).some(grip => grip.handle.key === EXEC_KEY));
+  const unhandled = Boolean(result && stepwise && next && !next.none && !mark
+    && !handleGrips(result.overlays, context).some(grip => grip.handle.key === EXEC_KEY));
   const overlays = result ? [...result.overlays, ...(unhandled ? [nextStepGrip(result.overlays[0]?.link ?? { kind: "constraint", nodeId: frame.nodeIds[0] ?? "", id: "" }, stageOf(next!.op)?.name)] : [])] : [];
   const shown: InspectResult | null = result && { summary: result.summary, overlays: overlays as InspectResult["overlays"], valueFixes: [], recommendations: [], parameters: [], records: null };
   const from = result?.from ?? 0, to = result?.to ?? 1;
@@ -95,17 +110,38 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   }, [playing, stepwise]);
   const play = () => { if (!playing && (stepwise ? done >= count : frame.progress >= to)) { if (stepwise) goTo(0); else onProgress(from); } setPlaying(!playing); };
   const tried = Object.entries(frame.values);
+  // The mark being drawn (canvas pixels), and whether it is recognized; it starts over at every step.
+  const [strokes, setStrokes] = useState<{ x: number; y: number }[][]>([]), drawing = useRef<number | null>(null), sheet = useRef<SVGSVGElement>(null);
+  useEffect(() => { setStrokes([]); }, [done, sketch?.op]);
+  const recognized = mark && strokes.length ? recognizeMark(mark, strokes) : null;
+  const submit = () => { if (!recognized?.ok) return; setPlaying(false); setStrokes([]); goTo(done + 1); };
+  const sheetPoint = (e: React.PointerEvent) => { const box = sheet.current!.getBoundingClientRect(); return { x: (e.clientX - box.left) / Math.max(1, box.width) * 900, y: (e.clientY - box.top) / Math.max(1, box.height) * 600 }; };
   // The steps the handle being dragged may reach (fixed when the drag starts): one step forward or back, unless its operation is one continuous motion.
   // A drag that has executed (or taken back) its step keeps that until it is released (`latched`), so moving on never undoes it.
   const block = useRef<{ range: [number, number]; start: number; many: boolean; latched: number | null } | null>(null);
   return <div className={`explore-frame-surface explore-${frame.mode}`} tabIndex={-1} onPointerDownCapture={onActivate}
-    onKeyDown={e => { if (!stepwise || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); setPlaying(false);
+    onKeyDown={e => { if (e.key === "Enter" && recognized?.ok) { e.preventDefault(); e.stopPropagation(); submit(); return; }
+      if (e.key === "Escape" && strokes.length) { e.preventDefault(); e.stopPropagation(); setStrokes([]); return; }
+      if (!stepwise || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); setPlaying(false);
       goTo(e.key === "ArrowLeft" ? done - 1 : e.key === "ArrowRight" ? done + 1 : e.key === "Home" ? 0 : count); }}>
-    {frame.executable ? <CodePreview executable={frame.executable} onError={() => {}} restore={{ id: restoreId, runtime: step.runtime, params, ...(running ? { run: { budget: step.budget, roots: frame.nodeIds } } : {}) }}
+    {frame.executable ? <CodePreview executable={frame.executable} onError={() => {}} restore={{ id: restoreId, runtime: step.runtime, params, ...(running ? { run: { budget: step.budget, roots: frame.nodeIds, show: pictured } } : {}) }}
       onCapture={image => { if (running && budget.current === null) setGhost(image); }}
       onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) setRun(recorded); }} />
       : <div className="frame-render-status"><span className="loading-spinner" /><strong>Preparing the preview…</strong></div>}
     {stepwise && ghost && step.budget !== null && <img className="explore-ghost" src={ghost} alt="" aria-hidden="true" />}
+    {/* Sketching the mark: where it goes (with a faint guide of the path or shape), and the strokes drawn. */}
+    {mark && <svg ref={sheet} className="explore-sketch" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label={`Draw ${SHAPE_NAMES[mark.shape]} here`}
+      onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId); drawing.current = e.pointerId; setPlaying(false); setStrokes(current => [...current, [sheetPoint(e)]].slice(-6)); }}
+      onPointerMove={e => { if (drawing.current !== e.pointerId) return; const point = sheetPoint(e); setStrokes(current => current.length ? [...current.slice(0, -1), [...current.at(-1)!, point]] : current); }}
+      onPointerUp={e => { if (drawing.current === e.pointerId) drawing.current = null; }} onPointerCancel={() => { drawing.current = null; }}>
+      <rect className="explore-sketch-area" x={Math.min(mark.area.x, mark.area.x + mark.area.w)} y={Math.min(mark.area.y, mark.area.y + mark.area.h)} width={Math.max(8, Math.abs(mark.area.w))} height={Math.max(8, Math.abs(mark.area.h))} vectorEffect="non-scaling-stroke" />
+      {mark.to && <circle className="explore-sketch-guide" cx={mark.to.x} cy={mark.to.y} r={10} vectorEffect="non-scaling-stroke" />}
+      {mark.shape === "trace" && (mark.path?.length ?? 0) > 1 && <polyline className="explore-sketch-guide" points={mark.path!.map(point => `${point.x},${point.y}`).join(" ")} vectorEffect="non-scaling-stroke" />}
+      {mark.shape === "custom" && (mark.template?.length ?? 0) > 1 && (() => { const t = mark.template!, xs = t.map(q => q.x), ys = t.map(q => q.y), size = Math.max(1, Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+        const fit = Math.max(24, Math.min(Math.abs(mark.area.w), Math.abs(mark.area.h)) || 60) / size, left = Math.min(mark.area.x, mark.area.x + mark.area.w), top = Math.min(mark.area.y, mark.area.y + mark.area.h);
+        return <polyline className="explore-sketch-guide" points={t.map(q => `${left + (q.x - Math.min(...xs)) * fit},${top + (q.y - Math.min(...ys)) * fit}`).join(" ")} vectorEffect="non-scaling-stroke" />; })()}
+      {strokes.map((stroke, i) => <polyline key={i} className={`explore-sketch-stroke ${recognized?.ok ? "ok" : ""}`} points={stroke.map(point => `${point.x},${point.y}`).join(" ")} vectorEffect="non-scaling-stroke" />)}
+    </svg>}
     {shown && <InspectionOverlay state={state} marks={[]} result={shown} drawn={stores} liveValues={{}} clickable zoom={zoom} onFocus={() => {}} plain specs={allSpecs}
       onHandle={(phase, key, value, _item, _each, motion) => {
         if (phase === "start") { setPlaying(false); const many = Boolean(run && stageOf(stepOp(run, done))?.many);
@@ -146,6 +182,12 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
           <span><em>방금 실행</em>{last && !last.none ? <><b>{last.label || `단계 ${done}`}</b>{stageOf(last.op) && <i>{stageOf(last.op)!.name}</i>}</> : "아직 아무것도 실행하지 않았습니다"}</span>
           <span><em>다음</em>{next && !next.none ? <><b>{next.label || `단계 ${done + 1}`}</b>{stageOf(next.op) && <i>{stageOf(next.op)!.name}</i>}</> : "모든 단계를 실행했습니다"}</span>
         </div>
+        {/* The next step is done by drawing its mark here, then submitting it. */}
+        {sketch && <div className={`explore-sketch-bar ${recognized?.ok ? "ok" : ""}`}>
+          <span><b>✎ {sketch.hint || `${SHAPE_NAMES[sketch.shape]} 그리기`}</b>{mark ? recognized ? recognized.message : `점선 자리에 ${SHAPE_NAMES[sketch.shape]}를 그린 뒤 제출하세요.` : "이 단계는 그릴 자리를 찾지 못했습니다. ▶로 넘어가세요."}</span>
+          <button className="primary" disabled={!recognized?.ok} title="Submit the mark (Enter)" onClick={submit}>제출</button>
+          <button disabled={!strokes.length} title="Erase the mark (Esc)" onClick={() => setStrokes([])}>지우기</button>
+        </div>}
         {/* The kinds of operation the run is made of: how far each is, and what it does (the one now explained). */}
         {result.stages.length > 0 && <div className="explore-stages">{result.stages.map(stage => { const entry = counts.get(stage.op);
           return <button key={stage.op} className={stage.op === currentOp ? "current" : ""} disabled={!entry} title={stage.explain}

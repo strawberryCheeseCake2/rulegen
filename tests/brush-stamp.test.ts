@@ -161,3 +161,26 @@ test("an applied recommendation can be undone and redone as a whole (scene and c
   panels.f = { ...panels.f, composePrompt: "changed later" };
   assert.equal(appliedCurrent(panels.f, "undo"), false);
 });
+
+test("a composed scene of one drawn form (an object at the root) still makes a brush; a background filling the canvas does not", () => {
+  const scene = sampleScene();
+  // As compose returned it: a background over the whole canvas and the plant, each an object at the root.
+  const composed = { ...scene, nodes: [
+    { ...scene.nodes.find(node => node.id === "orb")!, id: "background", name: "Light background", parentId: null, region: { x: 0, y: 0, w: 1, h: 1 } },
+    { ...scene.nodes.find(node => node.id === "orb")!, id: "plant", name: "Draggable plant", parentId: null, region: { x: .3, y: .2, w: .4, h: .6 } },
+  ] };
+  const made = brushesFor(composed, "sketch-c", [], () => "brush-plant");
+  assert.deepEqual(made.map(brush => [brush.nodeId, brush.name]), [["background", "Light background"], ["plant", "Draggable plant"]].slice(composed.nodes[0].machine ? 0 : 1));
+  // Only a still backdrop is left out: one that reacts (a state machine) is a brush like anything interactive.
+  const still = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: null } : node) };
+  assert.deepEqual(brushesFor(still, "sketch-c", [], () => "b").map(brush => brush.nodeId), ["plant"]);
+  const reacting = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: scene.nodes.find(item => item.id === "orb")!.machine } : node) };
+  assert.deepEqual(brushesFor(reacting, "sketch-c", [], () => "b").map(brush => brush.nodeId), ["background", "plant"]);
+  assert.deepEqual(brushesFor(sampleScene(), "sketch-a", [], () => "b").map(brush => brush.nodeId), ["tree"], "a collection is a brush as before (its members are parts of it)");
+  // The object brush stamps into another frame and runs its own module, like a collection's.
+  const program = connectScene({ title: "Plant", explanation: "", code: 'rulegenModule("background", function (m) { return { draw() { m.v("background/radius"); m.v("background/speed"); } }; });\nrulegenModule("plant", function (m) { return { draw() { const b = m.box("plant"); m.v("plant/speed"); p.circle(b.x, b.y, m.v("plant/radius") * 2); } }; });' }, composed).code;
+  const result = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, composed, "plant", { key: "plant", text: programModules(program).get("plant")! }, [{ x: .5, y: .5 }], "Draggable plant");
+  assert.equal(result.roots.length, 1);
+  const sketch = run(result.generated.code); sketch.draw();
+  assert.equal(sketch.circles.length, 1, "the stamp draws");
+});
