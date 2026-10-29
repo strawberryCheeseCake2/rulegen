@@ -137,6 +137,7 @@ test("the inspection panel offers Execution on the cause and both on each recomm
   assert.match(html, /핵심 파라미터 조절해보기<small>열림 · 이동<\/small>/, "an open one goes to its frame");
   assert.ok(html.indexOf("원인 설명") < html.indexOf("Execution 조절해보기") && html.indexOf("Execution 조절해보기") < html.indexOf("크기 줄이기"), "the cause's under its explanation");
   assert.doesNotMatch(render({}), /조절해보기/, "nothing without exploration frames");
+  assert.match(render({ onExplore: noop, onDeferExecution: noop, deferExecution: true }), /<input type="checkbox" checked=""[^>]*\/>Execution 조절해보기는 나중에 생성 \(프레임만 만들기\)/, "Execution frames can be made later");
   const home = readFileSync("app/routes/home.tsx", "utf8");
   assert.match(home, /onExplore=\{openExplore\} exploring=\{exploreOpen\}/);
   assert.match(home, /base: \{ runtime: state\.steps\[at\]\.runtime/, "the frame starts from the brush marks the inspection holds");
@@ -149,11 +150,14 @@ test("the exploration frame draws the held marks with the execution handle and a
   const { ExploreFrameView } = await import("../app/components/explore-frame");
   const frame: ExploreFrame = { id: "explore-1", targetFrameId: "sketch-a", brushId: "b", toolId: "t", mode: "execution", source: { kind: "cause" }, name: "n", nodeIds: ["orb"],
     base: { runtime, values: { "orb/radius": 24 }, steps: [], params: {} }, executable: "", status: "ready", error: "", progress: .7, values: {},
-    result: { summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], overlays: [pen], stages: [], sketches: [] },
+    result: { summary: "펜 끝을 끌어 보세요.", axis: "input", from: 0, to: 1, edits: [], values: [], machine: null, overlays: [pen], stages: [], sketches: [] },
     request: { concern: "c", inspection: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), recommendation: null } };
   const noop = () => {};
   const html = renderToStaticMarkup(createElement(ExploreFrameView, { frame, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: noop, onValue: noop, onRetry: noop, onActivate: noop }));
   assert.match(html, /role="slider" aria-label="펜 끝을 끌어 그려 나가기"/); assert.match(html, /aria-label="Execution progress"/); assert.match(html, />70%</);
+  // Execution frames made later: placed with the brush marks, and AI makes it only when Generate is pressed.
+  const idle = renderToStaticMarkup(createElement(ExploreFrameView, { frame: { ...frame, status: "idle", result: null }, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: noop, onValue: noop, onRetry: noop, onActivate: noop }));
+  assert.match(idle, /아직 만들지 않았습니다\.[^<]*<button>생성<\/button>/);
   assert.match(html, /cx="120"/, "the grip on the pen tip at that progress");
   assert.doesNotMatch(html, /inspection-step-badge|inspection-badge/, "one moment: no step numbers");
 });

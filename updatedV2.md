@@ -56,6 +56,16 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
     - 그룹 패널의 **SUB BRUSHES**에 sub brush마다 Brush 도구와 Inspection 도구가 있다. 이름 기본값은 "<transformation> · example"이고, 색은 부모와 같으며, ×로 지운다.
     - Brush 도구로 다른 프레임에 칠하면 추가되거나 interaction으로 동작하고, Inspection으로 검사할 수 있다. 일반 brush와 같다.
     - 예제 프레임의 collection이 그 sub brush의 master다. sub brush 도구를 쓰는 동안 Brush 버튼 제목은 "Brush · 부모 › sub brush · 도구"이다.
+- **최소 예제 다시 분해하기 (2026-10-30)**: 최소 예제 프레임(transformation이 하나뿐인 example)에서 **Decompose**를 누르면 새 AI 요청 `split`(`prompts/split.md`)이 그 transformation을 코드가 실제로 돌리는 의미 있는 내부 알고리즘 2–5개로 나눈다. 코드에 상수로 박혀 있던 값도 그 알고리즘의 property(constraint)가 된다.
+  - 부모 예제 프레임은 그대로 둔다. 나뉜 알고리즘마다 그것 하나만 담은 **자식 예제 프레임**이 생기고 부모 예제와 선으로 연결된다(선 이름은 자식이 가진 transformation 이름). 자식에서 그 알고리즘의 constraint만 조절한다. 자식도 sub brush가 되고, 자식에서 다시 Decompose할 수 있다.
+  - 더 나눌 의미가 없으면(알고리즘 하나뿐이면) 프레임을 만들지 않고 "더 쪼갤 수 없습니다: <이유>" 토스트가 뜬다. 나뉜 조각이 2개 미만이어도 같다.
+- **배경은 Decompose하지 않음 (2026-10-30)**: 캔버스를 다 덮는 정지 배경 object(예: Quiet background의 "Paper fill")는 brush가 아니므로 Decompose 대상에서 빠진다. 예전에는 그 예제가 들어갈 brush group이 없어서 **독립 brush**("Paper fill · example")로 생겼고, Decompose할 때마다 다시 생겼다. 이제 sub brush는 그 노드가 속한 brush group 안에만 만들고, 없으면 만들지 않는다(그런 예제에는 Sub brush 버튼도 없음). 이미 생긴 그런 brush(부모 없음·fork 아님·예제 프레임이 master·이름이 " · example")는 열 때 자동으로 지우고 토스트로 알린다.
+- **스케치 프레임 최대 60개 (2026-10-30)**: 24개에서 60개로 늘렸다(`MAX_SKETCH_FRAMES`, 저장 형식·새 프레임·fork·예제 생성 모두). 탐색 프레임(16개)과 proxy frame(24개) 한도는 따로다.
+- **예제 프레임 헤더 버튼 (2026-10-30)**
+  - **Sub brush**: 이 예제의 sub brush를 Brush 도구로 고른다(쓰는 중이면 눌린 상태). sub brush가 없으면(예전 예제 등) 먼저 원래 brush의 tool group에 만든다.
+  - **Make pen**: 이 예제가 담은 transformation(label, 설명, property와 값, 쓰는 algorithm)을 담은 **transformation 펜**을 툴바에 추가한다(AI 없음). 이 펜으로 그린 자국은 Compose할 때 그 자국이 그리는 노드에 이 transformation이 그대로 들어가도록 AI에 전달된다(`prompts/compose.md`, `compose-prompt.md`). 펜 설정에는 TRANSFORMATION과 property 값이 보인다.
+  - **Hide**: 예제 프레임을 보드에서 숨긴다. 프레임과 연결선이 사라지고 p5 결과도 멈춘다(렌더하지 않음). 숨긴 목록은 레이아웃과 함께 저장된다. 원래 프레임 헤더에 **Examples n개 보이기**가 생겨 누르면 다시 보인다(그 프레임에서 나온 예제와, 그 예제를 다시 분해한 예제까지 모두).
+  - **Hide all examples**: 예제를 만든 원래 프레임(예제를 다시 분해한 예제 프레임도) 헤더에 있다. 그 프레임에서 나온 예제와 그 아래 자식 예제를 한꺼번에 숨긴다. 숨길 예제가 하나도 없으면 버튼이 없다. 원래 프레임이 없어지면 숨긴 예제는 저절로 다시 보인다.
     - 부모 brush를 지우면 sub brush도 함께 지워진다.
 - Layers의 노드 배지는 transformation 수를 보여주고, 툴팁에 적용 순서를 표시한다.
 
@@ -342,10 +352,37 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - Transformation recommendation은 대상 transformation을 여러 개 가질 수 있다. 주 대상은 `targetId`, 같은 노드에서 함께 바꿔야 하는 다른 것들은 `targetIds`에 들어간다(같은 노드에 실제로 있는 것만 남김).
   - 대상마다 칩이 하나씩 생기고, 각 칩은 자기 transformation 카드 하나만 강조한다.
   - **Apply with AI**는 대상들을 차례로 다시 만든다. 각 요청에는 함께 바뀌는 다른 transformation이 무엇인지와, 이번에는 그중 자기 몫만 하라는 지시가 붙는다. 코드는 마지막에 한 번만 다시 만들고, Undo apply로 전체가 한 번에 되돌아간다.
+- **Recommendation 프레임 그룹과 AI 없는 fork (2026-10-29)**
+  - targeted inspection을 만들면 recommendation마다 **프레임 그룹** 하나가 원래 프레임 오른쪽(겹치지 않는 자리)에 생긴다. 그룹 안에는 **fork 자리 프레임**, 그 fork의 **Execution 프레임**, **핵심 파라미터 프레임** 세 개가 나란히 있다. 그룹 제목은 "Recommendation · 제목"이다.
+  - 그룹 안 프레임은 원래 프레임과 선으로 잇지 않는다(recommendation은 원래 프레임이 아니라 fork에 관한 것). 원인 Execution 프레임만 예전처럼 ◇ 선으로 이어진다.
+  - **fork 자리 프레임**: 원래 프레임의 brush 자국을 바뀐 코드로 그린 모습과 recommendation 설명, **Accept · 이 버전으로 fork 만들기** 버튼이 있다. Execution·핵심 파라미터 프레임이 만들어지는 동안은 기다리고, 끝나면 Accept할 수 있다.
+  - **Accept = AI 없이 fork**: 핵심 파라미터 프레임이 돌리는 바뀐 코드(없으면 Execution 프레임, 그것도 없으면 inspection preview)를 그대로 fork의 코드로 쓴다. 장면에는 recommendation을 반영한다(`app/lib/preview-fork.ts`): transformation 수정이면 그 transformation 설명에 덧붙이고, 새 transformation 추가면 제목·설명으로 transformation을 만든다. 바뀐 코드가 읽는 새 값은 그 transformation의 property가 되어 inspection·handle로 다룰 수 있다. 같은 모듈을 쓰는 다른 stamp에도 똑같이 넣는다. 값 recommendation은 그 값만 바꾼다. fork 프레임은 그 자리에 들어가고(그룹 안), fork의 targeted 도구가 선택된다. fork에서 **Undo apply**를 누르면 원래 brush 상태로 돌아간다.
+  - **fork의 brush 흔적**: fork 프레임의 실행 결과는 원래 inspection이 보고 있던 단계(입력 기록·store·상태)에서 시작한다. 그래서 inspection 도구를 꺼도 그때 그린 brush 자국이 그대로 남는다(AI로 만든 fork도 같음). 이 시작 상태는 저장하지 않아서, 프로젝트를 다시 열면 fork 결과는 처음부터 돈다(inspection 단계는 그대로 남음). fork의 inspection은 원래 inspection이 보던 단계에 고정된 채 복사된다. 예전에는 "가장 최근 단계"로 복사되어, fork 결과가 처음 뜰 때 기록되는 빈 단계가 그 자리를 차지해 brush 자국과 overlay가 모두 사라졌다.
+  - 그룹 제목 줄의 **◎ fork inspection 도구** 버튼을 누르면 툴바에서 그 fork brush의 targeted inspection 도구가 선택되고 fork 프레임으로 이동한다. Accept로 fork를 만들기 전에는 비활성이다.
+  - **fork의 inspection tool**: Accept로 만든 fork의 targeted 도구에는 그 그룹 핵심 파라미터 프레임의 overlay와 손잡이가 앞에 들어간다(AI 없음, 이름 "… · fork"). 원래 inspection처럼 멈춘 단계의 값을 손잡이로 바꾸며 바뀐 동작(예: 합쳐지는 하트)을 본다. 미리보기 코드가 새로 읽던 값은 fork에서 property가 되었으므로 그 손잡이는 property 값을 바꾼다. 원래 도구의 overlay는 그 뒤에 남는다(최대 12개).
+  - 코드가 맞지 않아 만들 수 없으면 자리 프레임에 이유가 뜨고, 패널의 **Fork & apply with AI**로 만들 수 있다. 패널의 Fork & apply 버튼도 그 recommendation의 자리 프레임이 준비돼 있으면 AI 없이 만들고, 아니면 예전처럼 AI로 만든다(원래 프레임 옆, 선으로 연결).
+  - **프레임 그룹**: 보드에서 점선 상자로 그 프레임들을 감싸고 위에 제목 줄이 있다. 제목 줄을 끌면 그룹 안 프레임이 함께 움직인다. 제목 줄의 휴지통은 그룹과 그 안 프레임을 모두 지운다. 그룹은 레이아웃과 함께 저장되지만, 탐색 프레임과 fork 자리는 저장되지 않으므로 다시 열면 만들어진 fork 프레임만 그룹에 남는다. 프레임이 다 없어진 그룹은 저절로 사라진다. Inspect again이면 그 도구의 탐색 프레임과 fork 자리를 닫고 새 그룹을 만든다.
+- **Execution 조절해보기는 나중에 생성 (체크박스)**: inspection 패널의 "Recommendation preview도 생성" 아래에 있다(이 브라우저에 기억, 기본 꺼짐). 켜고 targeted inspection을 만들면 Execution 프레임(원인과 recommendation마다)은 brush 자국과 함께 자리만 생기고 AI 요청은 보내지 않는다. 프레임 아래 바의 **생성**을 누르면 그때 만든다. 핵심 파라미터 프레임은 예전처럼 바로 만든다. fork 자리는 핵심 파라미터 프레임 코드만 있으면 Accept할 수 있다.
+- **fork 다시 그리기(2026-10-30)**: fork 프레임의 **Re-render result**(되돌리기 아이콘)를 누르면 처음 넣어 둔 원래 brush 흔적(시작 상태)을 버리고 빈 상태에서 다시 돈다. 예전에는 다시 그릴 때마다 시작 상태가 다시 들어가서, 합쳐진 큰 하트처럼 그 흔적에서 나온 결과가 리셋해도 남았다. 시작 상태는 fork를 만들 때 한 번만 쓰는 임시 흔적이다. inspection 도구로 보는 단계는 그대로 그 단계의 흔적을 보여 준다.
+- **실행 상태를 옮기는 손잡이 (`"move"`, 2026-10-30)**
+  - 손잡이는 값만이 아니라 멈춘 단계의 **실행 상태**도 바꿀 수 있다. 그 단계는 바뀐 상태에서 다시 그려진다(그 단계·그 프레임에서만, what-if).
+    - `@input:<g>:<at>`: 기록된 입력(stroke) `g`번째(-1은 마지막)의 한 점. `<at>`는 점 번호(-1은 끝), 또는 점이 들어간 길이 비율(`0.5`는 가운데)이다. **move**로 끌면 stroke가 그 점을 중심으로 휜다. 가까운 점일수록 많이 따라오고 양 끝은 고정된다. `@input:<g>`는 stroke 전체를 옮긴다.
+    - `@store:<root>:<path>`: 모듈이 `m.store`에 간직하고 다시 읽는 점(move) 또는 숫자(drag/slide/rotate와 `value` 식). 음수 번호는 끝에서부터 센다.
+  - move 손잡이는 `value`가 필요 없고 `x`, `y`를 비우면 옮길 점 위에 놓인다. `each` overlay에서는 키에 `${…}`를 넣어 항목마다 그 항목이 나온 입력 점을 잡게 할 수 있다. 끌 때 그 stroke가 옅은 점선으로 보인다.
+  - 값은 단계의 what-if(`edits`, 탐색 프레임은 `values`)에 `"dx,dy"`로 저장된다. 단계를 그릴 때 기록된 상태(입력 기록·store)에 적용하고, 바뀐 stroke는 rev를 바꿔 모듈의 memo가 다시 계산되게 한다. overlay와 손잡이도 옮긴 상태를 읽는다.
+  - 핵심 파라미터 프레임 프롬프트(`prompts/explore.md`): 사용자가 효과를 켜고 끄는 게 아니라 **메커니즘을 손으로 일으켜 보게** 한다. 첫 손잡이는 조건이 계산되는 입력이나 간직된 상태를 옮겨 조건을 넘나들게 하는 것이다(겹침·가까움·교차·쌓임 → 그 항목들이 나온 stroke 점 1–3개에 move). 그다음 효과에 문턱이나 양이 있으면 그 값이다. on/off 토글은 이것들 옆에만 둘 수 있다. targeted inspection(`prompts/inspect.md`)도 같은 손잡이를 쓸 수 있다.
+  - fork의 inspection 도구는 핵심 파라미터 프레임의 손잡이를 그대로 받으므로, fork에서도 멈춘 단계의 stroke를 끌어 하트가 겹쳤다 떨어졌다 하며 합쳐지는 것을 볼 수 있다. 패널 타임라인 아래에 "이 단계의 입력 경로를 손잡이로 옮겨 그렸습니다 (n곳) · 원래대로"가 뜬다. 탐색 프레임 아래 값 목록에는 "옮긴 입력 경로 dx, dypx"로 보인다.
+  - 이미 만든 inspection·fork에는 이 손잡이가 없다. Inspect again으로 다시 만들어야 생긴다.
+- **추천이 더하는 동작은 state machine에도 (2026-10-30)**
+  - 추천이 brush가 돌면서 만나는 일에 반응하게 하면(겹침·만남·합쳐짐·한계 도달 등), 미리보기(`preview`, 탐색 프레임 `edits`)가 `machine` 변경을 함께 준다. 노드, 새 전이(trigger `event`, 예: "하트끼리 겹침 → 합치기"), 필요하면 새 상태(`like`: 값을 물려받을 기존 상태)와 돌아오는 `after` 전이다. 코드는 그 일이 생기는 순간 한 번 `m.emit(노드, 전이)`를 부른다. 프롬프트는 같은 상태로 돌아오는 전이를 우선한다(코드의 상태 검사가 그대로 동작).
+  - 서버는 새 id, 있는 상태 사이의 전이, 코드가 실제로 emit하는 event 전이, 무언가 들어오는 새 상태만 남긴다(`app/lib/machine-change.ts`).
+  - 탐색 프레임 프로그램과 AI 없이 만드는 fork에 그 상태·전이가 들어간다. fork의 State Machine 패널에 보이고, 일이 생길 때마다 inspection 단계로 기록된다. 같은 모듈을 쓰는 stamp들에도 같이 들어간다. fork 자리 메시지에 "상태 머신에 전이 「…」도 추가됩니다"가 붙는다.
+  - AI로 만드는 fork(Fork & apply with AI)의 transformation 추가 경로는 아직 machine을 바꾸지 않는다.
+- **탐색 프레임 오류 표시**: 탐색 프레임의 코드가 실행 중 오류를 내면(예: 추천 미리보기 코드) 아래 바에 "코드 실행 오류"와 **다시 만들기**가 뜬다(예전에는 조용히 버려져 손잡이만 사라졌다). 실행은 됐지만 AI가 만든 값 손잡이를 이 단계 그림에서 놓을 자리를 못 찾으면(그 단계에 없는 값을 읽으면) 그 개수와 **다시 만들기**가 뜬다. 조건(`when`) 때문에 숨은 손잡이는 세지 않는다.
 - **Recommendation visual preview (켜고 끌 수 있음, 2026-10-29)**
   - Inspection 패널의 Create targeted inspection / Inspect again 위에 **Recommendation preview도 생성** 체크박스가 있다. 이 브라우저에 기억된다(기본 꺼짐).
   - 켜면 inspection을 만드는 같은 `inspect` 요청에서 recommendation마다 간단한 미리보기 코드도 함께 받는다(요청 수는 그대로, 응답이 길어짐). 이때만 출력 스키마에 `preview`가 들어가고 `prompts/inspect-preview.md`가 프롬프트에 붙는다. 끄면 예전과 똑같은 요청이다.
-  - `preview`는 brush 모듈을 고치는 작은 코드 수정(`edits`, 1–4개)과 그 코드가 읽는 새 값(`values`), 한 줄 설명(`caption`)이다. 값 recommendation은 `null`이다(그 값 자체로 그린다). 서버는 수정이 brush 모듈에 그대로 들어가고 올바른 코드가 될 때만 남기고, 아니면 `null`로 버린다.
+  - `preview`는 brush 모듈을 고치는 작은 코드 수정(`edits`, 1–3개, 합쳐 25줄 안팎)과 그 코드가 읽는 새 값(`values`), 한 줄 설명(`caption`)이다. 값이 아닌 recommendation은 반드시 preview를 쓴다. preview는 제목이 말하는 최종 결과를 한눈에 보이게 그리되 실제 알고리즘은 흉내만 낸다(겹친 윤곽 합치기: 윤곽을 굵게 그린 뒤 안쪽을 종이색으로 채워 바깥 윤곽만 남김 / 새 하트 하나로: 겹친 것은 그리지 않고 모듈의 그리기 함수로 큰 하트 하나). recommendation끼리 결과가 다르면 미리보기도 그 차이가 보여야 한다. 값 recommendation은 `null`이다(그 값 자체로 그린다). 서버는 수정이 brush 모듈에 그대로 들어가고 올바른 코드가 될 때만 남기고, 아니면 `null`로 버린다.
   - 패널에서는 그 recommendation 카드 안에 **PREVIEW** 썸네일(240×160)이 보인다. inspection이 보고 있는 단계의 brush 자국을 프로그램 사본(미리보기 수정 적용, 값 recommendation은 그 값)으로 그린 것이다. 아무것도 적용되지 않는다. preview를 끈 채 만든 결과에는 썸네일이 없다.
   - **시간 비교**: inspection이 끝나면 토스트에 "inspection n초 (recommendation preview 켬/끔)"이 뜨고, targeted 도구 아래에 "지난 inspection n초 · recommendation preview 켬/끔"이 남는다(도구와 함께 저장, `timing`). 이 시간은 `inspect` 요청만 잰 것이다(함께 도는 원인 Execution 요청은 빼고).
 - **Recommendation은 brush의 fork에 적용된다 (2026-10-29)**
@@ -673,4 +710,6 @@ Brush 패널 위쪽 brush 목록은 최대 150px(창 높이의 22%까지)이고,
 - Brush: 루트 Collection마다 brush 생성, 툴 id, drag brush 판정, 찍은 복사본의 brush 표시와 검사 대상, 클릭 한 번·stroke 간격 찍기·드래그 재생 계획, 툴바 그룹 렌더링을 테스트했다. Inspection: 20단계 제한, 단계 간 변화, brush 값만 거르기, constraint 행, 오버레이 수식(허용되지 않는 식 거부), 단계별 오버레이 배치, Inspection 패널·오버레이 렌더링, `inspect` 요청 문맥과 brush 밖 결과 걸러내기를 테스트했다.
 - 모듈 코드 계약(루트마다 모듈 하나, `m` 사용 규칙, p 속성 쓰기·캔버스 호출·전역 변수 금지, 다른 모듈 노드 접근 금지), 모듈 분리 저장과 인스턴스 실행(다른 id의 복사본이 같은 모듈로 그리고 자기 머신으로 입력을 받음), AI 없이 찍기(빈 프레임, 같은 모듈 재사용, 같은 이름 다른 모듈 이름 변경, 이전 형식 거부, brush 사용 시 AI 요청 0회), concern별 targeted 도구 id와 툴바 목록을 테스트했다. 조립한 프로그램을 실제 p5.js(headless Chrome)에서 실행해 두 인스턴스가 각자 박스에 그려지고 합성 마우스 입력이 각 인스턴스의 상태 머신에 전달되는 것을 확인했다.
 - 새 transformation 추가 recommendation: 저장된 `addedId`(이전 도구도 그대로 읽힘, 프레임 간 id 변환 후 유지), 적용 후 "Transformation · 추가됨"과 추가된 transformation 칩, Undo로 없어지면 다시 "새 Transformation", overlay 갱신 요청 문맥(`appliedRecommendation`, `previousSummary`, `previousOverlays`)을 테스트했다. headless Chrome에서 AI 응답(transform·code·inspect)을 가짜로 바꿔, Add with AI → 새 transformation 추가 → 코드 실행 → overlay 재요청 → recommendation이 추가된 transformation으로 바뀌고 새 overlay가 그려지는 흐름을 확인했다.
+- 실행 상태 손잡이(키 해석, stroke 휘기·끝 고정·rev, store 숫자·점, grip 위치·`${…}` 키, 드래그 오프셋, 검증, shared id 변환, 탐색 프레임 표시)와 machine 변경(정리 규칙, scene·프로그램 반영, emit으로 새 상태 진입, AI 없는 fork) 테스트를 더했다. 전체 215개 통과. 실제 AI로는 아직 돌려 보지 않았다.
+- 최소 예제 다시 분해(`split` 요청 문맥·id 정리·나눌 수 없을 때, 부모 유지와 자식 프레임·sub brush), transformation 펜(값·algorithm 포함, Compose 문맥), 숨긴 예제 저장 테스트를 더했다. 전체 219개 통과.
 - 타입 검사, 전체 테스트 107개, 프로덕션 빌드가 통과했다. 실제 AI가 새 모듈 계약대로 코드를 쓰는지, 그리고 앱에서 드래그 brush를 끝까지 써 보는 것은 확인하지 못했다.

@@ -52,6 +52,8 @@ export type SketchPanel = SavedSketchPanel & {
   inspections: Record<string, InspectionState>;
   /** An open AI regeneration of a transformation/property (or a new one): the user's text and the annotation drawn on the frame. */
   transformDraft: TransformDraft | null;
+  /** The runtime the frame's result starts from (a fork keeps the brush marks it was made with; not saved). */
+  seed: { id: string; runtime: unknown } | null;
   /** Inspection recommendations applied in this frame, undoable and redoable as a whole (scene, code and prompt together). */
   applied: { past: AppliedEntry[]; future: AppliedEntry[] };
 };
@@ -74,7 +76,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null, applied: { past: [], future: [] } };
+    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null, seed: null, applied: { past: [], future: [] } };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

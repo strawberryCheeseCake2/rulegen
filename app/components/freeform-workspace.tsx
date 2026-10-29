@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from "react";
-import { ensureFramePositions, fitFrames, framesInBox, FRAME_HEIGHT, FRAME_WIDTH, zoomAt, type FrameId, type WorkspaceLayout } from "../lib/workspace";
+import { ensureFramePositions, fitFrames, framesInBox, groupBox, type FrameGroup, FRAME_HEIGHT, FRAME_WIDTH, zoomAt, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { Icon } from "./icons";
 export type WorkspaceHandle = { fit: () => void; focus: (id: FrameId) => void; zoom: (amount: number) => void };
 type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode };
@@ -7,7 +7,11 @@ type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode 
 export type FrameLink = { from: FrameId; to: FrameId; label: string };
 type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; /** Always given an update of the latest layout (never a whole layout from a render that may be older). */ onChange: (update: (current: WorkspaceLayout) => WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void; /** Frames picked together (a box dragged with the select tool, or shift-clicked headers). */ selectedFrames?: FrameId[]; onSelectFrames?: (ids: FrameId[]) => void;
   /** The frame holding the master of the brush picked or pointed at in the Brush panel, with the master's box (0–1 of the frame). */
-  masterHighlight?: { frame: FrameId; name: string; color: string; region: { x: number; y: number; w: number; h: number } } | null };
+  masterHighlight?: { frame: FrameId; name: string; color: string; region: { x: number; y: number; w: number; h: number } } | null;
+  /** Frame groups (with only frames on the board): a box under a title; dragging the title moves them together. */
+  groups?: FrameGroup[]; onDeleteGroup?: (id: string) => void;
+  /** A button on a group's title (e.g. pick the fork's inspection tool), or none. */
+  groupAction?: (group: FrameGroup) => { label: string; title: string; disabled?: boolean; onClick: () => void } | null };
 export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function FreeformWorkspace(props, ref) {
   const positions = ensureFramePositions(props.layout.frames, props.frames.map(f => f.id));
   const layout = positions === props.layout.frames ? props.layout : { ...props.layout, frames: positions };
@@ -56,6 +60,8 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
   return <div ref={board} className={`freeform-board ${space || props.tool === "hand" ? "pan-ready" : ""} ${dragging ? "board-dragging" : ""}`} aria-label="Infinite canvas workspace" style={{ backgroundSize: `${24 * camera.zoom}px ${24 * camera.zoom}px`, backgroundPosition: `${camera.x}px ${camera.y}px` }} onContextMenu={e => e.preventDefault()} onClick={props.onBackground} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); if (e.dataTransfer.files[0]) props.onDrop(e.dataTransfer.files[0]); }} onPointerDownCapture={e => {
     if ((e.target as Element).closest("button,input,textarea")) return;
     const header = (e.target as Element).closest<HTMLElement>("[data-frame-handle]");
+    // A group's title drags every frame of the group.
+    const groupHandle = (e.target as Element).closest<HTMLElement>("[data-group-handle]"), grouped = groupHandle ? props.groups?.find(group => group.id === groupHandle.dataset.groupHandle) : undefined;
     const headerId = header?.dataset.frameHandle as FrameId | undefined;
     if (headerId) {
       props.onActivateFrame?.(headerId);
@@ -63,15 +69,15 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
       if (e.shiftKey) props.onSelectFrames?.(selected.includes(headerId) ? selected.filter(id => id !== headerId) : [...selected, headerId]);
       else if (selected.length && !selected.includes(headerId)) props.onSelectFrames?.([]);
     }
-    const inFrame = !header && (e.target as Element).closest(".world-frame");
+    const inFrame = !header && !grouped && (e.target as Element).closest(".world-frame");
     if (inFrame && selected.length) props.onSelectFrames?.([]);
     if (inFrame && !space && props.tool !== "hand" && !e.altKey && e.button !== 1) return;
     if (e.button !== 0 && e.button !== 1) return;
     e.preventDefault(); e.stopPropagation(); e.currentTarget.setPointerCapture(e.pointerId);
     const bounds = e.currentTarget.getBoundingClientRect(), x = e.clientX - bounds.left, y = e.clientY - bounds.top;
     // With the select tool a drag on the empty board draws a box that picks frames; otherwise it pans. A picked header drags the whole pick.
-    const boxing = !header && !inFrame && props.tool === "select" && !space && !e.altKey && e.button === 0;
-    const moved = headerId ? (selected.includes(headerId) && !e.shiftKey ? selected : [headerId]) : undefined;
+    const boxing = !header && !grouped && !inFrame && props.tool === "select" && !space && !e.altKey && e.button === 0;
+    const moved = grouped ? grouped.frames as FrameId[] : headerId ? (selected.includes(headerId) && !e.shiftKey ? selected : [headerId]) : undefined;
     drag.current = { pointer: e.pointerId, x: e.clientX, y: e.clientY, ...(moved ? { frames: moved } : {}), ...(boxing ? { box: { x, y, add: e.shiftKey } } : {}) };
     if (boxing) setBox({ x, y, w: 0, h: 0 }); else setDragging(true);
   }} onPointerMove={e => {
@@ -83,7 +89,12 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
   }} onPointerUp={finish} onPointerCancel={finish}>
     <div className="board-top-hint"><span className="eyebrow">FREEFORM WORKSPACE</span><span>Sketch → features → a new frame</span></div>
     <div className="world-layer" style={{ transform: `translate(${camera.x}px, ${camera.y}px) scale(${camera.zoom})` }}>
-      {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${selected.includes(f.id) ? "picked-frame" : ""} ${props.masterHighlight?.frame === f.id ? "master-highlight" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : f.id.startsWith("explore-") ? "frame-explore" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y, ...(props.masterHighlight?.frame === f.id ? { "--brush-color": props.masterHighlight.color } as React.CSSProperties : {}) }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
+      {props.groups?.map(group => { const box = groupBox(positions, group.frames); if (!box) return null;
+        return <div key={group.id} className="frame-group" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} aria-label={`${group.title} frame group`}>
+          <div className="frame-group-title" data-group-handle={group.id} title="Drag to move the frames of this group together"><span>▦ {group.title}</span><small>{group.frames.length} frames</small>
+            {(() => { const action = props.groupAction?.(group); return action && <button className="frame-group-action" title={action.title} disabled={action.disabled} onClick={e => { e.stopPropagation(); action.onClick(); }}>{action.label}</button>; })()}
+            {props.onDeleteGroup && <button aria-label={`Delete group ${group.title}`} title="Delete this group and its frames" disabled={props.deleteDisabled} onClick={e => { e.stopPropagation(); props.onDeleteGroup!(group.id); }}><Icon name="trash" size={22} /></button>}</div></div>; })}
+      {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${selected.includes(f.id) ? "picked-frame" : ""} ${props.masterHighlight?.frame === f.id ? "master-highlight" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : f.id.startsWith("explore-") ? "frame-explore" : f.id.startsWith("slot-") ? "frame-slot" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y, ...(props.masterHighlight?.frame === f.id ? { "--brush-color": props.masterHighlight.color } as React.CSSProperties : {}) }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
       {props.masterHighlight && positions[props.masterHighlight.frame] && (() => { const m = props.masterHighlight!, at = positions[m.frame];
         return <div className="master-highlight-layer" aria-hidden="true" style={{ left: at.x, top: at.y, width: FRAME_WIDTH, height: FRAME_HEIGHT, "--brush-color": m.color } as React.CSSProperties}>
           <div className="master-highlight-box" style={{ left: m.region.x * FRAME_WIDTH - 8, top: m.region.y * FRAME_HEIGHT - 8, width: m.region.w * FRAME_WIDTH + 16, height: m.region.h * FRAME_HEIGHT + 16 }} />

@@ -130,6 +130,14 @@ export function syncScene(source: string, scene: Scene) {
   if (!found) return source;
   return source.slice(0, found.start) + sceneBlock(scene, found.block) + source.slice(found.end);
 }
+/** The source with the scene's state machines in its host block (a preview's new states and transitions); its values stay. */
+export function addHostMachines(source: string, scene: Scene) {
+  const found = readBlock(source);
+  if (!found) return source;
+  const machines = machineValues(scene);
+  for (const [id, machine] of Object.entries(machines)) for (const state of machine.states) state.params = { ...found.block.machines[id]?.states.find(item => item.id === state.id)?.params, ...state.params };
+  return source.slice(0, found.start) + blockText({ ...found.block, machines }) + source.slice(found.end);
+}
 /** The source with values the scene does not have added to its host block (a preview's new values); existing ones stay. */
 export function addHostParams(source: string, params: Record<string, unknown>) {
   const found = readBlock(source);

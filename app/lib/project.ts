@@ -2,14 +2,14 @@ import { brushSchema, MAX_BRUSHES } from "./brushes";
 import { z } from "zod";
 import { pointSchema, imageSchema, semanticPenSchema, type Stroke } from "./schema";
 import { createInteractionPen } from "./algorithm-pens";
-import { ensureFramePositions, workspaceSchema } from "./workspace";
+import { ensureFramePositions, liveGroups, MAX_SKETCH_FRAMES, workspaceSchema } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
 import { MAX_PROXY_FRAMES, proxyFrameSchema } from "./proxy-frames";
 const strokeSchema = z.object({ points: z.array(pointSchema).max(6000), color: z.string(), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), tool: z.enum(["pen", "eraser"]), semanticPen: semanticPenSchema.optional() });
 const artworkSchema = z.object({ strokes: z.array(strokeSchema).max(500), photo: imageSchema.nullable(), name: z.string(), revision: z.number() });
 export const sketchFrameSchema = z.object({ id: z.string().regex(/^sketch-[a-zA-Z0-9-]+$/).max(80), artwork: artworkSchema });
 export type SketchFrame = z.infer<typeof sketchFrameSchema>;
-export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(24).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), proxyFrames: z.preprocess(value => Array.isArray(value) ? value.filter(frame => !(frame && typeof frame === "object" && "kind" in frame && frame.kind !== "handles")) : value, z.array(proxyFrameSchema).max(MAX_PROXY_FRAMES)).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
+export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(MAX_SKETCH_FRAMES).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), proxyFrames: z.preprocess(value => Array.isArray(value) ? value.filter(frame => !(frame && typeof frame === "object" && "kind" in frame && frame.kind !== "handles")) : value, z.array(proxyFrameSchema).max(MAX_PROXY_FRAMES)).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
   const ids = project.sketchFrames.map(f => f.id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "스케치 프레임 ID와 위치를 확인해주세요." });
   if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Interaction pen을 확인해주세요." });
@@ -19,10 +19,12 @@ export const projectSchema = z.object({ version: z.literal(2), name: z.string().
   // A proxy frame goes with its target frame.
   const proxyFrames = [...new Map(project.proxyFrames.filter(frame => ids.includes(frame.targetFrameId)).map(frame => [frame.id, frame])).values()];
   return { ...project, sketchPanels, proxyFrames, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
-    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(withoutExplore(project.workspace.frames), [...ids, ...proxyFrames.map(frame => frame.id)]) } };
+    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(withoutExplore(project.workspace.frames), [...ids, ...proxyFrames.map(frame => frame.id)]),
+      // Groups keep the saved frames they hold (a fork); exploration frames and fork slots are not saved.
+      groups: liveGroups(project.workspace.groups, new Set([...ids, ...proxyFrames.map(frame => frame.id)])) } };
 });
-/** Exploration frames are not saved: their spots on the board go too. */
-const withoutExplore = <T extends Record<string, unknown>>(frames: T) => Object.fromEntries(Object.entries(frames).filter(([id]) => !id.startsWith("explore-"))) as T;
+/** Exploration frames and fork slots are not saved: their spots on the board go too. */
+const withoutExplore = <T extends Record<string, unknown>>(frames: T) => Object.fromEntries(Object.entries(frames).filter(([id]) => !id.startsWith("explore-") && !id.startsWith("slot-"))) as T;
 export function exampleStrokes(): Stroke[] {
   const strokes: Stroke[] = [];
   function branch(x: number, y: number, length: number, angle: number, depth: number, seed: number) {

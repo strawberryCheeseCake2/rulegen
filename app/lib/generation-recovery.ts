@@ -26,7 +26,7 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
   const owner = context?.owner || "source";
   const project = context ? structuredClone(context.project) : projectSchema.parse({
     version: 2, name: "Recovered generation", artwork: { name: "Recovered sketch", strokes: [], photo: input.image || null, revision: 0 },
-    semanticPens: input.compositionPens.filter(pen => pen.kind === "algorithm").slice(0, 32),
+    semanticPens: input.compositionPens.filter(pen => pen.kind !== "interaction").slice(0, 32),
     sketchPanels: { source: { scene: input.scene || undefined, generated: input.previous ? { title: "Previous result", explanation: "", code: input.previous } : null } },
   });
   const panel = project.sketchPanels[owner];

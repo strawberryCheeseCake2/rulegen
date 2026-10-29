@@ -23,9 +23,9 @@ import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
 import { ExploreFrameView } from "../components/explore-frame";
-import { isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, sameExplore, type ExploreFrame, type ExploreMode, type ExploreSource } from "../lib/explore";
+import { EXEC_KEY, isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, sameExplore, type ExploreFrame, type ExploreMode, type ExploreResult, type ExploreSource } from "../lib/explore";
 import { exploreExecutable, requestExplore } from "../studio/explore-actions";
-import { brushesFor, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
+import { brushesFor, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
 import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { descendantIds, subScene } from "../lib/scene/graph";
@@ -38,10 +38,14 @@ import { programModules } from "../lib/scene/machines";
 import { parameterStatus, suggestionKey, type ParameterSuggestion } from "../lib/hidden-parameters";
 import { acceptParameter, applyChanges, applyRecording, applyRecommendation, appliedCurrent, concernMarksKey, inspectConcern, suggestConcerns, inspectionFor, recommendationKey, stepApplied, targetedName, withInspection } from "../studio/inspection-actions";
 import type { TraceStep } from "../components/code-preview";
-import { besideFramePosition, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
+import { besideFramePosition, groupRow, liveGroups, MAX_SKETCH_FRAMES, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
+import { previewFork } from "../lib/preview-fork";
+import { editRuntime } from "../lib/runtime-edits";
+import type { MachineChange } from "../lib/machine-change";
+import { ForkSlot, isSlotFrame, type ForkSlotFrame, type ForkSlotStatus } from "../components/fork-slot";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
-import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
+import type { Artwork, GeneratedCode, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
 import { createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
 import { createSketchPanel, clearedResultAnnotations, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
@@ -51,7 +55,7 @@ import { findNode } from "../lib/scene/graph";
 import { syncScene } from "../lib/scene/machines";
 import { liveSceneSource, sceneLiveStatus } from "../lib/scene/live";
 import { editingState, inspectedNode, inspectedTransformations, commitScene } from "../lib/scene/panel-ops";
-import { penAlgorithm } from "../lib/scene/pens";
+import { makeTransformationPen, penAlgorithm } from "../lib/scene/pens";
 import { markLogged, reportError } from "../lib/error-report";
 import { sceneChanges } from "../lib/scene/revisions";
 import type { StudioDeps, PanelPatch } from "../studio/deps";
@@ -109,6 +113,10 @@ export default function Home() {
   /** Whether inspections also write a quick visual preview for each recommendation (kept in this browser, to compare the time). */
   const [recommendationPreviews, setRecommendationPreviewsState] = useState(false);
   useEffect(() => { try { setRecommendationPreviewsState(localStorage.getItem("rulegen:recommendation-previews") === "1"); } catch { /* storage unavailable */ } }, []);
+  /** Whether inspections only place their Execution frames (each made when its Generate is pressed; kept in this browser). */
+  const [deferExecution, setDeferExecutionState] = useState(false);
+  useEffect(() => { try { setDeferExecutionState(localStorage.getItem("rulegen:defer-execution") === "1"); } catch { /* storage unavailable */ } }, []);
+  const setDeferExecution = (on: boolean) => { setDeferExecutionState(on); try { localStorage.setItem("rulegen:defer-execution", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   const setRecommendationPreviews = (on: boolean) => { setRecommendationPreviewsState(on); try { localStorage.setItem("rulegen:recommendation-previews", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   /** The brush pointed at in the Brush panel (its master frame is shown on the board). */
   const [brushHover, setBrushHover] = useState<string | null>(null);
@@ -133,6 +141,13 @@ export default function Home() {
   const exploreRef = useRef(exploreFrames);
   const setExploreFrames = (next: ExploreFrame[]) => { exploreRef.current = next; setExploreFramesState(next); };
   const exploreAborts = useRef(new Map<string, AbortController>());
+  /**
+   * Fork slots: where a recommendation's fork goes, in its frame group next to its Execution and key parameter
+   * frames (not saved). Accept makes the fork there without AI, from the code those frames run.
+   */
+  const [forkSlots, setForkSlotsState] = useState<ForkSlotFrame[]>([]);
+  const forkSlotsRef = useRef(forkSlots);
+  const setForkSlots = (next: ForkSlotFrame[]) => { forkSlotsRef.current = next; setForkSlotsState(next); };
   // The frame at the other end of a hovered proxy link (highlighted on the board).
   const [linkHover, setLinkHover] = useState<FrameId | null>(null);
   /** Frames picked on the board with the select tool (a dragged box), deleted together with Backspace/Delete. */
@@ -240,7 +255,7 @@ export default function Home() {
   }
   /** A new sketch frame placed beside `fromId` (used for extracted/composed scenes). */
   function createFrame(fromId: string, name: string, marks?: Pick<Artwork, "strokes" | "photo">): string | null {
-    if (sketchFramesRef.current.length >= 24) return null;
+    if (sketchFramesRef.current.length >= MAX_SKETCH_FRAMES) return null;
     const id: FrameId = `sketch-${crypto.randomUUID()}`;
     const frames = [...sketchFramesRef.current, { id, artwork: { ...blank(), ...(marks ? { strokes: marks.strokes, photo: marks.photo } : {}), name: name.slice(0, 200) } }];
     sketchFramesRef.current = frames; setSketchFrames(frames);
@@ -287,6 +302,8 @@ export default function Home() {
       const ownerScene = panelsRef.current[owner]?.scene;
       // Inside the tool group of the brush the node comes from (its group, if that brush is a sub brush itself).
       const parent = ownerScene ? sourceBrushGroup(ownerScene, owner, nodeId, brushesRef.current) : undefined;
+      // Only inside a brush: a node that belongs to none (e.g. a still background) gets no brush of its own.
+      if (!parent) return null;
       const made = subBrushFor(scene, frameId, name, parent, brushesRef.current, crypto.randomUUID());
       if (made) setBrushes([...brushesRef.current, made]);
       return made;
@@ -395,13 +412,13 @@ export default function Home() {
     mutatePanels(() => Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
     setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
-    setBrushes(data.brushes); setOpenGroup(null); setProxyFrames(data.proxyFrames); proxyFramesRef.current = data.proxyFrames; setHandleErrors({}); closeExploreFrames();
+    setBrushes(data.brushes); setOpenGroup(null); setProxyFrames(data.proxyFrames); proxyFramesRef.current = data.proxyFrames; setHandleErrors({}); closeExploreFrames(); closeForkSlots();
     setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
   function newProject() {
     cancelAll(); activeDocument.current++; prepareNumber.current++;
     const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
-    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setBrushes([]); setOpenGroup(null); setProxyFrames([]); proxyFramesRef.current = []; setHandleErrors({}); closeExploreFrames();
+    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setBrushes([]); setOpenGroup(null); setProxyFrames([]); proxyFramesRef.current = []; setHandleErrors({}); closeExploreFrames(); closeForkSlots();
     setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({});
     setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
     setTool("pen"); setPencilOpen(false); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
@@ -434,7 +451,7 @@ export default function Home() {
       activateSketch("source"); setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); setPendingFrameFocus("source");
       return;
     }
-    if (sketchFrames.length >= 24) return;
+    if (sketchFrames.length >= MAX_SKETCH_FRAMES) return;
     const id: FrameId = `sketch-${crypto.randomUUID()}`;
     setSketchFrames(current => [...current, { id, artwork: { ...blank(), name: `Sketch ${current.length + 2}` } }]);
     setWorkspace(current => ({ ...current, frames: { ...current.frames, [id]: nextSketchPosition(current.frames) } }));
@@ -455,6 +472,7 @@ export default function Home() {
   function activateFrame(id: string) {
     // An exploration frame works for the frame it was opened from (its inspection stays shown).
     if (isExploreFrame(id)) { const explore = exploreRef.current.find(frame => frame.id === id); if (explore && artworkOf(explore.targetFrameId)) activateSketch(explore.targetFrameId); return; }
+    if (isSlotFrame(id)) { const slot = forkSlotsRef.current.find(frame => frame.id === id); if (slot && artworkOf(slot.targetFrameId)) activateSketch(slot.targetFrameId); return; }
     if (!isProxyFrame(id)) { activateSketch(id); return; }
     const proxy = proxyFramesRef.current.find(frame => frame.id === id); if (!proxy) return;
     activateSketch(proxy.targetFrameId);
@@ -470,6 +488,7 @@ export default function Home() {
     setToast(`프레임 ${gone}개를 삭제했습니다.${kept.length ? ` AI 작업 중인 ${kept.length}개는 남겨두었습니다.` : ""}`);
   }
   function deleteFrame(id: FrameId) {
+    if (isSlotFrame(id)) { closeForkSlots(slot => slot.id === id); return; }
     if (isExploreFrame(id)) { closeExploreFrames(frame => frame.id === id); setToast("탐색 프레임을 닫았습니다. 원래 프레임은 그대로입니다."); return; }
     if (isProxyFrame(id)) {
       const remaining = proxyFramesRef.current.filter(frame => frame.id !== id);
@@ -489,7 +508,7 @@ export default function Home() {
       sketchCanvases.current.delete(id); resultPreviews.current.delete(id);
       if (id === "source") { const empty = { ...blank(), name: artworkRef.current.name }; artworkRef.current = empty; setArtwork(empty); setHistory([]); setFuture([]); setHasSelection(false); }
       // Its proxy and exploration frames go with it.
-      closeExploreFrames(frame => frame.targetFrameId === id);
+      closeExploreFrames(frame => frame.targetFrameId === id); closeForkSlots(slot => slot.targetFrameId === id);
       const orphans = proxyFramesRef.current.filter(frame => frame.targetFrameId === id);
       if (orphans.length) { const kept = proxyFramesRef.current.filter(frame => frame.targetFrameId !== id); proxyFramesRef.current = kept; setProxyFrames(kept); }
       setWorkspace(current => orphans.reduce((layout, frame) => removeWorkspaceFrame(layout, frame.id as FrameId), removeWorkspaceFrame(current, id)));
@@ -604,7 +623,7 @@ export default function Home() {
     // A new tool's id is known before it exists, so its cause frame can start with the inspection.
     const toolId = tool?.id ?? crypto.randomUUID(), empty: TargetedTool["result"] = { summary: "", overlays: [], valueFixes: [], recommendations: [], parameters: [], records: null };
     // Inspected again: the old frames read the old result.
-    closeExploreFrames(item => item.targetFrameId === frame && item.toolId === toolId);
+    closeExploreFrames(item => item.targetFrameId === frame && item.toolId === toolId); closeForkSlots(slot => slot.targetFrameId === frame && slot.toolId === toolId);
     const cause = placeExploreFrames(brush, { id: toolId, name: "", concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.markStyles ?? [], result: empty, overlayUpdates: [] }, frame, [["execution", null]])[0];
     const timing = { ms: 0, previews: recommendationPreviews };
     const [found] = await Promise.all([inspectConcern(deps, frame, brush, draft, null, { previews: timing.previews, onTimed: ms => { timing.ms = ms; } }), cause ? fillExploreFrames([cause]) : Promise.resolve()]);
@@ -626,8 +645,9 @@ export default function Home() {
     // The cause frame now knows the cause found (asked again with it on retry).
     const owner = panelsRef.current[frame];
     if (cause && owner) patchExplore(cause.id, current => ({ request: { ...current.request, inspection: toolIn(frame, owner, brush, made).result } }));
-    const pairs = made.result.recommendations.map((_, i) => placeExploreFrames(brush, made, frame, [["execution", i], ["parameters", i]]));
-    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개의 Execution·핵심 파라미터 탐색 프레임을 둘씩 함께 만들고 있습니다…`);
+    // Each recommendation: a frame group with its fork's slot, Execution and key parameter frames side by side (no lines to this frame).
+    const pairs = made.result.recommendations.map((listed, i) => placeRecommendationGroup(brush, made, frame, i, listed));
+    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개마다 fork·Execution·핵심 파라미터 프레임 그룹을 만들고, 둘씩 함께 채우고 있습니다…`);
     for (const pair of pairs) await fillExploreFrames(pair);
   }
   /** Change one targeted tool of a brush as it is now. */
@@ -644,37 +664,115 @@ export default function Home() {
    * list, and the fork tool's overlays are rebuilt by AI so they show it too.
    */
   async function forkRecommendation(frame: string, brush: Brush, tool: TargetedTool, index: number) {
-    const owner = panelsRef.current[frame], art = artworkOf(frame);
-    if (!owner || !art) return;
-    const listed = toolIn(frame, owner, brush, tool).result.recommendations[index];
-    if (!listed) return;
-    const recommendation = currentRecommendation(listed, owner.scene);
-    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `Brush는 최대 ${MAX_BRUSHES}개까지 만들 수 있습니다. 쓰지 않는 brush를 지워주세요.` }); return; }
-    // The stamp the recommendation changes (master or instance), else the first.
-    const roots = brushRoots(owner.scene, brush, frame), rootId = roots.find(id => id === recommendation.nodeId || descendantIds(owner.scene, id).includes(recommendation.nodeId)) ?? roots[0];
-    if (!rootId) return;
-    const id = createFrame(frame, `${art.name} · fork: ${listed.title}`, art);
-    if (!id) { updatePanel(frame, { error: "스케치 프레임은 최대 24개까지 만들 수 있습니다. fork를 만들 자리가 없습니다." }); return; }
-    const forkTool: TargetedTool = { ...tool, id: crypto.randomUUID(), overlayUpdates: [] };
-    const fork: Brush = { id: crypto.randomUUID(), name: `${brush.name} · ${listed.title}`.slice(0, 100), color: brush.color, sourceFrameId: id, nodeId: rootId, scene: subScene(owner.scene, [rootId]),
-      code: instanceCode(owner, rootId) || brush.code, targeted: [forkTool], parentId: "", thumbnail: brush.thumbnail,
-      fork: { brushId: brush.id, frameId: frame, key: recommendationKey(listed), title: listed.title } };
-    setBrushes([...brushesRef.current, fork]);
-    // The copy: the stamp is the fork's master there; its recorded steps come along, so the fork can be inspected at the same moment.
-    mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(), scene: { ...owner.scene, nodes: owner.scene.nodes.map(node => node.id === rootId ? { ...node, brushId: fork.id } : node) },
-      generated: owner.generated, codeDraft: owner.codeDraft, executable: owner.executable, preparedCode: owner.preparedCode, runtimeError: owner.runtimeError,
-      composePrompt: owner.composePrompt, instruction: owner.instruction, generationMode: owner.generationMode, sourceFrameId: owner.sourceFrameId, analysisRevision: owner.analysisRevision,
-      editingStates: owner.editingStates, machineLayouts: owner.machineLayouts, selectedNodeIds: [rootId],
-      inspections: { ...owner.inspections, [fork.id]: { ...inspectionFor(owner, brush.id), brushId: fork.id } } } }));
-    activateSketch(id); chooseBrushTool(fork.id, brushTool("targeted", fork.id, forkTool.id)); setPendingFrameFocus(id as FrameId);
-    setToast(`「${listed.title}」을(를) ${brush.name}의 fork에 적용하고 있습니다. 원래 brush와 프레임은 그대로입니다.`);
-    const key = recommendationKey(listed), added = await applyRecommendation(deps, id, recommendation, key);
+    // Its fork slot has the version ready: made without AI.
+    const owner = panelsRef.current[frame], listed = owner && toolIn(frame, owner, brush, tool).result.recommendations[index];
+    const slot = listed && forkSlotsRef.current.find(item => item.targetFrameId === frame && item.toolId === tool.id && item.key === recommendationKey(listed));
+    if (slot && slotInfo(slot)?.status === "ready") { await acceptSlot(slot); return; }
+    const made = makeFork(frame, brush, tool, index);
+    if (!made) return;
+    const { id, fork, forkTool, listed: shown, recommendation } = made;
+    setToast(`「${shown.title}」을(를) ${brush.name}의 fork에 AI로 적용하고 있습니다. 원래 brush와 프레임은 그대로입니다.`);
+    const key = recommendationKey(shown), added = await applyRecommendation(deps, id, recommendation, key);
     if (!panelsRef.current[id]?.applied.past.some(entry => entry.key === key)) return;
     if (!added) return;
     // The stored result keeps the brush's shared ids, so the recommendation is matched by its place in the list.
     patchTargeted(fork.id, forkTool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: entry.result.recommendations.map((item, i) => i === index ? { ...item, addedId: added.id } : item) } }));
     const latest = brushesRef.current.find(item => item.id === fork.id), latestTool = latest?.targeted.find(item => item.id === forkTool.id);
-    if (latest && latestTool) await updateTargetedOverlays(latest, { ...listed, addedId: added.id }, latestTool, id);
+    if (latest && latestTool) await updateTargetedOverlays(latest, { ...shown, addedId: added.id }, latestTool, id);
+  }
+  /**
+   * A fork of the brush for recommendation `index`: the frame copied (the same marks, scene, code and recorded
+   * steps; `content` replaces scene and code), the brush's stamp there the master of a new brush of its own (with
+   * this targeted tool). In `slot`'s place (and frame group) when given, else beside the frame.
+   */
+  function makeFork(frame: string, brush: Brush, tool: TargetedTool, index: number, slot?: ForkSlotFrame, content?: { scene: Scene; generated: GeneratedCode }, overlays: ExploreResult["overlays"] = [], summary = "") {
+    const owner = panelsRef.current[frame], art = artworkOf(frame);
+    if (!owner || !art) return null;
+    const listed = toolIn(frame, owner, brush, tool).result.recommendations[index];
+    if (!listed) return null;
+    const recommendation = currentRecommendation(listed, owner.scene);
+    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `Brush는 최대 ${MAX_BRUSHES}개까지 만들 수 있습니다. 쓰지 않는 brush를 지워주세요.` }); return null; }
+    const base = { scene: content?.scene ?? owner.scene, generated: content?.generated ?? owner.generated };
+    // The stamp the recommendation changes (master or instance), else the first.
+    const roots = brushRoots(base.scene, brush, frame), rootId = roots.find(id => id === recommendation.nodeId || descendantIds(base.scene, id).includes(recommendation.nodeId)) ?? roots[0];
+    if (!rootId) return null;
+    const id = createFrame(frame, `${art.name} · fork: ${listed.title}`, art);
+    if (!id) { updatePanel(frame, { error: `스케치 프레임은 최대 ${MAX_SKETCH_FRAMES}개까지 만들 수 있습니다. fork를 만들 자리가 없습니다.` }); return null; }
+    if (slot) {
+      // The slot's place on the board and in its group.
+      setWorkspace(current => { const at = current.frames[slot.id], frames = { ...current.frames, ...(at ? { [id]: at } : {}) }; delete frames[slot.id];
+        return { ...current, frames, groups: current.groups.map(group => ({ ...group, frames: group.frames.map(member => member === slot.id ? id : member) })) }; });
+      setForkSlots(forkSlotsRef.current.filter(item => item.id !== slot.id));
+    }
+    // Its targeted tool: the overlays the recommendation's key parameter frame made for it go first (their handles change the fork's
+    // values at the held step, as the source's inspection does), in the brush's shared ids; a preview value is now a property.
+    const shown = overlays.map(item => item.link.kind === "parameter" ? { ...item, link: { ...item.link, kind: "constraint" as const } } : item);
+    const shared = shown.length ? remapResult({ summary: "", overlays: shown as TargetedTool["result"]["overlays"], valueFixes: [], recommendations: [], parameters: [], records: null }, sharedIds(base.scene, [rootId])).overlays : [];
+    const forkTool: TargetedTool = { ...tool, id: crypto.randomUUID(), overlayUpdates: [], ...(shared.length ? { name: `${tool.name} · fork`.slice(0, 100),
+      result: { ...tool.result, summary: (summary ? `「${listed.title}」 fork: ${summary}` : tool.result.summary).slice(0, 1500), overlays: [...shared, ...tool.result.overlays.filter(item => !shared.some(other => other.id === item.id))].slice(0, 12) } } : {}) };
+    const fork: Brush = { id: crypto.randomUUID(), name: `${brush.name} · ${listed.title}`.slice(0, 100), color: brush.color, sourceFrameId: id, nodeId: rootId, scene: subScene(base.scene, [rootId]),
+      code: instanceCode({ ...owner, ...base }, rootId) || brush.code, targeted: [forkTool], parentId: "", thumbnail: brush.thumbnail,
+      fork: { brushId: brush.id, frameId: frame, key: recommendationKey(listed), title: listed.title } };
+    setBrushes([...brushesRef.current, fork]);
+    // The copy: the stamp is the fork's master there; its recorded steps come along, so the fork can be inspected at the same moment.
+    const changed = Boolean(content), scene = { ...base.scene, nodes: base.scene.nodes.map(node => node.id === rootId ? { ...node, brushId: fork.id } : node) };
+    mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(), scene, generated: base.generated,
+      codeDraft: changed ? liveSceneSource(base.generated, scene) : owner.codeDraft, executable: changed ? "" : owner.executable, preparedCode: changed ? "" : owner.preparedCode, runtimeError: changed ? "" : owner.runtimeError,
+      composePrompt: owner.composePrompt, instruction: owner.instruction, generationMode: owner.generationMode, sourceFrameId: owner.sourceFrameId, analysisRevision: owner.analysisRevision,
+      editingStates: owner.editingStates, machineLayouts: owner.machineLayouts, selectedNodeIds: [rootId],
+      // Held at the step the source's inspection looked at: the fork's result records a step of its own when it starts
+      // (its fresh, empty state), which must not become the step looked at.
+      inspections: { ...owner.inspections, [fork.id]: (() => { const held = inspectionFor(owner, brush.id); return { ...held, brushId: fork.id, cursor: heldIndex(held) }; })() },
+      // The result starts from the step the inspection held: the brush marks stay in the fork (also when not inspecting).
+      seed: (() => { const held = inspectionFor(owner, brush.id), at = heldIndex(held); return at === null ? null : { id: `${id}:seed`, runtime: held.steps[at].runtime }; })(),
+      // Made from the preview: Undo apply in the fork takes it back to the brush as it was.
+      applied: changed ? { past: [{ id: crypto.randomUUID(), title: listed.title, key: recommendationKey(listed),
+        before: { scene: { ...owner.scene, nodes: owner.scene.nodes.map(node => node.id === rootId ? { ...node, brushId: fork.id } : node) }, generated: owner.generated, codeDraft: owner.codeDraft, executable: owner.executable, preparedCode: owner.preparedCode, composePrompt: owner.composePrompt, dirtyNodeIds: owner.dirtyNodeIds },
+        after: { scene, generated: base.generated, codeDraft: liveSceneSource(base.generated, scene), executable: "", preparedCode: "", composePrompt: owner.composePrompt, dirtyNodeIds: [] } }], future: [] } : { past: [], future: [] } } }));
+    activateSketch(id); chooseBrushTool(fork.id, brushTool("targeted", fork.id, forkTool.id)); setPendingFrameFocus(id as FrameId);
+    return { id, fork, forkTool, listed, recommendation };
+  }
+  /** Where a slot's version comes from: the code its key parameter (else Execution) frame runs, else the inspection's preview. */
+  function slotSource(slot: ForkSlotFrame, listed: Recommendation | undefined) {
+    const members = exploreRef.current.filter(item => item.targetFrameId === slot.targetFrameId && item.toolId === slot.toolId && item.source.kind === "recommendation" && item.source.key === slot.key);
+    const ran = (["parameters", "execution"] as const).map(mode => members.find(item => item.mode === mode && item.status === "ready" && item.result?.edits.length)).find(Boolean);
+    return { members, source: ran?.result ? { edits: ran.result.edits, values: ran.result.values, machine: ran.result.machine ?? null, from: ran.mode } : listed?.preview ? { ...listed.preview, from: "inspection" as const } : null };
+  }
+  /** What a version adds to the state machine, said in the slot. */
+  const machineNote = (change: MachineChange | null | undefined) => change ? ` 상태 머신에 ${[...change.states.map(state => `상태 「${state.label}」`), ...change.transitions.map(item => `전이 「${item.label}」`)].join(", ")}도 추가됩니다.` : "";
+  /** A slot as it is now: its recommendation, the version it would make, and whether it can be accepted. */
+  function slotInfo(slot: ForkSlotFrame) {
+    const owner = panelsRef.current[slot.targetFrameId], brush = brushesRef.current.find(item => item.id === slot.brushId), tool = brush?.targeted.find(item => item.id === slot.toolId);
+    if (!owner || !brush || !tool) return null;
+    const listed = toolIn(slot.targetFrameId, owner, brush, tool).result.recommendations[slot.index];
+    if (!listed) return null;
+    const recommendation = currentRecommendation(listed, owner.scene), { members, source } = slotSource(slot, listed);
+    const waiting = members.some(item => item.status === "queued" || item.status === "loading");
+    const [status, message]: [ForkSlotStatus, string] = slot.making ? ["making", "fork를 만들고 있습니다…"] : slot.error ? ["error", slot.error]
+      : waiting ? ["waiting", "Execution·핵심 파라미터 프레임이 만들어지면 Accept할 수 있습니다…"]
+      : recommendation.kind === "value" ? ["ready", "값만 바꾼 fork를 AI 없이 만듭니다."]
+      : source ? ["ready", `${source.from === "parameters" ? "핵심 파라미터" : source.from === "execution" ? "Execution" : "inspection preview"} 프레임이 돌리는 바뀐 코드로 AI 없이 fork를 만듭니다.${machineNote(source.machine)}`]
+      : ["error", "바뀐 버전의 코드를 만들지 못했습니다. 패널의 Fork & apply with AI로 만들 수 있습니다."];
+    return { owner, brush, tool, listed, recommendation, source, status, message };
+  }
+  /** Accept a fork slot: the fork is made in its place without AI, from the version its frames run. */
+  async function acceptSlot(slot: ForkSlotFrame) {
+    const info = slotInfo(slot);
+    if (!info || info.status !== "ready" || !info.owner.generated) return;
+    const { owner, brush, tool, listed, recommendation, source } = info, key = recommendationKey(listed);
+    let content: { scene: Scene; generated: GeneratedCode } | undefined;
+    if (recommendation.kind !== "value") {
+      const built = source ? previewFork(owner.scene, owner.generated!, recommendation, source) : { error: "바뀐 버전의 코드가 없습니다" };
+      if ("error" in built) { setForkSlots(forkSlotsRef.current.map(item => item.id === slot.id ? { ...item, error: `fork를 만들지 못했습니다: ${built.error}. 패널의 Fork & apply with AI로 만들 수 있습니다.` } : item)); return; }
+      content = built;
+    }
+    // The key parameter frame's overlays (its handles on the values the recommendation changes) become the fork's inspection.
+    const parameters = slotSource(slot, listed).members.find(item => item.mode === "parameters" && item.status === "ready" && item.result);
+    const made = makeFork(slot.targetFrameId, brush, tool, slot.index, slot, content, parameters?.result?.overlays.filter(item => item.handle?.key !== EXEC_KEY) ?? [], parameters?.result?.summary ?? "");
+    if (!made) return;
+    if (content) deps.refreshBrushCode?.(made.id, content.generated.code);
+    else await applyRecommendation(deps, made.id, recommendation, key);
+    setToast(`「${listed.title}」 fork를 AI 없이 만들었습니다 (${content ? "탐색 프레임이 돌리던 바뀐 코드" : "값 변경"}). 원래 brush와 프레임은 그대로이고, fork에서 Undo apply로 되돌릴 수 있습니다.`);
   }
   /** Go to a fork made from a recommendation: its frame, with its targeted tool. */
   function openFork(forkId: string) {
@@ -766,12 +864,43 @@ export default function Home() {
     setPendingFrameFocus(frameMade.id);
     void runExplore(frameMade);
   }
+  /**
+   * A recommendation's frame group: its fork's slot, the fork's Execution and key parameter frames side by side,
+   * right of `frame` under the recommendation's title. Returns the exploration frames (waiting for their turn).
+   */
+  function placeRecommendationGroup(brush: Brush, tool: TargetedTool, frame: string, index: number, listed: Recommendation) {
+    if (exploreRef.current.length + 2 > MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); return []; }
+    const made = (["execution", "parameters"] as const).map(mode => newExplore(mode, index, brush, tool, frame, mode === "execution" && deferExecution ? "idle" : "queued"));
+    const problem = made.find((item): item is string => typeof item === "string");
+    if (problem) { setToast(`탐색 프레임은 만들지 않았습니다: ${problem}`); return []; }
+    const explores = made as ExploreFrame[];
+    const slot: ForkSlotFrame = { id: `slot-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, index, key: recommendationKey(listed), title: listed.title, detail: listed.detail, making: false, error: "" };
+    setExploreFrames([...exploreRef.current, ...explores]); setForkSlots([...forkSlotsRef.current, slot]);
+    const members = [slot.id, ...explores.map(item => item.id)];
+    setWorkspace(current => { const spots = groupRow(current, frame, members.length);
+      return { ...current, frames: { ...current.frames, ...Object.fromEntries(members.map((id, i) => [id, spots[i]])) },
+        groups: [...current.groups, { id: `group-${crypto.randomUUID()}`, title: `Recommendation · ${listed.title}`.slice(0, 200), frames: members }] }; });
+    return explores;
+  }
+  /** Close fork slots (all, or those `which` picks): their spots go (their groups keep the other frames). */
+  function closeForkSlots(which: (slot: ForkSlotFrame) => boolean = () => true) {
+    const gone = forkSlotsRef.current.filter(which); if (!gone.length) return;
+    setForkSlots(forkSlotsRef.current.filter(slot => !which(slot)));
+    setWorkspace(current => gone.reduce((layout, slot) => removeWorkspaceFrame(layout, slot.id), current));
+  }
+  /** Delete a frame group with every frame in it. */
+  function deleteGroup(groupId: string) {
+    const group = workspace.groups.find(item => item.id === groupId); if (!group) return;
+    for (const id of group.frames) if (frames.some(frame => frame.id === id)) deleteFrame(id as FrameId);
+    setWorkspace(current => ({ ...current, groups: current.groups.filter(item => item.id !== groupId) }));
+    setToast(`「${group.title}」 그룹과 그 안의 프레임을 지웠습니다.`);
+  }
   /** Exploration frames of a tool in `frame`, placed beside it and waiting for their turn (none past the limit). */
   function placeExploreFrames(brush: Brush, tool: TargetedTool, frame: string, wanted: [ExploreMode, number | null][]) {
     const made: ExploreFrame[] = [];
     for (const [mode, index] of wanted) {
       if (exploreRef.current.length + made.length >= MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); break; }
-      const item = newExplore(mode, index, brush, tool, frame, "queued");
+      const item = newExplore(mode, index, brush, tool, frame, mode === "execution" && deferExecution ? "idle" : "queued");
       if (typeof item === "string") { setToast(`탐색 프레임은 만들지 않았습니다: ${item}`); break; }
       made.push(item);
     }
@@ -782,7 +911,8 @@ export default function Home() {
   }
   /** Fill exploration frames by AI at the same time; a request the busy server turned away waits and goes again. */
   async function fillExploreFrames(frames: ExploreFrame[]) {
-    await Promise.all(frames.map(async item => {
+    // Frames only placed (Execution made later) wait for their Generate.
+    await Promise.all(frames.filter(item => item.status !== "idle").map(async item => {
       for (let attempt = 1; exploreRef.current.some(open => open.id === item.id); attempt++) {
         await runExplore(exploreRef.current.find(open => open.id === item.id)!);
         const now = exploreRef.current.find(open => open.id === item.id);
@@ -978,8 +1108,8 @@ export default function Home() {
    * running result keep theirs. A suggested parameter is exposed first so the code
    * reads it (on the master; an instance asks to detach first).
    */
-  const handleDrag = useRef<{ frameId: string; key: string; item: string | null; each: boolean; accepting: boolean; last: number | boolean | null; ended: boolean } | null>(null);
-  function overlayHandle(frameId: string, phase: "start" | "move" | "end", key: string, value: number | boolean | null, item: string | null, each: boolean) {
+  const handleDrag = useRef<{ frameId: string; key: string; item: string | null; each: boolean; accepting: boolean; last: Scalar | null; ended: boolean } | null>(null);
+  function overlayHandle(frameId: string, phase: "start" | "move" | "end", key: string, value: Scalar | null, item: string | null, each: boolean) {
     const owner = panelsRef.current[frameId], brush = activeBrush; if (!owner || !brush) return;
     const flush = (drag: NonNullable<typeof handleDrag.current>) => {
       if (drag.accepting || handleDrag.current !== drag) return;
@@ -1155,7 +1285,7 @@ export default function Home() {
       onPointerDown={e => { if (!interacting && !transformDrawing && tool === "select" && !(e.target as Element).closest(".scene-node, .property-handles")) frameEdits.select(null); }}
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: inspected!.steps[heldAt!].runtime, params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits } : null} onDrawn={(restore, stores) => setDrawnStores(current => ({ ...current, [id]: { restore, stores } }))} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: editRuntime(inspected!.steps[heldAt!].runtime, inspected!.steps[heldAt!].edits), params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits } : null} onDrawn={(restore, stores) => setDrawnStores(current => ({ ...current, [id]: { restore, stores } }))} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
       <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush" && !(inspectionEraser && parseBrushTool(name)?.kind === "inspect-annotate")}
         gestureStyle={name => parseBrushTool(name)?.kind === "inspect-annotate" && !transformDrawing ? inspectionPen : undefined} gestureTool={name => { if (transformDrawing) return true; const kind = parseBrushTool(name)?.kind; return kind === "brush" || kind === "inspect-annotate"; }}
@@ -1175,6 +1305,73 @@ export default function Home() {
         onStep={index => patchInspection(id, { cursor: index })} stepName={index => stepName(owner.scene, inspected.steps[index])} />}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
+  // ── Minimal example frames ──────────────────────────────────────────────────
+  // Hidden examples are off the board (their result does not run). One whose frame it came from is gone shows again.
+  const hiddenExamples = new Set(workspace.hiddenExamples.filter(id => { const of = panels[id]?.exampleOf; return Boolean(of && artworkOf(id) && artworkOf(of.frameId)); }));
+  /** Every example made from a frame, and from those examples in turn (a decomposed example's parts). */
+  const examplesOf = (frameId: string) => {
+    const out: string[] = [], queue = [frameId];
+    for (let next = queue.shift(); next !== undefined; next = queue.shift()) for (const [id, frame] of Object.entries(panels)) if (frame.exampleOf?.frameId === next && artworkOf(id) && !out.includes(id)) { out.push(id); queue.push(id); }
+    return out;
+  };
+  const hiddenExamplesOf = (frameId: string) => examplesOf(frameId).filter(id => hiddenExamples.has(id));
+  /** Hide every example of a frame (and their parts) at once. */
+  function hideExamplesOf(frameId: string) {
+    const ids = examplesOf(frameId).filter(id => !hiddenExamples.has(id)); if (!ids.length) return;
+    setWorkspace(current => ({ ...current, hiddenExamples: [...new Set([...current.hiddenExamples, ...ids])].slice(-MAX_SKETCH_FRAMES) }));
+    setPickedFrames(current => current.filter(id => !ids.includes(id)));
+    if (ids.includes(activeSketchRef.current)) { activateSketch(frameId); setPendingFrameFocus(frameId as FrameId); }
+    setToast(`example ${ids.length}개를 숨겼습니다. Examples 보이기로 다시 꺼낼 수 있습니다.`);
+  }
+  function hideExample(frameId: string) {
+    const of = panelsRef.current[frameId]?.exampleOf; if (!of) return;
+    setWorkspace(current => ({ ...current, hiddenExamples: [...new Set([...current.hiddenExamples, frameId])].slice(-MAX_SKETCH_FRAMES) }));
+    setPickedFrames(current => current.filter(id => id !== frameId));
+    if (activeSketchRef.current === frameId) { activateSketch(of.frameId); setPendingFrameFocus(of.frameId as FrameId); }
+    setToast(`「${artworkOf(frameId)?.name ?? "example"}」을 숨겼습니다. ${artworkOf(of.frameId)?.name ?? "원래 프레임"}의 Examples 보이기로 다시 꺼낼 수 있습니다.`);
+  }
+  function showExamples(frameId: string) {
+    const shown = new Set(hiddenExamplesOf(frameId));
+    setWorkspace(current => ({ ...current, hiddenExamples: current.hiddenExamples.filter(id => !shown.has(id)) }));
+  }
+  // Examples once became brushes of their own when their node belonged to no brush (a background's "Paper fill · example"):
+  // those are not the user's and go.
+  useEffect(() => {
+    const stray = brushes.filter(brush => !brush.parentId && !brush.fork && panels[brush.sourceFrameId]?.exampleOf && brush.name.endsWith(" · example"));
+    if (!stray.length) return;
+    for (const brush of stray) removeBrush(brush);
+    setToast(`brush가 아닌 노드의 예제로 잘못 생긴 brush ${stray.length}개(${stray.map(brush => `「${brush.name}」`).join(", ")})를 지웠습니다.`);
+  }, [brushes, panels]);
+  /** Whether an example can have a sub brush: its node belongs to a brush of the frame it came from. */
+  const exampleCanBrush = (frameId: string) => { const of = panels[frameId]?.exampleOf, owner = of && panels[of.frameId];
+    return Boolean(owner && of && sourceBrushGroup(owner.scene, of.frameId, of.nodeId, brushes)); };
+  /** The sub brush an example frame made (its own frame is the sub brush's master). */
+  const exampleSubBrush = (frameId: string) => brushes.find(item => item.sourceFrameId === frameId && item.parentId);
+  /** The transformation an example frame shows, in its own scene (a part of a decomposed one exists only there). */
+  function exampleTransformation(frameId: string) {
+    const frame = panelsRef.current[frameId], of = frame?.exampleOf, node = of && findNode(frame.scene, of.nodeId);
+    const transformation = node ? findTransformation(node, of!.transformationId) ?? node.transformations.find(item => item.properties.length) : undefined;
+    return node && transformation ? { node, transformation } : null;
+  }
+  /** Brush with an example: its sub brush is picked (made first, when it has none). */
+  function brushWithExample(frameId: string) {
+    const frame = panelsRef.current[frameId], of = frame?.exampleOf; if (!frame || !of) return;
+    let sub = exampleSubBrush(frameId);
+    if (!sub) {
+      const shown = exampleTransformation(frameId), made = deps.addSubBrush?.(of.frameId, of.nodeId, frameId, frame.scene, `${shown?.transformation.label || "Example"} · example`);
+      if (!made) { updatePanel(frameId, { error: "sub brush를 만들지 못했습니다 (원래 brush가 없거나 brush가 가득 찼습니다)." }); return; }
+      updatePanel(frameId, current => ({ scene: markBrushes(current.scene, [made]) }));
+      sub = made;
+    }
+    chooseBrushTool(sub.id, brushTool("brush", sub.id));
+    setToast(`「${sub.name}」 sub brush로 그립니다. 이 example이 속한 brush의 tool group에 있습니다.`);
+  }
+  /** A pen carrying the example's transformation. */
+  function makeExamplePen(frameId: string) {
+    const frame = panelsRef.current[frameId], shown = exampleTransformation(frameId); if (!frame || !shown) return;
+    try { addPen((penId, color) => makeTransformationPen(frame.scene, shown.node.id, shown.transformation.id, frameId, penId, color)); }
+    catch (error) { updatePanel(frameId, { error: error instanceof Error ? error.message : "펜을 만들지 못했습니다." }); }
+  }
   // Header controls for a frame: run/pause and re-render its result, (re)generate code, annotate, extract.
   const frameActions = (id: string, selection: boolean, present: boolean) => {
     const frame = panels[id] || createSketchPanel(), frameBusy = Boolean(frame.loading);
@@ -1190,11 +1387,21 @@ export default function Home() {
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
       {frame.scene.nodes.length > 0 && <button aria-label={`Copy ${artworkOf(id)?.name || id} as JSON`} title="Copy this frame's state machines, constraints and code as one JSON" onClick={e => { e.stopPropagation(); setFrameJson(id); }}><Icon name="copy" size={13} />JSON</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
-      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
+      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
       {frame.scene.nodes.some(node => node.transformations.some(item => item.properties.length)) && <button disabled={frameBusy} title="Make a minimal example frame for every semantic transformation (base state), linked to this frame"
         onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).decompose(); }}><Icon name="layers" size={13} />Decompose</button>}
+      {examplesOf(id).some(child => !hiddenExamples.has(child)) && <button title="Hide every minimal example made from this frame (and their parts); their results stop running" onClick={e => { e.stopPropagation(); hideExamplesOf(id); }}><Icon name="eye-off" size={13} />Hide all examples</button>}
+      {hiddenExamplesOf(id).length > 0 && <button title="Show the minimal example frames hidden from this frame" onClick={e => { e.stopPropagation(); showExamples(id); }}><Icon name="eye" size={13} />Examples {hiddenExamplesOf(id).length}개 보이기</button>}
+      {frame.exampleOf && <button title="Hide this minimal example (its result stops running); show it again from the frame it came from" onClick={e => { e.stopPropagation(); hideExample(id); }}><Icon name="eye-off" size={13} />Hide</button>}
+      {/* A minimal example: brush with it (its sub brush), or carry its transformation in a pen. */}
+      {frame.exampleOf && (() => { const sub = exampleSubBrush(id), using = Boolean(sub && brushPick?.kind === "brush" && brushPick.brushId === sub.id);
+        if (!sub && !exampleCanBrush(id)) return null;
+        return <button disabled={frameBusy || !frame.generated} aria-pressed={using} title={sub ? "Brush with this example (its sub brush in the source brush's tool group)" : "Add this example as a sub brush and brush with it"}
+          onClick={e => { e.stopPropagation(); activateSketch(id); brushWithExample(id); }}><Icon name="brush" size={13} />Sub brush</button>; })()}
+      {frame.exampleOf && <button disabled={frameBusy || !exampleTransformation(id)} title="Make a pen that carries this example's transformation (its properties and values)"
+        onClick={e => { e.stopPropagation(); makeExamplePen(id); }}><Icon name="pen" size={13} />Make pen</button>}
       <button disabled={frameBusy || !(present || frame.generated)} title="Extract brush stamps into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
     </>;
   };
@@ -1203,10 +1410,11 @@ export default function Home() {
     return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", exampleOf ? `example of ${exampleOf}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame && playingBrush && interactingIn(id, frame) ? `playing ${playingBrush.name}` : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
   // Minimal examples hang off the frame they were decomposed from, named by their transformation.
-  const forkLinks = brushes.flatMap(item => item.fork && artworkOf(item.fork.frameId) && artworkOf(item.sourceFrameId) ? [{ from: item.fork.frameId as FrameId, to: item.sourceFrameId as FrameId, label: `⑂ fork · ${item.fork.title}`.slice(0, 60) }] : []);
+  const forkLinks = brushes.flatMap(item => item.fork && artworkOf(item.fork.frameId) && artworkOf(item.sourceFrameId) && !workspace.groups.some(group => group.frames.includes(item.sourceFrameId)) ? [{ from: item.fork.frameId as FrameId, to: item.sourceFrameId as FrameId, label: `⑂ fork · ${item.fork.title}`.slice(0, 60) }] : []);
   const exampleLinks = Object.entries(panels).flatMap(([id, frame]) => {
     const of = frame.exampleOf, node = of && panels[of.frameId] && findNode(panels[of.frameId].scene, of.nodeId);
-    return of && artworkOf(id) && artworkOf(of.frameId) ? [{ from: of.frameId as FrameId, to: id as FrameId, label: `▣ ${(node && findTransformation(node, of.transformationId)?.label) || "minimal example"}` }] : [];
+    const own = findNode(frame.scene, of?.nodeId ?? ""), label = (own && findTransformation(own, of!.transformationId)?.label) || (node && findTransformation(node, of!.transformationId)?.label);
+    return of && artworkOf(id) && artworkOf(of.frameId) ? [{ from: of.frameId as FrameId, to: id as FrameId, label: `▣ ${label || "minimal example"}` }] : [];
   });
   const frames = [
     { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork, hasSelection),
@@ -1242,7 +1450,7 @@ export default function Home() {
       const target = panels[explore.targetFrameId], targetName = artworkOf(explore.targetFrameId)?.name || "frame";
       const rows = target ? constraintRows(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : [];
       const preview = (key: string) => explore.result?.values.find(value => previewKey(value) === key);
-      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "execution 조절" : explore.mode === "parameters" ? "핵심 파라미터 조절" : "recommendation · 아직 만들지 않음", explore.result?.edits.length ? "추천 미리보기 코드" : "", "원래 프레임은 바뀌지 않음"].filter(Boolean).join(" · "),
+      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "execution 조절" : "핵심 파라미터 조절", explore.result?.edits.length ? "추천 미리보기 코드" : "", "원래 프레임은 바뀌지 않음"].filter(Boolean).join(" · "),
         actions: <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}`} title={`이 탐색 프레임은 ${targetName}의 brush 자국으로 만들었습니다. 눌러서 이동`}
           onMouseEnter={() => setLinkHover(explore.targetFrameId as FrameId)} onMouseLeave={() => setLinkHover(null)}
           onClick={() => { setLinkHover(null); setPendingFrameFocus(explore.targetFrameId as FrameId); }}>
@@ -1253,7 +1461,21 @@ export default function Home() {
           onProgress={progress => patchExplore(explore.id, { progress })} onRetry={() => { void runExplore(explore); }} onActivate={() => activateFrame(explore.id)}
           onValue={(key, value) => patchExplore(explore.id, current => { const values = { ...current.values }; if (value === null) delete values[key]; else values[key] = value; return { values }; })} /> };
     }),
-  ].filter(frame => frame.id !== "source" || !workspace.hiddenFrames.includes("source"));
+    ...forkSlots.map(slot => {
+      const info = slotInfo(slot), target = panels[slot.targetFrameId], held = target ? inspectionFor(target, slot.brushId) : null, at = held ? heldIndex(held) : null;
+      const preview = info && target?.generated && held && at !== null && (info.recommendation.kind === "value" || info.source)
+        ? <RecommendationPreview large code={liveSceneSource(target.generated, target.scene)} scene={target.scene} runtime={held.steps[at].runtime} recommendation={info.recommendation} preview={info.recommendation.kind === "value" ? null : info.source} /> : null;
+      return { id: slot.id as FrameId, title: `⑂ ${slot.title} · fork`, subtitle: "Accept하면 AI 없이 이 버전으로 fork를 만듭니다 · 원래 프레임은 바뀌지 않음",
+        content: <ForkSlot title={slot.title} detail={slot.detail} status={info?.status ?? "error"} message={info?.message ?? "원래 프레임이나 targeted 도구가 없습니다."} preview={preview}
+          onAccept={() => { void acceptSlot(slot); }} onActivate={() => activateFrame(slot.id)} /> };
+    }),
+  ].filter(frame => (frame.id !== "source" || !workspace.hiddenFrames.includes("source")) && !hiddenExamples.has(frame.id));
+  // Frame groups with the frames on the board; grouped frames hang off nothing (no lines to the frame they came from).
+  const boardGroups = liveGroups(workspace.groups, new Set(frames.map(frame => frame.id))), grouped = new Set(boardGroups.flatMap(group => group.frames));
+  // Frames that left the board leave their groups; a group with none left goes.
+  const boardIds = frames.map(frame => frame.id).join("|");
+  useEffect(() => { const ids = new Set([...boardIds.split("|"), ...hiddenExamples]);
+    setWorkspace(current => { const next = liveGroups(current.groups, ids); return JSON.stringify(next) === JSON.stringify(current.groups) ? current : { ...current, groups: next }; }); }, [boardIds]);
 
   // ── Inspector (right) ──────────────────────────────────────────────────────
   /** Frame handles are played with the Select tool: making one switches to it. */
@@ -1312,7 +1534,7 @@ export default function Home() {
     <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("프로젝트 파일이 너무 큽니다."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "올바른 Rulegen 프로젝트 JSON 파일을 선택해주세요." }); } }} />
     <div className="workspace">
       <ToolRail tool={tool} inspectionEraser={brushPick?.kind === "inspect-annotate" ? inspectionEraser : undefined} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={algorithmPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
-        busy={busy} canAddSketch={!busy && (sketchFrames.length < 24 || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
+        busy={busy} canAddSketch={!busy && (sketchFrames.length < MAX_SKETCH_FRAMES || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
         onTool={chooseTool} onPencilClose={() => setPencilOpen(false)} onColor={setColor} onWidth={setWidth} onOpacity={setOpacity}
         onPen={pen => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectAlgorithmPen(pen); }}
         onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
@@ -1331,7 +1553,12 @@ export default function Home() {
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} highlight={linkHover}
-          links={[...exampleLinks, ...forkLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))]} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          links={[...exampleLinks, ...forkLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.filter(explore => !grouped.has(explore.id)).map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))].filter(link => !hiddenExamples.has(link.from) && !hiddenExamples.has(link.to))} groups={boardGroups} onDeleteGroup={deleteGroup} groupAction={group => {
+            // A recommendation's group: pick its fork's inspection tool (once the fork is made).
+            if (!group.frames.some(id => isSlotFrame(id) || brushes.some(item => item.fork && item.sourceFrameId === id))) return null;
+            const fork = brushes.find(item => item.fork && group.frames.includes(item.sourceFrameId));
+            return fork ? { label: "◎ fork inspection 도구", title: `툴바에서 「${fork.name}」의 targeted inspection 도구를 고르고 fork 프레임으로 갑니다`, onClick: () => openFork(fork.id) }
+              : { label: "◎ fork inspection 도구", title: "fork 자리에서 Accept로 fork를 만들면 고를 수 있습니다", disabled: true, onClick: () => {} }; }} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
           onActivateFrame={id => activateFrame(id)} masterHighlight={masterHighlight} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
@@ -1361,7 +1588,7 @@ export default function Home() {
         pen={inspectionPen} onPen={setInspectionPen}
         suggestions={concernSuggest.key === `${activeSketch}|${activeBrush.id}` ? concernSuggest : { items: [], loading: false, error: "" }} onSuggest={() => { void requestConcerns(); }}
         targeted={targetedIn(activeSketch, panel)} onInspect={() => { void runTargeted(activeBrush); }}
-        previews={recommendationPreviews} onPreviews={setRecommendationPreviews}
+        previews={recommendationPreviews} onPreviews={setRecommendationPreviews} deferExecution={deferExecution} onDeferExecution={setDeferExecution}
         renderPreview={listed => { const held = inspectionFor(panel, activeBrush.id), at = heldIndex(held);
           return panel.generated && at !== null ? <RecommendationPreview code={liveSource} scene={scene} runtime={held.steps[at].runtime} recommendation={listed} preview={listed.preview} /> : null; }}
         applied={{ past: panel.applied.past, future: panel.applied.future, undoClean: appliedCurrent(panel, "undo"), redoClean: appliedCurrent(panel, "redo") }} recommendationKey={recommendationKey}

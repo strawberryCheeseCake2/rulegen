@@ -10,7 +10,9 @@ type Props = {
   code: string; scene: Scene;
   /** The held step's runtime: the brush marks the preview is drawn on. */
   runtime: unknown;
-  recommendation: Pick<Recommendation, "kind" | "changes">; preview: Preview | null | undefined;
+  recommendation: Pick<Recommendation, "kind" | "changes">; preview: Pick<Preview, "edits" | "values"> & { caption?: string } | null | undefined;
+  /** Drawn at the frame's full size (a fork slot) instead of as a thumbnail. */
+  large?: boolean;
 };
 
 /**
@@ -18,7 +20,7 @@ type Props = {
  * held step drawn by a copy of the program with the preview's edits (or, for a value
  * recommendation, with its values). Nothing is applied.
  */
-export function RecommendationPreview({ code, scene, runtime, recommendation, preview }: Props) {
+export function RecommendationPreview({ code, scene, runtime, recommendation, preview, large }: Props) {
   const value = recommendation.kind === "value";
   const program = useMemo(() => value ? { code } : preview ? exploreProgram(code, scene, preview) : null, [value, code, scene, preview]);
   const params = useMemo(() => value ? Object.fromEntries(recommendation.changes.filter(change => !change.stateId).map(change => [change.key, change.value]))
@@ -33,7 +35,7 @@ export function RecommendationPreview({ code, scene, runtime, recommendation, pr
   }, [source]);
   const restoreId = useMemo(() => `preview:${source.length}:${JSON.stringify(params)}`, [source, params]);
   if (!program) return null;
-  return <figure className="recommendation-preview">
+  return <figure className={`recommendation-preview ${large ? "large" : ""}`}>
     <div className="recommendation-preview-view">
       {"error" in program || error ? <span className="recommendation-preview-status">미리보기를 그리지 못했습니다{"error" in program ? `: ${program.error}` : ""}</span>
         : executable ? <div className="recommendation-preview-stage"><CodePreview executable={executable} onError={setError} restore={{ id: restoreId, runtime, params }} /></div>

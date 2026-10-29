@@ -5,6 +5,8 @@ export { readsPerItem } from "./item-values";
 import { idSchema, numberValueSchema, toggleValueSchema, type ScalarValue, type Scene, type SceneBinding } from "./scene/schema";
 import { findProperty, propertyOwner } from "./scene/transformations";
 import { bindingKey, nodeLeaves, sceneBindings, layoutKey } from "./scene/values";
+import { machineChangeSchema } from "./machine-change";
+import { editRuntime, isRuntimeKey, moveValue, parseMove, runtimeTarget, STORE_KEY, targetNumber, targetPoint } from "./runtime-edits";
 
 // Inspection of one brush in one frame: the running result records a step at
 // every state change (up to MAX_STEPS), with the brush's live values and the
@@ -125,13 +127,15 @@ const scalar = z.union([z.number(), z.string().max(200), z.boolean()]);
  * leaf tip to bend it, rotate an arm to open an angle, slide along a row to add
  * items), so the result and the overlay follow the value as it is dragged.
  */
-export const HANDLE_GESTURES = ["drag", "rotate", "slide"] as const;
+export const HANDLE_GESTURES = ["drag", "rotate", "slide", "move"] as const;
 /** What the `value` expression may read besides the overlay readers (canvas pixels; angles in radians). */
 export const HANDLE_VARIABLES = ["hx", "hy", "sx", "sy", "dx", "dy", "start", "px", "py", "angle", "startAngle", "dist", "startDist"] as const;
 export const handleSchema = z.object({
-  /** The value it changes: a key from `constraints` (number or toggle) or a suggested parameter's key. */
+  /** The value it changes: a key from `constraints` (number or toggle) or a suggested parameter's key; or the running state
+   * at the step (runtime-edits: `@input:…` the recorded input, `@store:…` a module's store), `${…}` parts read per item. */
   key: z.string().max(1200),
-  /** drag: the grip follows the pointer; rotate: it turns around the pivot; slide: it moves along the line from the pivot through it. */
+  /** drag: the grip follows the pointer; rotate: it turns around the pivot; slide: it moves along the line from the pivot through it;
+   * move: it carries a point of the running state (an `@input:` or `@store:` key) where the pointer goes. */
   gesture: z.enum(HANDLE_GESTURES),
   /** Where the grip sits (reads the key, so it follows the value). On an `each` overlay, on every item (up to a few). */
   x: z.string().max(400), y: z.string().max(400),
@@ -188,7 +192,9 @@ export const inspectResultSchema = z.object({
  */
 export const recommendationPreviewSchema = z.object({ caption: z.string().max(160),
   edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) })).max(4),
-  values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3) });
+  values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3),
+  /** The states and transitions the change brings to the brush's state machine (the edits emit its event transitions). */
+  machine: machineChangeSchema.nullable().default(null) });
 export type RecommendationPreview = z.infer<typeof recommendationPreviewSchema>;
 /** What the model returns with previews on: each recommendation with its preview (null for value ones: their values are the preview). */
 export const inspectPreviewResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() })).max(6) });
@@ -427,7 +433,8 @@ export function fillLabel(template: string, input: Record<string, Scalar> | Over
  * and a step's what-if values (`edits`) are drawn with it.
  */
 export function stepContext(steps: InspectionStep[], index: number, live: Record<string, Scalar> = {}, drawn?: Record<string, unknown> | null, fallback?: Record<string, Scalar>): OverlayContext {
-  const step = steps[index], runtime = runtimeOf(step);
+  // The step's state as its what-if values move it (the recorded input bent, a store value changed).
+  const step = steps[index], runtime = editRuntime(runtimeOf(step), step?.edits);
   // `drawn`: the stores as the running code draws this step now (restored), newer than the recording (e.g. after the code records more per item).
   return { values: stepValues(step) ?? live, previous: stepValues(steps[index - 1]), itemValues: step?.itemEdits, fallback, stores: { ...(runtime.stores ?? {}), ...(drawn ?? {}), [INPUT_ROOT]: runtime.history ?? [] }, states: runtime.states ?? {}, step: Math.max(0, index), steps: steps.length };
 }
@@ -551,8 +558,12 @@ export function handleGrips(overlays: Overlay[], context: OverlayContext, max = 
       if (grips.length >= max) break;
       try {
         if (overlay.when?.trim() && !evaluate(overlay.when, scope)) continue;
-        const x = evaluate(handle.x, scope), y = evaluate(handle.y, scope);
-        if (Number.isFinite(x) && Number.isFinite(y)) grips.push({ key: `${overlay.id}:handle:${n}`, overlay, handle, x, y, scope });
+        // A key with ${…} parts names the state of this item (e.g. the input point it was made from).
+        const key = handle.key.includes("${") ? fillLabel(handle.key, scope) : handle.key; if (!key) continue;
+        // A move grip sits on the point it moves, unless the handle says where.
+        const at = handle.gesture === "move" && !handle.x.trim() ? targetPoint(key, scope.stores, scope.stores[INPUT_ROOT]) : null;
+        const x = at ? at.x : evaluate(handle.x, scope), y = at ? at.y : evaluate(handle.y, scope);
+        if (Number.isFinite(x) && Number.isFinite(y)) grips.push({ key: `${overlay.id}:handle:${n}`, overlay, handle: key === handle.key ? handle : { ...handle, key }, x, y, scope });
       } catch { /* not placeable here */ }
     }
     return grips;
@@ -564,10 +575,13 @@ export function contextValue(context: OverlayContext, key: string) {
   return numeric(own?.[key] ?? context.values[key] ?? context.fallback?.[key]);
 }
 /** Where a drag started: the pointer, the grip's value and the pivot (the grip itself when the handle names none). */
-export type HandleDrag = { sx: number; sy: number; start: number; px: number; py: number };
+export type HandleDrag = { sx: number; sy: number; start: number; px: number; py: number; /** A move's offset when the drag began. */ offset: { x: number; y: number } };
 export function startDrag(grip: HandleGrip, pointer: { x: number; y: number }): HandleDrag {
   const read = (source: string, otherwise: number) => { if (!source.trim()) return otherwise; try { const value = evaluate(source, grip.scope); return Number.isFinite(value) ? value : otherwise; } catch { return otherwise; } };
-  return { sx: pointer.x, sy: pointer.y, start: contextValue(grip.scope, grip.handle.key), px: read(grip.handle.pivotX, grip.x), py: read(grip.handle.pivotY, grip.y) };
+  const key = grip.handle.key, own = contextValue(grip.scope, key);
+  // A store number not changed yet starts at what the store holds.
+  const start = Number.isFinite(own) || !key.startsWith(STORE_KEY) ? own : targetNumber(key, grip.scope.stores);
+  return { sx: pointer.x, sy: pointer.y, start, px: read(grip.handle.pivotX, grip.x), py: read(grip.handle.pivotY, grip.y), offset: parseMove(grip.scope.values[key]) };
 }
 /** The value for the pointer during a drag (raw: not yet clamped); NaN when it cannot be computed. */
 export function dragValue(grip: HandleGrip, drag: HandleDrag, pointer: { x: number; y: number }) {
@@ -576,6 +590,8 @@ export function dragValue(grip: HandleGrip, drag: HandleDrag, pointer: { x: numb
     dist: Math.hypot(pointer.x - drag.px, pointer.y - drag.py), startDist: Math.hypot(drag.sx - drag.px, drag.sy - drag.py) };
   try { return evaluate(grip.handle.value, { ...grip.scope, vars }); } catch { return NaN; }
 }
+/** A move's value for the pointer: the offset it had plus how far the pointer went. */
+export const moveDrag = (drag: HandleDrag, pointer: { x: number; y: number }) => moveValue(drag.offset.x + pointer.x - drag.sx, drag.offset.y + pointer.y - drag.sy);
 /** A dragged value made valid for its spec: a number clamped to its range and rounded to its step, a toggle on from 0.5. */
 export function clampValue(spec: ScalarValue | undefined, raw: number): number | boolean | null {
   if (!Number.isFinite(raw)) return null;
@@ -594,10 +610,19 @@ export function valueSpecs(scene: Scene, nodeIds: string[], parameters: Paramete
 }
 /** Whether a handle can be used as given: a number or toggle value it may change, and expressions that read only what they may. */
 export function handleProblem(handle: OverlayHandle, spec: { type: string } | undefined): string | null {
-  if (!spec || (spec.type !== "number" && spec.type !== "toggle")) return "숫자나 토글 값만 조절할 수 있습니다";
+  // The running state: a move carries an input point or a store point; a store number takes a value like any other.
+  const runtime = isRuntimeKey(handle.key), move = handle.gesture === "move";
+  if (runtime) {
+    const target = handle.key.includes("${") ? { kind: handle.key.startsWith(STORE_KEY) ? "store" : "input" } : runtimeTarget(handle.key);
+    if (!target) return `실행 상태를 가리키지 못했습니다: ${handle.key.slice(0, 60)}`;
+    if (!move && target.kind !== "store") return "입력 경로는 move로만 옮길 수 있습니다";
+  } else if (move) return "move는 실행 상태(@input, @store)만 옮깁니다";
+  else if (!spec || (spec.type !== "number" && spec.type !== "toggle")) return "숫자나 토글 값만 조절할 수 있습니다";
   const vars = Object.fromEntries(HANDLE_VARIABLES.map(name => [name, 1]));
   const check: OverlayContext = { values: {}, stores: {}, states: {}, step: 0, steps: 1, item: {}, itemIndex: 0, vars };
   for (const source of [handle.x, handle.y, handle.value, handle.pivotX, handle.pivotY]) {
+    // A move needs no value (it is where the pointer goes), nor a place (it sits on its point).
+    if (move && (source === handle.value || !source.trim())) continue;
     if (!source.trim() && (source === handle.pivotX || source === handle.pivotY)) continue;
     try { evaluate(source, check); } catch { return `수식을 읽지 못했습니다: ${source.slice(0, 60)}`; }
   }
@@ -646,6 +671,8 @@ export function layoutLabels(requests: LabelRequest[], size: number, bounds = { 
 const READERS = /\b(p|prev|delta|s|len|in|elapsed)\(\s*(["'])(.*?)\2/g;
 /** A value key ("<node id>/…") with its node id translated. */
 const remapKey = (key: string, map: (id: string) => string) => {
+  // A store of the running state is named by its root.
+  if (key.startsWith(STORE_KEY)) { const rest = key.slice(STORE_KEY.length), at = rest.indexOf(":"); return at > 0 ? `${STORE_KEY}${map(rest.slice(0, at))}${rest.slice(at)}` : key; }
   const cut = key.indexOf("/");
   return cut < 0 ? key : `${encodeURIComponent(map(decodeURIComponent(key.slice(0, cut))))}${key.slice(cut)}`;
 };

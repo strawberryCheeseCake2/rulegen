@@ -6,6 +6,7 @@ import { EXEC_KEY, exploreStep, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, prev
 import { evaluate, formatScalar, handleGrips, pathValue, stepContext, type InspectionState, type InspectResult, type Overlay, type Scalar } from "../lib/inspection";
 import { recognizeMark, SHAPE_NAMES, type MarkSpec } from "../lib/sketch-gestures";
 import type { ScalarValue } from "../lib/scene/schema";
+import { editRuntime, isRuntimeKey, INPUT_KEY } from "../lib/runtime-edits";
 
 type Props = {
   frame: ExploreFrame; zoom: number;
@@ -48,7 +49,12 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const pictured = step.budget !== null && done > 0 && run?.events.some(event => event.kind === "trace") ? done - 1 : null;
   const params = { ...frame.base.params, ...Object.fromEntries(Object.entries(frame.values).flatMap(([key, value]) => expand(key).map(each => [each, value]))) };
   const restoreId = `${frame.id}:${step.key}`;
+  // The moment as the handles here moved its state (the input bent, a store value changed).
+  const runtime = useMemo(() => editRuntime(step.runtime, frame.values), [step.runtime, frame.values]);
   const [drawn, setDrawn] = useState<{ restore: string; stores: Record<string, unknown> } | null>(null);
+  // The frame's code failing as it runs (e.g. a recommendation's preview code): shown under the frame, cleared with new code.
+  const [runError, setRunError] = useState("");
+  useEffect(() => { setRunError(""); }, [frame.executable]);
   // The finished marks (the whole run drawn), shown faintly while execution is partway.
   const [ghost, setGhost] = useState(""), budget = useRef(step.budget); budget.current = step.budget;
   const path = useMemo(() => inputPath(frame.base.runtime), [frame.base.runtime]);
@@ -66,7 +72,7 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   // The execution value handles read and change: steps done (step by step), else the progress.
   const position = stepwise ? done : frame.progress;
   const state: InspectionState = { brushId: frame.brushId, cursor: 0, marks: [], markStyles: [], concern: "", focus: null,
-    steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { ...step.values, ...previews, ...params, ...frame.values, [EXEC_KEY]: position }, runtime: step.runtime }] };
+    steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { ...step.values, ...previews, ...params, ...frame.values, [EXEC_KEY]: position }, runtime }] };
   // A sketched mark for the next step's operation: where it goes (and where to, the path, its own shape), read like an overlay.
   const context = stepContext(state.steps, 0, {}, stores);
   const sketch = result && stepwise && next && !next.none ? result.sketches?.find(item => item.op === next.op) : undefined;
@@ -84,6 +90,9 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const unhandled = Boolean(result && stepwise && next && !next.none && !mark
     && !handleGrips(result.overlays, context).some(grip => grip.handle.key === EXEC_KEY));
   const overlays = result ? [...result.overlays, ...(unhandled ? [nextStepGrip(result.overlays[0]?.link ?? { kind: "constraint", nodeId: frame.nodeIds[0] ?? "", id: "" }, stageOf(next!.op)?.name)] : [])] : [];
+  // Value handles that read a place this step's picture does not have (only once the picture's stores are in).
+  const unplaced = result && drawn?.restore === restoreId ? result.overlays.filter(item => item.handle && item.handle.key !== EXEC_KEY && !handleGrips([item], context).length
+    && (() => { try { return !item.when?.trim() || Boolean(evaluate(item.when, context)); } catch { return true; } })()).length : 0;
   const shown: InspectResult | null = result && { summary: result.summary, overlays: overlays as InspectResult["overlays"], valueFixes: [], recommendations: [], parameters: [], records: null };
   const from = result?.from ?? 0, to = result?.to ?? 1;
   const allSpecs: Record<string, ScalarValue> = { ...specs, ...Object.fromEntries((result?.values ?? []).map(value => [previewKey(value), value.value])),
@@ -124,7 +133,7 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
       if (e.key === "Escape" && strokes.length) { e.preventDefault(); e.stopPropagation(); setStrokes([]); return; }
       if (!stepwise || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); setPlaying(false);
       goTo(e.key === "ArrowLeft" ? done - 1 : e.key === "ArrowRight" ? done + 1 : e.key === "Home" ? 0 : count); }}>
-    {frame.executable ? <CodePreview executable={frame.executable} onError={() => {}} restore={{ id: restoreId, runtime: step.runtime, params, ...(running ? { run: { budget: step.budget, roots: frame.nodeIds, show: pictured } } : {}) }}
+    {frame.executable ? <CodePreview executable={frame.executable} onError={setRunError} restore={{ id: restoreId, runtime, params, ...(running ? { run: { budget: step.budget, roots: frame.nodeIds, show: pictured } } : {}) }}
       onCapture={image => { if (running && budget.current === null) setGhost(image); }}
       onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) setRun(recorded); }} />
       : <div className="frame-render-status"><span className="loading-spinner" /><strong>Preparing the preview…</strong></div>}
@@ -164,9 +173,13 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
       }} />}
     <div className="explore-bar" onPointerDown={e => e.stopPropagation()}>
       <span className="section-kicker">{execution ? "EXECUTION · STEP BY STEP" : "KEY PARAMETERS"} · {frame.source.kind === "cause" ? "원인" : frame.source.title}</span>
+      {frame.status === "idle" && <span className="explore-status" role="status">아직 만들지 않았습니다. 누르면 AI가 이 과정을 단계로 나누고 단계마다 실행할 gesture를 만듭니다.<button onClick={onRetry}>생성</button></span>}
       {frame.status === "queued" && <span className="explore-status" role="status"><span className="loading-spinner" />순서를 기다리는 중입니다. 앞의 탐색 프레임이 끝나면 AI가 만듭니다…</span>}
       {frame.status === "loading" && <span className="explore-status" role="status"><span className="loading-spinner" />{execution ? "AI가 내부 동작을 단계로 나누고 단계마다 실행할 gesture를 만들고 있습니다…" : "AI가 핵심 파라미터 손잡이를 만들고 있습니다…"}</span>}
       {frame.status === "error" && <span className="explore-status error" role="alert">{frame.error}<button onClick={onRetry}>다시 시도</button></span>}
+      {runError && <span className="explore-status error" role="alert">코드 실행 오류{frame.result?.edits.length ? " (추천 미리보기 코드)" : ""}: {runError}<button onClick={onRetry}>다시 만들기</button></span>}
+      {/* Handles AI made that cannot be placed at this moment (they read something this step does not have). */}
+      {!runError && unplaced > 0 && <span className="explore-status error" role="alert">손잡이 {unplaced}개를 놓을 자리를 찾지 못했습니다. 손잡이 위치가 이 단계의 그림에 없는 값을 읽습니다.<button onClick={onRetry}>다시 만들기</button></span>}
       {result && <p>{result.summary}</p>}
       {result && execution && running && !stepwise && <span className="explore-status" role="status"><span className="loading-spinner" />코드 실행을 단계로 기록하고 있습니다…</span>}
       {/* Step by step: execute or take back one internal operation at a time; what was just done and what comes next. */}
@@ -200,7 +213,8 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
         <input type="range" aria-label="Execution progress" min={from} max={to} step={.001} value={Math.min(to, Math.max(from, frame.progress))} onChange={e => { setPlaying(false); onProgress(e.currentTarget.valueAsNumber); }} />
         <output>{Math.round((frame.progress - from) / Math.max(.001, to - from) * 100)}%</output>
       </div>}
-      {result && !execution && tried.length > 0 && <div className="explore-values">{tried.map(([key, value]) => <span key={key}>{labelOf(key)} <b>{typeof value === "number" ? formatScalar(value) : String(value)}</b>
+      {result && !execution && tried.length > 0 && <div className="explore-values">{tried.map(([key, value]) => <span key={key}>{isRuntimeKey(key) ? <>{key.startsWith(INPUT_KEY) ? "옮긴 입력 경로" : "바꾼 실행 상태"} <b>{typeof value === "number" ? formatScalar(value) : `${String(value).replace(",", ", ")}px`}</b></>
+          : <>{labelOf(key)} <b>{typeof value === "number" ? formatScalar(value) : String(value)}</b></>}
         <button aria-label={`Reset ${labelOf(key)}`} title="Back to the start value" onClick={() => onValue(key, null)}><Icon name="close" size={9} /></button></span>)}</div>}
     </div>
   </div>;

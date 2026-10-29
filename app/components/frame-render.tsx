@@ -46,7 +46,7 @@ export function FrameRender(props: Props) {
   if (!panel.generated) return panel.pendingResult ? <div className="frame-render frame-render-status" role="status"><span className="loading-spinner" /><strong>Generating this frame's result…</strong><span>{panel.loading}</span></div> : null;
   return <div className={`frame-render ${panel.pendingResult ? "frame-render-updating" : ""}`} data-render-owner={owner}>
     {executable ? <CodePreview ref={props.onPreview} key={`${props.documentRevision}-${owner}-${panel.renderRevision}`} executable={executable} onError={error => props.onPatch({ runtimeError: error })}
-      machineEnabled={machineEnabled} visible={props.live} onEscape={props.onEscape} interactive={props.interacting} tracing={props.tracing} onTrace={props.onTrace} restore={props.restore} onDrawn={props.onDrawn} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
+      machineEnabled={machineEnabled} visible={props.live} onEscape={props.onEscape} interactive={props.interacting} tracing={props.tracing} onTrace={props.onTrace} restore={props.restore} seed={panel.seed} onDrawn={props.onDrawn} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
       : <div className="frame-render-status"><strong>{panel.runtimeError ? "This code needs a correction." : "Preparing p5.js…"}</strong></div>}
     {panel.pendingResult && <div className="frame-render-badge" role="status"><span className="loading-spinner" />Updating…</div>}
   </div>;

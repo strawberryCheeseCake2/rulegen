@@ -43,6 +43,8 @@ export const MAX_AI_SCENE_NODES = 24;
 export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema).min(1).max(MAX_AI_SCENE_NODES) });
 /** transform: one new or regenerated semantic transformation for one node. */
 export const aiTransformSchema = z.object({ algorithms, transformation: aiTransformationSchema });
+/** split: one transformation divided into the meaningful algorithms inside it (or why it cannot be). */
+export const aiSplitSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms, parts: z.array(aiTransformationSchema).max(5) });
 /** state-machine: one node's machine. */
 export const aiNodeMachineSchema = z.object({ algorithms, machine: aiMachineSchema });
 /** machine-refine: the refined machine and the Compose prompt rewritten to describe it. */

@@ -182,7 +182,7 @@ test("the proxy frame and the inspector show and edit each property's interface;
 
 test("the board draws each proxy frame's link to the frame it controls", async () => {
   const { FreeformWorkspace } = await import("../app/components/freeform-workspace");
-  const layout = { camera: { x: 0, y: 0, zoom: .5 }, hiddenFrames: [], frames: { source: { x: 0, y: 0 }, "sketch-a": { x: 1040, y: 0 }, "proxy-1": { x: 2080, y: 0 } } };
+  const layout = { camera: { x: 0, y: 0, zoom: .5 }, hiddenFrames: [], frames: { source: { x: 0, y: 0 }, "sketch-a": { x: 1040, y: 0 }, "proxy-1": { x: 2080, y: 0 } }, groups: [], hiddenExamples: [] };
   const frame = (id: string) => ({ id: id as never, title: id, subtitle: "", content: null });
   const html = renderToStaticMarkup(createElement(FreeformWorkspace, { layout, onChange: noop, tool: "select", onDrop: noop, onBackground: noop, highlight: "sketch-a" as never,
     frames: [frame("source"), frame("sketch-a"), frame("proxy-1")], links: [{ from: "proxy-1" as never, to: "sketch-a" as never, label: "◎ 조작" }] }));

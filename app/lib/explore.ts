@@ -3,7 +3,8 @@ import { applyParameterEdits, moduleKeyOf } from "./hidden-parameters";
 import { overlaySchema, type InspectionStep, type InspectResult, type Recommendation, type Scalar } from "./inspection";
 export { PATH_ROOT } from "./inspection";
 import { findNode } from "./scene/graph";
-import { addHostParams, programModules, sceneInstances } from "./scene/machines";
+import { addHostMachines, addHostParams, programModules, sceneInstances } from "./scene/machines";
+import { applyMachineChange, machineChangeSchema, type MachineChange } from "./machine-change";
 import { SKETCH_SHAPES } from "./sketch-gestures";
 import { idSchema, numberValueSchema, toggleValueSchema, type Scene } from "./scene/schema";
 import { bindingKey } from "./scene/values";
@@ -44,6 +45,8 @@ export const exploreResultSchema = z.object({
   edits: z.array(editSchema).max(6),
   /** The values the edits read that do not exist yet. */
   values: z.array(previewValueSchema).max(4),
+  /** A recommendation's preview that makes the brush react to something it meets: the states and transitions it brings to the machine. */
+  machine: machineChangeSchema.nullable().default(null),
   overlays: z.array(overlaySchema).max(8),
   /**
    * Execution on a run: the kinds of internal operation its steps are (a checkpoint's `data.op`), each named and
@@ -78,8 +81,11 @@ export type ExploreFrame = {
   base: ExploreBase;
   /** The prepared program it runs ("" while a preview is prepared). */
   executable: string;
-  /** "queued": made with its targeted tool, waiting for its turn (the AI requests go one after another). */
-  status: "queued" | "loading" | "ready" | "error"; error: string;
+  /**
+   * "queued": made with its targeted tool, waiting for its turn (the AI requests go one after another);
+   * "idle": placed only (Execution frames made later): AI makes it when its Generate is pressed.
+   */
+  status: "idle" | "queued" | "loading" | "ready" | "error"; error: string;
   result: ExploreResult | null;
   /** How far execution has gone (0..1 along the axis). */
   progress: number;
@@ -273,7 +279,7 @@ export function previewKeys(scene: Scene, value: Pick<PreviewValue, "nodeId" | "
 export const previewKey = (value: Pick<PreviewValue, "nodeId" | "id">) => bindingKey([value.nodeId, value.id]);
 
 /** The program with a preview's edits in the brush's modules and its new values in the host block, or why it cannot be made. */
-export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreResult, "edits" | "values">): { code: string } | { error: string } {
+export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreResult, "edits" | "values"> & { machine?: MachineChange | null }): { code: string } | { error: string } {
   let next = code;
   const modules = new Map<string, string>();
   for (const edit of result.edits) {
@@ -286,6 +292,8 @@ export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreR
     modules.set(key, edited.module);
   }
   for (const [key, module] of modules) { const old = programModules(next).get(key)!; next = next.replace(old, () => module); }
+  // The states and transitions it emits are in the program's machines (the rest of the host block as it was).
+  if (result.machine) { const changed = applyMachineChange(scene, result.machine); if (changed !== scene) next = addHostMachines(next, changed); }
   const params = Object.fromEntries(result.values.flatMap(value => previewKeys(scene, value).map(key => [key, value.value.value])));
   return { code: addHostParams(next, params) };
 }

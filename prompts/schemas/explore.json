@@ -140,6 +140,109 @@
         "additionalProperties": false
       }
     },
+    "machine": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "nodeId": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "states": {
+              "maxItems": 3,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 400
+                  },
+                  "like": {
+                    "type": "string",
+                    "maxLength": 60
+                  }
+                },
+                "required": [
+                  "id",
+                  "label",
+                  "description",
+                  "like"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "transitions": {
+              "maxItems": 4,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "from": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "to": {
+                    "type": "string",
+                    "maxLength": 60
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "trigger": {
+                    "type": "string",
+                    "enum": [
+                      "after",
+                      "event"
+                    ]
+                  },
+                  "afterMs": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": 60000
+                  }
+                },
+                "required": [
+                  "id",
+                  "from",
+                  "to",
+                  "label",
+                  "trigger",
+                  "afterMs"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "nodeId",
+            "states",
+            "transitions"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "overlays": {
       "maxItems": 8,
       "type": "array",
@@ -242,7 +345,8 @@
                     "enum": [
                       "drag",
                       "rotate",
-                      "slide"
+                      "slide",
+                      "move"
                     ]
                   },
                   "x": {
@@ -442,6 +546,7 @@
     "to",
     "edits",
     "values",
+    "machine",
     "overlays",
     "stages",
     "sketches"

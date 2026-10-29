@@ -1,8 +1,9 @@
 import { useId, useRef, useState } from "react";
 import { ART_HEIGHT as H, ART_WIDTH as W } from "../lib/schema";
 import { suggestedValues } from "../lib/hidden-parameters";
-import { clampValue, dragValue, handleGrips, heldIndex, historyOverlays, itemIdOf, layoutLabels, sameFocus as same, startDrag, stepBadges, stepContext, type HandleDrag, type HandleGrip, type PlacedOverlay, markStyleAt, type InspectionFocus, type InspectionState, type InspectResult, type MarkStyle, type Scalar } from "../lib/inspection";
+import { clampValue, dragValue, handleGrips, INPUT_ROOT, moveDrag, heldIndex, historyOverlays, itemIdOf, layoutLabels, sameFocus as same, startDrag, stepBadges, stepContext, type HandleDrag, type HandleGrip, type PlacedOverlay, markStyleAt, type InspectionFocus, type InspectionState, type InspectResult, type MarkStyle, type Scalar } from "../lib/inspection";
 import type { ScalarValue } from "../lib/scene/schema";
+import { INPUT_KEY, isRuntimeKey, runtimeTarget } from "../lib/runtime-edits";
 
 type Props = {
   state: InspectionState;
@@ -23,7 +24,8 @@ type Props = {
   specs?: Record<string, ScalarValue>;
   /** `item`: the id of the drawn item the grip is on (its what-if is that item's only, when the code reads the value per item). */
   /** `item`: the id of the drawn item the grip is on; `each`: the grip is on one item of an `each` overlay (with an id or not). */
-  onHandle?: (phase: "start" | "move" | "end", key: string, value: number | boolean | null, item: string | null, each: boolean,
+  /** A move (of the running state) gives its value as "dx,dy"; it is never one item's own value. */
+  onHandle?: (phase: "start" | "move" | "end", key: string, value: number | boolean | string | null, item: string | null, each: boolean,
     /** How far the pointer has gone from where the drag began, and how far that was from the pivot (a "drag" has none: Infinity), in canvas pixels. */
     motion?: { moved: number; reach: number }) => void;
   /** One moment only (an exploration frame): no step badge, step numbers or path through the steps. */
@@ -35,6 +37,18 @@ type Props = {
  * underneath is held at the selected step's runtime state): the inspection annotation and the targeted overlays,
  * computed from that step's values.
  */
+/** Each recorded stroke a move grip bends (once), as it is now. */
+function inputPaths(grips: HandleGrip[]) {
+  const out = new Map<number, { key: string; points: { x: number; y: number }[]; color: string }>();
+  for (const grip of grips) {
+    const target = grip.handle.key.startsWith(INPUT_KEY) ? runtimeTarget(grip.handle.key) : null;
+    const history = grip.scope.stores[INPUT_ROOT];
+    if (target?.kind !== "input" || !Array.isArray(history)) continue;
+    const index = target.gesture < 0 ? history.length + target.gesture : target.gesture, points = (history[index] as { points?: { x: number; y: number }[] } | undefined)?.points;
+    if (!out.has(index) && Array.isArray(points) && points.length > 1) out.set(index, { key: `input-path:${index}`, points, color: grip.overlay.color });
+  }
+  return [...out.values()];
+}
 /** Labels drawn per overlay at most (an overlay drawn once per item labels only its first items). */
 const LABELS_PER_OVERLAY = 3;
 const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props: object) => kind === "rect" ? <rect x={Math.min(x, x + w)} y={Math.min(y, y + h)} width={Math.abs(w)} height={Math.abs(h)} {...props} />
@@ -50,15 +64,17 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
   const placed = result ? historyOverlays(result.overlays, state.steps, index, liveValues, drawn, fallback) : [];
   const svg = useRef<SVGSVGElement>(null);
   const dragging = useRef<{ grip: HandleGrip; drag: HandleDrag; pointerId: number } | null>(null);
-  const [active, setActive] = useState<{ key: string; grip: string; value: number | boolean | null } | null>(null);
+  const [active, setActive] = useState<{ key: string; grip: string; value: number | boolean | string | null } | null>(null);
   const grips = result && clickable && onHandle ? handleGrips(result.overlays, stepContext(state.steps, index, liveValues, drawn, fallback)) : [];
   /** The pointer in canvas pixels (the SVG spans the 900×600 canvas). */
   const canvasPoint = (e: React.PointerEvent) => { const box = svg.current!.getBoundingClientRect(); return { x: (e.clientX - box.left) / Math.max(1, box.width) * W, y: (e.clientY - box.top) / Math.max(1, box.height) * H }; };
   const moveHandle = (e: React.PointerEvent, phase: "move" | "end") => {
     const current = dragging.current; if (!current || current.pointerId !== e.pointerId) return;
     e.preventDefault(); e.stopPropagation();
-    const value = clampValue(specs?.[current.grip.handle.key], dragValue(current.grip, current.drag, canvasPoint(e)));
-    const item = itemIdOf(current.grip.scope.item), each = Boolean(current.grip.overlay.each), pointer = canvasPoint(e), drag = current.drag;
+    const pointer = canvasPoint(e), drag = current.drag, key = current.grip.handle.key;
+    const value = current.grip.handle.gesture === "move" ? moveDrag(drag, pointer) : clampValue(specs?.[key], dragValue(current.grip, drag, pointer));
+    // The running state is the step's, not one item's value.
+    const runtime = isRuntimeKey(key), item = runtime ? null : itemIdOf(current.grip.scope.item), each = !runtime && Boolean(current.grip.overlay.each);
     const motion = { moved: Math.hypot(pointer.x - drag.sx, pointer.y - drag.sy), reach: current.grip.handle.gesture === "drag" ? Infinity : Math.hypot(drag.sx - drag.px, drag.sy - drag.py) };
     if (value !== null) onHandle?.("move", current.grip.handle.key, value, item, each, motion);
     setActive({ key: current.grip.handle.key, grip: current.grip.key, value: value ?? active?.value ?? null });
@@ -131,12 +147,14 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
         </g>;
       })}
       {/* Handles: drag one to change the value it shows; the result and the overlay follow. */}
+      {/* The strokes a move grip bends, faintly: the input the brush made its marks from. */}
+      {inputPaths(grips).map(({ key, points, color }) => <polyline key={key} className="inspection-input-path" points={points.map(q => `${q.x},${q.y}`).join(" ")} stroke={color} vectorEffect="non-scaling-stroke" />)}
       {grips.map(grip => {
         const r = 6.5 / Math.max(.2, zoom), moving = active?.grip === grip.key, current = dragging.current?.grip.key === grip.key ? dragging.current : null;
         const guide = moving && current ? (grip.handle.gesture === "rotate" ? <circle cx={current.drag.px} cy={current.drag.py} r={Math.hypot(grip.x - current.drag.px, grip.y - current.drag.py)} />
           : grip.handle.gesture === "slide" ? <line x1={current.drag.px} y1={current.drag.py} x2={current.drag.px + (grip.x - current.drag.px) * 1.6} y2={current.drag.py + (grip.y - current.drag.py) * 1.6} />
           : <line x1={current.drag.sx} y1={current.drag.sy} x2={grip.x} y2={grip.y} />) : null;
-        const shown = moving && active?.value !== null && active?.value !== undefined ? `${grip.handle.hint} · ${typeof active.value === "boolean" ? (active.value ? "켜짐" : "꺼짐") : Math.round(Number(active.value) * 100) / 100}` : grip.handle.hint;
+        const shown = moving && active?.value !== null && active?.value !== undefined && typeof active.value !== "string" ? `${grip.handle.hint} · ${typeof active.value === "boolean" ? (active.value ? "켜짐" : "꺼짐") : Math.round(Number(active.value) * 100) / 100}` : grip.handle.hint;
         return <g key={grip.key} className={`inspection-grip gesture-${grip.handle.gesture} ${moving ? "dragging" : ""}`} role="slider" aria-label={grip.handle.hint || `Adjust ${grip.handle.key}`}
           aria-valuenow={typeof active?.value === "number" && moving ? active.value : undefined}
           onPointerDown={e => {
@@ -145,14 +163,16 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
             const point = canvasPoint(e);
             dragging.current = { grip, drag: startDrag(grip, point), pointerId: e.pointerId };
             setActive({ key: grip.handle.key, grip: grip.key, value: null });
-            onFocus(grip.overlay.link); onHandle?.("start", grip.handle.key, null, itemIdOf(grip.scope.item), Boolean(grip.overlay.each));
+            const runtime = isRuntimeKey(grip.handle.key);
+            onFocus(grip.overlay.link); onHandle?.("start", grip.handle.key, null, runtime ? null : itemIdOf(grip.scope.item), !runtime && Boolean(grip.overlay.each));
           }}
           onPointerMove={e => moveHandle(e, "move")} onPointerUp={e => moveHandle(e, "end")} onPointerCancel={e => moveHandle(e, "end")}>
           <title>{grip.handle.hint}</title>
           {guide && <g className="inspection-grip-guide" stroke={grip.overlay.color}>{guide}</g>}
           {grip.handle.gesture === "slide" ? <rect x={grip.x - r} y={grip.y - r} width={r * 2} height={r * 2} transform={`rotate(45 ${grip.x} ${grip.y})`} fill="#fffefa" stroke={grip.overlay.color} vectorEffect="non-scaling-stroke" />
             : <circle cx={grip.x} cy={grip.y} r={r} fill="#fffefa" stroke={grip.overlay.color} vectorEffect="non-scaling-stroke" />}
-          {grip.handle.gesture === "rotate" ? <path d={`M ${grip.x - r * .5} ${grip.y + r * .15} A ${r * .5} ${r * .5} 0 1 1 ${grip.x + r * .15} ${grip.y + r * .5}`} fill="none" stroke={grip.overlay.color} vectorEffect="non-scaling-stroke" />
+          {grip.handle.gesture === "move" ? <path d={`M ${grip.x - r * .6} ${grip.y} H ${grip.x + r * .6} M ${grip.x} ${grip.y - r * .6} V ${grip.y + r * .6}`} stroke={grip.overlay.color} vectorEffect="non-scaling-stroke" />
+            : grip.handle.gesture === "rotate" ? <path d={`M ${grip.x - r * .5} ${grip.y + r * .15} A ${r * .5} ${r * .5} 0 1 1 ${grip.x + r * .15} ${grip.y + r * .5}`} fill="none" stroke={grip.overlay.color} vectorEffect="non-scaling-stroke" />
             : <circle cx={grip.x} cy={grip.y} r={r * .38} fill={grip.overlay.color} />}
           {/* A wider invisible target, so the grip is easy to catch. */}
           <circle className="inspection-grip-hit" cx={grip.x} cy={grip.y} r={r * 1.9} />

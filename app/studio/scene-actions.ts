@@ -1,9 +1,9 @@
-import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
+import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, splitResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
 import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
 import { compositionContext } from "../lib/algorithm-pens";
 import { emptyMachineDraft, type SketchPanel } from "../lib/sketch-panels";
-import { markBrushes } from "../lib/brushes";
-import type { AlgorithmCall, Algorithm, PropertyHandle, Scene, ScalarValue, SceneNode } from "../lib/scene/schema";
+import { isBackdrop, markBrushes } from "../lib/brushes";
+import type { AlgorithmCall, Algorithm, PropertyHandle, Scene, ScalarValue, SceneNode, SemanticTransformation } from "../lib/scene/schema";
 import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
 import { sceneSchema } from "../lib/scene/validate";
 import { findNode, groupNodes, moveNodes, removeNodes, reorderNode, sceneDepth, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
@@ -18,7 +18,7 @@ import { stampModule } from "../lib/scene/stamp";
 import { minimalExampleInstruction, minimalExampleScene } from "../lib/scene/minimal-example";
 import { findTransformation } from "../lib/scene/transformations";
 import { applyHandles, handleSuggestionsSchema, setHandle, type HandleTarget } from "../lib/scene/handles";
-import type { FrameId } from "../lib/workspace";
+import { MAX_SKETCH_FRAMES, type FrameId } from "../lib/workspace";
 import type { StudioDeps } from "./deps";
 
 export const compositionPromptLabel = "AI가 스케치와 펜의 의미를 읽어 Compose prompt를 만들고 있습니다…";
@@ -224,7 +224,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
   /** A new sketch frame holding a scene derived from this one. */
   function derive(scene: Scene, name: string, revision: number, extra: Partial<SketchPanel>, brushes = false, quiet = false) {
     const id = deps.createFrame(owner, name);
-    if (!id) { deps.updatePanel(owner, { error: "스케치 프레임은 최대 24개까지 만들 수 있습니다." }); return null; }
+    if (!id) { deps.updatePanel(owner, { error: `스케치 프레임은 최대 ${MAX_SKETCH_FRAMES}개까지 만들 수 있습니다.` }); return null; }
     // Collections AI made become reusable brushes in the toolbar.
     if (brushes) scene = markBrushes(scene, deps.addBrushes(id, scene));
     deps.updatePanel(id, panel => ({ ...ops.commitScene(panel, scene), sourceFrameId: owner, analysisRevision: revision, instruction: deps.panel(owner).instruction, pendingResult: true, ...extra }));
@@ -241,10 +241,11 @@ export function sceneAI(deps: StudioDeps, owner: string) {
    * for a collection), linked back to this frame; it is rendered afterwards with `instruction`.
    * Throws when the example cannot be made; null when there is no room for another frame.
    */
-  function exampleFrame(nodeId: string, transformationId: string, quiet = false) {
-    const panel = deps.panel(owner), node = findNode(panel.scene, nodeId), transformation = node && findTransformation(node, transformationId);
+  function exampleFrame(nodeId: string, transformationId: string, quiet = false, from?: Scene) {
+    // `from`: the scene the transformation is in (a part of a decomposed transformation is in this frame's scene only as the child's).
+    const source = from ?? deps.panel(owner).scene, node = findNode(source, nodeId), transformation = node && findTransformation(node, transformationId);
     if (!node || !transformation) throw new Error("Transformation을 찾지 못했습니다.");
-    const scene = sceneSchema.parse(minimalExampleScene(panel.scene, nodeId, transformationId));
+    const scene = sceneSchema.parse(minimalExampleScene(source, nodeId, transformationId));
     const label = transformation.label || "Transformation";
     // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
     // instead of the original, so only this transformation shows; after that it is edited like any frame.
@@ -268,6 +269,41 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       deps.updatePanel(id, { error: "", pendingResult: true });
       await new Promise(resolve => setTimeout(resolve, exampleRetry.ms * attempt));
     }
+  }
+  /** Example frames for these transformations (linked to this frame), then their code, two at a time. */
+  async function makeExamples(targets: { nodeId: string; transformationId: string; from?: Scene }[], what: string) {
+    const made: NonNullable<ReturnType<typeof exampleFrame>>[] = [], failed: string[] = [];
+    for (const target of targets) {
+      try { const frame = exampleFrame(target.nodeId, target.transformationId, true, target.from); if (!frame) break; made.push(frame); }
+      catch { failed.push(target.transformationId); }
+    }
+    if (!made.length) { if (failed.length) deps.updatePanel(owner, { error: "최소 예제를 만들지 못했습니다." }); return; }
+    const left = targets.length - made.length - failed.length;
+    const subs = made.filter(frame => frame.sub).length;
+    deps.toast([`${what} ${made.length}개를 최소 예제 프레임으로 분해했습니다${subs ? ` (${subs}개를 원래 brush의 tool group에 sub brush로 추가)` : ""}. 결과를 생성하는 중입니다…`,
+      left ? `${left}개는 프레임이 가득 차(최대 ${MAX_SKETCH_FRAMES}개) 만들지 못했습니다.` : "", failed.length ? `${failed.length}개는 예제를 만들 수 없었습니다.` : ""].filter(Boolean).join(" "));
+    // Two at a time (what the server takes at once): each frame's code is its own AI request.
+    const queue = [...made];
+    await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => { for (let next = queue.shift(); next; next = queue.shift()) await renderExample(next.id); }));
+  }
+  /**
+   * Decompose a minimal example again: AI divides its transformation into the meaningful algorithms its code runs
+   * (their hard-coded constants become properties). This frame is left as it is; each part gets a child example frame
+   * of its own, linked to this one, where only that part is shown and adjusted.
+   */
+  async function splitExample(nodeId: string, transformationId: string) {
+    const out: { parts?: SemanticTransformation[]; algorithms?: Algorithm[]; reason?: string; scene?: Scene } = {};
+    await deps.task("AI가 이 transformation을 안의 알고리즘 단위로 나누고 있습니다…", async () => {
+      const panel = deps.panel(owner);
+      const result = splitResultSchema.parse(await deps.request("split", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: transformationId,
+        previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: "" }, owner));
+      Object.assign(out, { parts: result.divisible ? result.parts : [], algorithms: result.algorithms, reason: result.reason, scene: panel.scene });
+    }, owner);
+    if (!out.scene) return;
+    if (!out.parts?.length) { deps.toast(`더 쪼갤 수 없습니다: ${out.reason}`); return; }
+    // Each part as the node's only transformation, in a copy of this frame's scene (the frame itself keeps its own).
+    const withPart = (part: SemanticTransformation): Scene => ({ algorithms: out.algorithms!, nodes: out.scene!.nodes.map(node => node.id === nodeId ? { ...node, transformations: [part] } : node) });
+    await makeExamples(out.parts.map(part => ({ nodeId, transformationId: part.id, from: withPart(part) })), "내부 알고리즘");
   }
   /** Regenerate one property/transformation (or add one); returns what changed, or null. */
   async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = []) {
@@ -338,21 +374,13 @@ export function sceneAI(deps: StudioDeps, owner: string) {
      */
     async decompose() {
       const panel = deps.panel(owner);
-      const targets = panel.scene.nodes.flatMap(node => node.transformations.filter(item => item.properties.length).map(item => ({ nodeId: node.id, transformationId: item.id })));
+      // A still background filling the canvas is no brush and not part of one: nothing to try out on its own.
+      const targets = panel.scene.nodes.filter(node => node.parentId || !isBackdrop(node))
+        .flatMap(node => node.transformations.filter(item => item.properties.length).map(item => ({ nodeId: node.id, transformationId: item.id })));
       if (!targets.length) { deps.updatePanel(owner, { error: "분해할 semantic transformation이 없습니다." }); return; }
-      const made: NonNullable<ReturnType<typeof exampleFrame>>[] = [], failed: string[] = [];
-      for (const target of targets) {
-        try { const frame = exampleFrame(target.nodeId, target.transformationId, true); if (!frame) break; made.push(frame); }
-        catch { failed.push(target.transformationId); }
-      }
-      if (!made.length) { if (failed.length) deps.updatePanel(owner, { error: "최소 예제를 만들지 못했습니다." }); return; }
-      const left = targets.length - made.length - failed.length;
-      const subs = made.filter(frame => frame.sub).length;
-      deps.toast([`transformation ${made.length}개를 최소 예제 프레임으로 분해했습니다${subs ? ` (${subs}개를 원래 brush의 tool group에 sub brush로 추가)` : ""}. 결과를 생성하는 중입니다…`,
-        left ? `${left}개는 프레임이 가득 차(최대 24개) 만들지 못했습니다.` : "", failed.length ? `${failed.length}개는 예제를 만들 수 없었습니다.` : ""].filter(Boolean).join(" "));
-      // Two at a time (what the server takes at once): each frame's code is its own AI request.
-      const queue = [...made];
-      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => { for (let next = queue.shift(); next; next = queue.shift()) await renderExample(next.id); }));
+      // A minimal example already holds one transformation: decomposing it again divides that transformation into the algorithms inside it.
+      if (panel.exampleOf && targets.length === 1) { await splitExample(targets[0].nodeId, targets[0].transformationId); return; }
+      await makeExamples(targets.map(target => ({ ...target, from: undefined })), "transformation");
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. Then the code follows. */
     async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {

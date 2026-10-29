@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { MAX_TRANSFORMATIONS } from "../lib/scene/schema";
 import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
-import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiTransformSchema } from "../lib/scene/ai-schema";
-import { convertMachine, convertScene, convertTransformation, mergeAIAlgorithms } from "../lib/scene/convert";
+import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiSplitSchema, aiTransformSchema } from "../lib/scene/ai-schema";
+import { convertMachine, convertScene, convertTransformation, convertTransformations, mergeAIAlgorithms } from "../lib/scene/convert";
 import { descendantIds, findNode, updateNode } from "../lib/scene/graph";
 import { conformMachine, programModules, validateMachine } from "../lib/scene/machines";
 import { settleProposal, validateSceneProposal } from "../lib/scene/revisions";
@@ -14,6 +14,8 @@ import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
 import { concernSuggestionsSchema, evaluate, handleProblem, inspectPreviewResultSchema, inspectResultSchema, type RecommendationPreview, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { isRuntimeKey } from "../lib/runtime-edits";
+import { cleanMachineChange } from "../lib/machine-change";
 import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
@@ -53,7 +55,7 @@ const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision" | "split", Intent> = {
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
@@ -76,6 +78,22 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const generated = convertTransformation(output.transformation, library, ids);
       const target = { transformationId: input.targetTransformationId || undefined, propertyId: input.targetPropertyId || undefined };
       return validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, node => conformMachine(keepHandles(node, placeTransformation(node, generated, target)))));
+    },
+  },
+  /** Decompose again: one transformation (of a minimal example) into the meaningful algorithms its code runs, each its own transformation. */
+  split: {
+    schema: aiSplitSchema, maxTokens: () => 16000, effort: "medium",
+    check: input => needsTarget(input) || (!targetNode(input)!.transformations.some(item => item.id === input.targetTransformationId) ? "나눌 transformation을 찾지 못했습니다." : undefined),
+    context: input => { const node = targetNode(input)!, key = moduleKeyOf(input.scene!, node.id), code = key && input.previous ? programModules(input.previous).get(key) ?? "" : "";
+      return { scene: input.scene, targetNodeId: input.targetNodeId, targetTransformationId: input.targetTransformationId, code: code.slice(0, 40000), instruction: input.instruction }; },
+    finalize: (input, output: z.infer<typeof aiSplitSchema>) => {
+      const scene = input.scene!, node = targetNode(input)!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
+      // Each part becomes a transformation of its own: ids unique in the node (the parent's own id is taken too).
+      const taken = new Set(node.transformations.map(item => item.id));
+      const parts = convertTransformations(output.parts, library, ids).map(part => { let id = part.id, n = 2; while (taken.has(id)) id = `${part.id}-${n++}`; taken.add(id); return { ...part, id }; })
+        .filter(part => part.properties.length);
+      const divisible = output.divisible && parts.length >= 2;
+      return { divisible, reason: (divisible ? output.reason : output.reason || "더 나눌 의미 있는 내부 알고리즘이 없습니다.").slice(0, 400), algorithms: divisible ? library : [], parts: divisible ? parts : [] };
     },
   },
   "state-machine": {
@@ -158,7 +176,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         const edited = applyParameterEdits(module, edits); return "error" in edited ? code : code.replace(module, () => edited.module);
       };
       const recorded = records ? patched(input.previous, records.nodeId, records.edits) : input.previous;
-      const perItem = (key: string) => { const suggestion = parameters.find(item => suggestionKey(item) === key); return readsPerItem(suggestion ? patched(recorded, suggestion.nodeId, suggestion.edits) : recorded, key); };
+      // The running state (an input point, a store value) is the step's, not an item's value: any grip on it is kept.
+      const perItem = (key: string) => { if (isRuntimeKey(key)) return true; const suggestion = parameters.find(item => suggestionKey(item) === key); return readsPerItem(suggestion ? patched(recorded, suggestion.nodeId, suggestion.edits) : recorded, key); };
       const gripped = overlays.map(handled), shared = gripped.filter(item => item.each && item.handle && !perItem(item.handle.key)).length;
       const note = (overlays.length < drawable.length ? ` (항목 기록을 추가하는 코드가 올바르지 않아 오버레이 ${drawable.length - overlays.length}개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요.)` : "")
         + (shared ? ` (손잡이 ${shared}개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다. Inspect again으로 다시 시도해주세요.)` : "");
@@ -166,10 +185,12 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const previewOf = (item: InspectResult["recommendations"][number] & { preview?: RecommendationPreview | null }) => {
         const preview = item.preview;
         if (!preview || item.kind === "value" || !preview.edits.length || preview.edits.some(edit => !nodes.has(edit.nodeId)) || preview.values.some(value => !nodes.has(value.nodeId))) return null;
-        const program = exploreProgram(input.previous, input.scene!, preview);
+        // The states and transitions it brings: of a brush node, and an event one only when the edits emit it.
+        const machine = preview.machine && nodes.has(preview.machine.nodeId) ? cleanMachineChange(input.scene!, preview.machine, preview.edits) : null;
+        const program = exploreProgram(input.previous, input.scene!, { ...preview, machine });
         if ("error" in program) return null;
         const keys = [...new Set(preview.edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))];
-        return keys.every(key => parsesModule(programModules(program.code).get(key) ?? "")) ? preview : null;
+        return keys.every(key => parsesModule(programModules(program.code).get(key) ?? "")) ? { ...preview, machine } : null;
       };
       return { ...output, summary: output.summary.slice(0, 1500 - note.length) + note, overlays: gripped.map(item => item.each && item.handle && !perItem(item.handle.key) ? { ...item, handle: null } : item), valueFixes: output.valueFixes.filter(change),
         parameters, records,
@@ -222,11 +243,14 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       // Code that reads a value that is not there stops: edits reading a dropped one go too.
       if (edits.length && output.values.some(value => !values.includes(value) && edited.includes(`/${value.id}"`))) { edits = []; notes.push("미리보기 코드가 올바르지 않은 값을 읽어 지금 코드로 보여줍니다."); }
       const kept = edits.length ? values : [];
+      // A preview's states and transitions (for the behavior it adds): only with its edits, which emit its events.
+      const machine = previewing && edits.length && output.machine && nodes.has(output.machine.nodeId) ? cleanMachineChange(input.scene!, output.machine, edits) : null;
       const specs = new Map<string, { type: string }>([...input.inspection!.constraints.map(row => [row.key, { type: row.type }] as const), ...kept.map(value => [previewKey(value), value.value] as const)]);
       const linked = (kind: string, nodeId: string, id: string) => {
         const node = nodes.get(nodeId); if (!node) return false;
         if (kind === "parameter") return kept.some(value => value.nodeId === nodeId && value.id === id);
         if (kind === "constraint") return input.inspection!.constraints.some(row => row.nodeId === nodeId && row.propertyId === id);
+        if (machine?.nodeId === nodeId && (kind === "state" ? machine.states : machine.transitions).some(item => item.id === id)) return true;
         return Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
       };
       // Execution: the handle runs execution (and only it); parameters: handles change the brush's values or the preview's.
@@ -251,7 +275,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const sketches = sketched.filter(sketch => ops.has(sketch.op));
       if (lost.length) notes.push(`${lost.map(stage => `「${stage.name}」`).join(", ")} 단계는 코드에 넣지 못해 빠졌습니다. 다시 만들면 들어갈 수 있습니다.`);
       const note = notes.length ? ` (${notes.join(" ")})` : "";
-      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, overlays, stages, sketches };
+      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, machine, overlays, stages, sketches };
     },
   },
   handles: {

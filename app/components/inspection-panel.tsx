@@ -1,4 +1,5 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
+import { INPUT_KEY, isRuntimeKey } from "../lib/runtime-edits";
 import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, sameFocus, stepValues, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
 import type { ScalarValue, Scene } from "../lib/scene/schema";
@@ -21,7 +22,9 @@ type Props = {
   /** Inspection annotation: make a new targeted tool from the annotation and concern. Targeted: run its concern again. */
   onInspect: () => void;
   /** Recommendation previews: whether the inspection also writes them (on/off, to compare the time), and the preview of one recommendation. */
-  previews?: boolean; onPreviews?: (on: boolean) => void; renderPreview?: (listed: Recommendation, index: number) => React.ReactNode;
+  previews?: boolean; onPreviews?: (on: boolean) => void;
+  /** Execution frames are only placed with the inspection (AI makes each when its Generate is pressed). */
+  deferExecution?: boolean; onDeferExecution?: (on: boolean) => void; renderPreview?: (listed: Recommendation, index: number) => React.ReactNode;
   onApplyChanges: (changes: Change[]) => void; /** Apply a recommendation as it reads now (an added transformation is that transformation); `index` in the list, `listed` as stored. */
   onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
   /** Applying a recommendation makes a fork of the brush (the brush stays): the forks made from this recommendation, and going to one. */
@@ -191,6 +194,8 @@ export function InspectionPanel(props: Props) {
   // Recommendation previews on/off (the next inspection writes them or not; its time is shown to compare).
   const previewSwitch = props.onPreviews && <label className="inspection-preview-switch" title="With it on, the inspection also writes a quick visual preview (code) for each recommendation; it takes longer">
     <input type="checkbox" checked={Boolean(props.previews)} disabled={props.busy} onChange={e => props.onPreviews!(e.target.checked)} />Recommendation preview도 생성</label>;
+  const deferSwitch = props.onDeferExecution && <label className="inspection-preview-switch" title="With it on, the Execution frames (cause and each recommendation) are placed but made only when you press Generate in them">
+    <input type="checkbox" checked={Boolean(props.deferExecution)} disabled={props.busy} onChange={e => props.onDeferExecution!(e.target.checked)} />Execution 조절해보기는 나중에 생성 (프레임만 만들기)</label>;
   const { brush, scene, nodeIds, state, busy } = props;
   // Reset history asks once more, in place, before deleting the steps.
   const [confirmReset, setConfirmReset] = useState(false);
@@ -257,6 +262,10 @@ export function InspectionPanel(props: Props) {
         : <button title={`Delete this brush's recorded history in this frame (${steps.length} steps) `} disabled={!steps.length} onClick={() => setConfirmReset(true)}><Icon name="trash" size={12} />Reset history</button>}
     </div>
     <StepTimeline steps={steps} cursor={state.cursor} label={stepLabel} onCursor={props.onCursor} />
+    {/* The running state moved by a handle at this step (the input bent, a store value): only this step is drawn with it. */}
+    {(() => { const moved = Object.keys(step?.edits ?? {}).filter(isRuntimeKey); return moved.length > 0 && props.onResetEdit && <div className="inspection-timeline-hint"><span className="inspection-hint">
+      이 단계의 {moved.some(key => key.startsWith(INPUT_KEY)) ? "입력 경로" : "실행 상태"}를 손잡이로 옮겨 그렸습니다 ({moved.length}곳).</span>
+      <button type="button" onClick={() => moved.forEach(key => props.onResetEdit!(key))}>원래대로</button></div>; })()}
     {!steps.length && <div className="inspection-timeline-hint"><span className="inspection-hint">{props.running ? `결과가 상태를 바꿀 때마다 자동으로 기록됩니다 (최대 ${MAX_STEPS}개). Brush 도구로 이 프레임의 brush를 움직여 보세요.` : "이 프레임의 결과를 먼저 생성해주세요."}</span></div>}
     <div className="inspection-content">
       <section className="inspection-side">
@@ -310,7 +319,7 @@ export function InspectionPanel(props: Props) {
               </div>}
             </>;
           })()}
-          {previewSwitch}
+          {previewSwitch}{deferSwitch}
           <button type="submit" className="primary" disabled={busy || !(state.concern.trim() || state.marks.length)}><Icon name="target" size={13} />{busy ? "Creating…" : "Create targeted inspection"}</button>
         </form>}
         {targeted && <div className="inspection-concern">
@@ -318,7 +327,7 @@ export function InspectionPanel(props: Props) {
           <strong>{targeted.name}</strong>
           {targeted.concern && <span className="inspection-muted">{targeted.concern}</span>}
           {targeted.timing && <small className="inspection-timing">지난 inspection {(targeted.timing.ms / 1000).toFixed(1)}초 · recommendation preview {targeted.timing.previews ? "켬" : "끔"}</small>}
-          {previewSwitch}
+          {previewSwitch}{deferSwitch}
           <button type="button" className="inspection-apply-all" disabled={busy} title="Build this inspection again from the current steps" onClick={props.onInspect}><Icon name="target" size={12} />{busy ? "Inspecting…" : "Inspect again"}</button>
         </div>}
         {result && <div className="inspection-result">

@@ -313,6 +313,7 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .inspection-grip > circle, .inspection-grip > rect, .inspection-grip > path { stroke-width: 2; }
 .inspection-grip:hover > circle:first-of-type, .inspection-grip.dragging > circle:first-of-type, .inspection-grip:hover > rect, .inspection-grip.dragging > rect { stroke-width: 3; }
 .inspection-grip-hit { fill: transparent; stroke: none; }
+.inspection-input-path { fill: none; stroke-width: 1.5; stroke-dasharray: 3 4; opacity: .55; pointer-events: none; }
 .inspection-grip-guide { fill: none; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .65; pointer-events: none; }
 .inspection-item.clickable .inspection-shape { pointer-events: stroke; }
 .inspection-label { font-family: Inter, Arial, sans-serif; font-weight: 600; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; }
@@ -731,3 +732,31 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .recommendation-preview-status { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px; font-size: 10.5px; color: #7b8b81; text-align: center; }
 .recommendation-preview figcaption { margin-top: 3px; font-size: 10.5px; color: #4b5d53; }
 .recommendation-preview figcaption b { margin-right: 6px; font-size: 9px; letter-spacing: .06em; color: #2f6b52; }
+
+/* Frame groups: frames kept together under a title (a recommendation's fork, its Execution and key parameter frames) */
+.world-layer .frame-group { position: absolute; z-index: 0; pointer-events: none; border: 3px dashed #9fb7a8; border-radius: 18px; background: #eef4f033; }
+.frame-group-title { position: absolute; left: 0; right: 0; top: 0; height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 24px; pointer-events: auto; cursor: grab;
+  border-bottom: 2px dashed #c9d8ce; border-radius: 16px 16px 0 0; background: #f4f8f5e6; color: #2f4a3c; font-size: 26px; font-weight: 650; }
+.frame-group-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frame-group-title small { flex: none; font-size: 18px; font-weight: 500; color: #7b8b81; }
+.frame-group-title .frame-group-action { margin-left: auto; width: auto; height: 48px; padding: 0 18px; border: 2px solid #8fb7a0; border-radius: 10px; background: #fff; color: #2f6b52; font-size: 20px; font-weight: 600; white-space: nowrap; }
+.frame-group-title .frame-group-action:hover:not(:disabled) { background: #e7f2eb; }
+.frame-group-title .frame-group-action:disabled { opacity: .5; }
+.frame-group-title .frame-group-action + button { margin-left: 0; }
+.frame-group-title button { margin-left: auto; flex: none; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 10px; color: #a3483a; }
+.frame-group-title button:hover { background: #f6e9e6; }
+.board-dragging .frame-group-title { cursor: grabbing; }
+
+/* A recommendation's fork slot (in its frame group): the version it would be, and Accept */
+.fork-slot { position: relative; width: 900px; height: 600px; background: #fffefa; overflow: hidden; }
+.recommendation-preview.large { margin: 0; position: absolute; inset: 0; }
+.recommendation-preview.large .recommendation-preview-view { width: 900px; height: 600px; border: 0; border-radius: 0; opacity: .9; }
+.recommendation-preview.large .recommendation-preview-stage { transform: none; }
+.recommendation-preview.large figcaption { display: none; }
+.fork-slot-bar { position: absolute; left: 24px; right: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; border: 2px dashed #9fbfad; border-radius: 12px; background: #f7fbf8f2; font-size: 16px; color: #2f4a3c; }
+.fork-slot-bar strong { font-size: 20px; }
+.fork-slot-detail { color: #5c6d63; line-height: 1.45; max-height: 70px; overflow: hidden; }
+.fork-slot-message { display: flex; align-items: center; gap: 8px; color: #4b5d53; }
+.fork-slot-message.error { color: #a3483a; }
+.fork-slot-bar button.primary { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; background: #2f6b52; color: #fff; font-size: 16px; font-weight: 600; }
+.fork-slot-bar button.primary:disabled { background: #a9bdb1; }

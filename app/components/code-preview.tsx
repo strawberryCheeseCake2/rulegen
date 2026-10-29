@@ -39,7 +39,7 @@ type Props = { executable: string; onError: (error: string) => void; machineEnab
   /** Show the running sketch (a hidden one is not drawn by the browser) without giving it input. */
   visible?: boolean;
   /** Esc pressed inside the running sketch (it has the keyboard while it takes input). */
-  onEscape?: () => void; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; /** The stores as the held step is drawn now (by the current code and values), with its restore id (and the run, when one was asked for). */ onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; /** Every picture the sketch shows (a capture). */ onCapture?: (image: string) => void; onStatesChange?: (states: Record<string, string>) => void };
+  onEscape?: () => void; /** Record a step at every state change. */ tracing?: boolean; onTrace?: (step: TraceStep) => void; /** Interaction mode: the running sketch is shown and receives pointer/keyboard input. */ interactive?: boolean; jump?: StateJump; playing?: boolean; /** Hold the running sketch at this recorded step; value edits re-render from it. */ restore?: RestorePoint; /** The stores as the held step is drawn now (by the current code and values), with its restore id (and the run, when one was asked for). */ onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; /** Start the running sketch from this runtime (a fork keeps the brush marks it was made with), once per id and load. */ seed?: { id: string; runtime: unknown } | null; /** Every picture the sketch shows (a capture). */ onCapture?: (image: string) => void; onStatesChange?: (states: Record<string, string>) => void };
 
 /**
  * Runs a prepared sketch in an isolated iframe. The sketch is reloaded only when
@@ -50,7 +50,7 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
   const { executable, machineEnabled = false } = props;
   const current = useRef(props); current.current = props;
   const frame = useRef<HTMLIFrameElement>(null);
-  const tokenRef = useRef(""), loaded = useRef(""), ready = useRef(false), sentJump = useRef<number | null>(null), sentRestore = useRef<string | null>(null), lastStates = useRef(""), sentValues = useRef("");
+  const tokenRef = useRef(""), loaded = useRef(""), ready = useRef(false), sentJump = useRef<number | null>(null), sentRestore = useRef<string | null>(null), sentSeed = useRef<string | null>(null), lastStates = useRef(""), sentValues = useRef("");
   const [document, setDocument] = useState("");
   const [image, setImage] = useState("");
   // Programs taken in place (a module injected) map to the program actually loaded; anything else reloads.
@@ -80,6 +80,11 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
     if (key === sentRestore.current) return;
     sentRestore.current = key; post({ type: "restore", id, snapshot: id === null ? null : point!.runtime, params, items, run });
   };
+  const sendSeed = () => {
+    const seed = current.current.seed;
+    if (!ready.current || !seed?.runtime || sentSeed.current === seed.id) return;
+    sentSeed.current = seed.id; post({ type: "seed", snapshot: seed.runtime });
+  };
   useImperativeHandle(ref, () => ({ capture: () => image, emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
     isReady: () => ready.current, replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
     // A forwarded press focuses the sketch, as a real one would: sketches may ignore input while unfocused (p5 focused), and keys then reach it.
@@ -92,10 +97,11 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
     } }));
   useEffect(sendControls, [props.jump?.revision, props.playing, props.tracing]);
   useEffect(sendValues, [executable]);
+  useEffect(sendSeed, [props.seed?.id ?? null]);
   useEffect(sendRestore, [props.restore?.id ?? null, Boolean(props.restore?.runtime), JSON.stringify(props.restore?.params ?? null), JSON.stringify(props.restore?.items ?? null), JSON.stringify(props.restore?.run ?? null)]);
   useEffect(() => {
     const token = crypto.randomUUID();
-    tokenRef.current = token; ready.current = false; loaded.current = structure; aliases.current.clear(); sentJump.current = null; sentRestore.current = null; lastStates.current = "";
+    tokenRef.current = token; ready.current = false; loaded.current = structure; aliases.current.clear(); sentJump.current = null; sentRestore.current = null; sentSeed.current = null; lastStates.current = "";
     sentValues.current = JSON.stringify(readSceneValues(current.current.executable));
     const script = current.current.executable.replace(/<\/script/gi, "<\\/script");
     const origin = window.location.origin;
@@ -180,6 +186,9 @@ window.addEventListener('message',event=>{
     }else if(event.data.type==='restore'){
       if(event.data.snapshot&&typeof rulegenRestore==='function'){if(!pinned)beforePinned=snapshotNow();pinned=event.data.snapshot;pinnedId=typeof event.data.id==='string'?event.data.id:null;pinnedParams=event.data.params&&typeof event.data.params==='object'?event.data.params:null;pinnedItems=event.data.items&&typeof event.data.items==='object'?event.data.items:null;pinnedRun=event.data.run&&typeof event.data.run==='object'?event.data.run:null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=false;p.noLoop();showPinned();return;}
       else if(pinned){pinned=null;pinnedId=null;pinnedParams=null;pinnedItems=null;pinnedRun=null;if(beforePinned&&typeof rulegenRestore==='function')rulegenRestore(beforePinned);beforePinned=null;if(typeof rulegenPlaying!=='undefined')rulegenPlaying=lastPlaying;forceRender=true;if(lastPlaying&&wasLooping)p.loop();else p.redraw();}
+    }else if(event.data.type==='seed'){
+      // The running sketch goes on from this runtime (a held step, if any, comes back to it when let go).
+      if(event.data.snapshot&&typeof rulegenRestore==='function'){if(pinned)beforePinned=event.data.snapshot;else{rulegenRestore(event.data.snapshot);forceRender=true;p.redraw();capture();}}return;
     }else if(event.data.type==='event' && hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.transitionId==='string')rulegenEmit(event.data.nodeId,event.data.transitionId);
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
       const before=Object.assign({},rulegenParams);
@@ -210,7 +219,7 @@ p.draw=()=>{budgetReset();try{
     const receive = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow || event.data?.channel !== "rulegen" || event.data.token !== token) return;
       if (event.data.escape) { current.current.onEscape?.(); return; }
-      if (event.data.ready) { ready.current = true; sentJump.current = null; sendControls(); sendValues(); sendRestore(); }
+      if (event.data.ready) { ready.current = true; sentJump.current = null; sendControls(); sendValues(); sendSeed(); sendRestore(); }
       if (typeof event.data.error === "string") current.current.onError(event.data.error.slice(0, 500));
       if (event.data.drawn && typeof event.data.drawn === "object" && typeof event.data.drawnFor === "string" && sentRestore.current?.startsWith(`${event.data.drawnFor}|`) && JSON.stringify(event.data.drawn).length < 1_500_000) {
         const run = event.data.run && typeof event.data.run === "object" && Number.isFinite(event.data.run.total) && Array.isArray(event.data.run.events) && JSON.stringify(event.data.run).length < 3_000_000 ? event.data.run as ExecutionRun : undefined;
