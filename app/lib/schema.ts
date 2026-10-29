@@ -40,6 +40,8 @@ export const inspectionInputSchema = z.object({
   marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(MAX_MARKS),
   /** Each mark's color, width and opacity, by index. */
   markStyles: z.array(markStyleSchema).max(MAX_MARKS).default([]),
+  /** Also write a quick visual preview (code edits) for each recommendation. */
+  previews: z.boolean().default(false),
   /**
    * Rebuilding a targeted inspection's overlays after one of its recommendations was applied: what was applied
    * (its kind, target, value changes; the transformation it added, if any), and the summary and overlays so far.

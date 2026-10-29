@@ -6,8 +6,8 @@ import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { sampleScene, withMockedAI } from "./fixtures/scene";
-import { brushesFor, brushNodeIds, brushRole, brushRoots, brushSource, brushTool, detachedBrush, frameIds, markBrushes, parseBrushTool, sharedIds } from "../app/lib/brushes";
-import { addStep, remapResult, resultInFrame, historyOverlays, layoutLabels, changedKeys, constraintRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema } from "../app/lib/inspection";
+import { brushSchema, brushesFor, brushNodeIds, brushRole, brushRoots, brushSource, brushTool, detachedBrush, frameIds, markBrushes, parseBrushTool, sharedIds } from "../app/lib/brushes";
+import { addStep, remapResult, resultInFrame, historyOverlays, layoutLabels, changedKeys, constraintRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema, targetedResultSchema } from "../app/lib/inspection";
 import { updateNode } from "../app/lib/scene/graph";
 import { transplantNodes } from "../app/lib/scene/transfer";
 import { sceneValues } from "../app/lib/scene/values";
@@ -116,12 +116,12 @@ test("overlay expressions read step values safely", () => {
   assert.deepEqual(placed.map(item => [item.overlay.id, item.x, item.w, item.label]), [["a", 400, 24, "r=24"]]);
 });
 
-test("the toolbar shows each brush as a tool group that opens its tools", () => {
+test("the toolbar has one Brush tool whose panel picks a brush and shows its tools", () => {
   const [brush] = makeBrushes();
   const props = { tool: brushTool("inspect", brush.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
     busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [brush], groupTools: {}, openGroup: brush.id } as Record<string, unknown>;
   const html = renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
-  assert.match(html, /aria-label="Tree brush tools" title="Tree · Inspection/, "the group shows the selected tool");
+  assert.match(html, /aria-label="Brushes" title="Brush · Tree · Inspection/, "the Brush tool shows the selected brush and tool");
   for (const label of ["Brush", "Inspection", "Inspection annotation"]) assert.match(html, new RegExp(`<span>${label}</span>`));
   assert.doesNotMatch(html, /<span>Targeted inspection<\/span>/, "targeted tools are made from inspection annotations");
   assert.match(html, /Targeted inspection 도구가 여기에 생깁니다/);
@@ -131,7 +131,7 @@ test("the toolbar shows each brush as a tool group that opens its tools", () => 
   const result = { summary: "s", overlays: [], valueFixes: [], recommendations: [] };
   const withTool = { ...brush, targeted: [{ id: "t1", name: "별 크기", concern: "별 크기가 궁금해", marks: [], result }] };
   const selected = renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...props, tool: brushTool("targeted", brush.id, "t1"), brushes: [withTool], onTargetedRemove: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
-  assert.match(selected, /title="Tree · 별 크기/, "the group shows the selected targeted tool");
+  assert.match(selected, /title="Brush · Tree · 별 크기/, "the Brush tool shows the selected targeted tool");
   assert.match(selected, /<span>별 크기<\/span>/);
   assert.match(selected, /aria-label="Remove targeted inspection 별 크기"/);
 });
@@ -421,7 +421,7 @@ test("a recommendation can add a new transformation instead of forcing an unrela
     onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
   assert.match(html, /<em>새 Transformation<\/em>꼬리 추가/);
   assert.match(html, /<span>Orb<\/span><b>\+ 새 transformation<\/b>/);
-  assert.match(html, />Add with AI<\/button>/);
+  assert.match(html, />Fork &amp; add with AI<\/button>/);
 });
 
 test("an applied new-transformation recommendation reads as the transformation it added, and the overlays are rebuilt for it", async () => {
@@ -443,8 +443,13 @@ test("an applied new-transformation recommendation reads as the transformation i
   const html = renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene } as never));
   assert.match(html, /<em>Transformation · 추가됨<\/em>꼬리 추가/);
   assert.match(html, new RegExp(`<span>Orb</span><b>${added.label}</b>`), "its chip is the added transformation");
-  assert.match(html, />Apply with AI<\/button>/); assert.match(html, /✓ 적용됨 · 위 transformation으로 추가되었습니다/, "still marked as applied");
+  assert.match(html, />Fork &amp; apply with AI<\/button>/); assert.match(html, /✓ 적용됨 · 위 transformation으로 추가되었습니다/, "still marked as applied");
   assert.match(renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene: undone } as never)), /<em>새 Transformation<\/em>꼬리 추가/);
+  // Applying makes a fork of the brush: the recommendation lists the forks made from it, each a link to go there.
+  const forked = renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene, forksOf: () => [{ id: "fork-1", name: "Sketch · fork: 꼬리 추가" }], onOpenFork: noop } as never));
+  assert.match(forked, /class="inspection-fork-link"[^>]*>⑂ fork에 적용됨 · Sketch · fork: 꼬리 추가/);
+  const fork = brushSchema.parse({ ...brush, id: "fork-1", parentId: brush.id, fork: { brushId: brush.id, frameId: "sketch-a", key: "add-transformation:꼬리 추가", title: "꼬리 추가" } });
+  assert.equal(fork.fork?.brushId, brush.id, "a fork knows the brush it was forked from (kept with the project)");
   // Rebuilding the overlays: AI gets what was applied and the overlays so far.
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints: [], steps: [],
     update: { title: "꼬리 추가", detail: "d", nodeId: "orb", transformationId: added.id, summary: "전", overlays: [{ id: "size", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "constraint", nodeId: "orb", id: "radius" } }] } };
@@ -534,4 +539,76 @@ test("Update overlays: an applied recommendation's item rebuilds the overlays fo
   const home = readFileSync("app/routes/home.tsx", "utf8");
   assert.match(home, /stepApplied\(deps, activeSketch, "undo"\);[^\n]*followApplied\(entry\.id, "undo"\)/, "Undo apply takes the overlays back with it");
   assert.match(home, /stepApplied\(deps, activeSketch, "redo"\);[^\n]*followApplied\(entry\.id, "redo"\)/);
+});
+
+test("several brushes share one Brush tool: the panel lists them on top and shows the picked brush's tools and options below", () => {
+  const [tree] = makeBrushes(), orb = { ...tree, id: "brush-orb", name: "Orb", color: "#3366aa", targeted: [] };
+  const base = { tool: brushTool("brush", tree.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
+    busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [tree, orb], groupTools: {} } as Record<string, unknown>;
+  const render = (extra: Record<string, unknown>) => renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...base, ...extra }, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  const closed = render({ openGroup: null });
+  assert.equal([...closed.matchAll(/class="rail-button brush-group-button/g)].length, 1, "one Brush tool, not a button per brush");
+  assert.doesNotMatch(closed, /Brush list/);
+  const open = render({ openGroup: orb.id });
+  assert.match(open, /role="listbox" aria-label="Brush list"/);
+  assert.match(open, /class="brush-pick-row  in-use"[^>]*>.*?<span>Tree<\/span>/, "the brush in use is marked");
+  assert.match(open, /aria-selected="true" class="brush-pick-row picked[^"]*"[^>]*>(?:(?!<\/button>).)*<span>Orb<\/span>/, "the picked brush is highlighted");
+  assert.match(open, /class="brush-options-heading" aria-label="Orb brush tools"/, "the options below are the picked brush's");
+  assert.ok(open.indexOf("Brush list") < open.indexOf("brush-group-body"), "brushes on top, tools below");
+});
+
+test("a brush's thumbnail is its master's box cut from the result in the thumbnail's shape, skipped when empty, and the panel shows it", async () => {
+  const { thumbnailCrop, blank, THUMB_WIDTH, THUMB_HEIGHT } = await import("../app/lib/brush-thumbnail");
+  const crop = thumbnailCrop({ x: .4, y: .4, w: .2, h: .2 });
+  assert.ok(Math.abs(crop.w / crop.h - THUMB_WIDTH / THUMB_HEIGHT) < 1e-9, "the thumbnail's shape");
+  assert.ok(crop.x <= 360 && crop.x + crop.w >= 540 && crop.y <= 240 && crop.y + crop.h >= 360, "the whole box, with room");
+  const edge = thumbnailCrop({ x: .9, y: 0, w: .1, h: 1 });
+  assert.ok(edge.x >= 0 && edge.y >= 0 && edge.x + edge.w <= 900 + 1e-9 && edge.y + edge.h <= 600 + 1e-9, "inside the canvas");
+  const pixels = new Uint8ClampedArray(400 * 4); assert.equal(blank(pixels), true);
+  for (let i = 0; i < 20; i++) pixels[i * 4 + 3] = 255; assert.equal(blank(pixels), false);
+  const [tree] = makeBrushes(), pictured = { ...tree, thumbnail: "data:image/jpeg;base64,AAAA" };
+  const props = { tool: brushTool("brush", tree.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
+    busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [pictured], groupTools: {}, openGroup: tree.id } as Record<string, unknown>;
+  const html = renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  assert.match(html, /class="brush-thumb"[^>]*><img src="data:image\/jpeg;base64,AAAA"/);
+  assert.equal(brushSchema.parse(pictured).thumbnail, pictured.thumbnail, "kept with the project");
+});
+
+test("the master of the brush picked in the Brush panel is highlighted on the board with its box", async () => {
+  const { FreeformWorkspace } = await import("../app/components/freeform-workspace");
+  const { workspaceSchema } = await import("../app/lib/workspace");
+  const html = renderToStaticMarkup(createElement(FreeformWorkspace, { layout: workspaceSchema.parse({}), onChange: noop, tool: "select", onDrop: noop, onBackground: noop,
+    masterHighlight: { frame: "source", name: "Tree", color: "#c0563f", region: { x: .5, y: .5, w: .1, h: .1 } }, frames: [{ id: "source", title: "Sketch", subtitle: "", content: "" }] } as never));
+  assert.match(html, /class="world-frame [^"]*master-highlight/);
+  assert.match(html, /class="master-highlight-box" style="left:442px;top:292px;width:106px;height:76px"/);
+  assert.match(html, /◆ MASTER · Tree/);
+});
+
+test("a fork is a brush of its own in the Brush panel, marked with where it came from", () => {
+  const [tree] = makeBrushes();
+  const fork = brushSchema.parse({ ...tree, id: "brush-fork", name: "Tree · 꼬리 추가", parentId: tree.id, fork: { brushId: tree.id, frameId: "sketch-a", key: "k", title: "꼬리 추가" } });
+  assert.equal(fork.parentId, "", "not inside the group it came from (also forks saved before)");
+  const props = { tool: brushTool("brush", fork.id), toolsActive: true, pencilOpen: false, color: "#000000", width: 3, opacity: 80, pens: [], activePen: undefined, penSettingsOpen: false,
+    busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: [tree, fork], groupTools: {}, openGroup: fork.id, brushForkOf: () => "Tree" } as Record<string, unknown>;
+  const html = renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
+  assert.equal([...html.matchAll(/role="option"/g)].length, 2, "listed on top next to the brush it came from");
+  assert.match(html, /class="brush-fork-badge"[^>]*>⑂<\/em><span>Tree · 꼬리 추가<\/span>/);
+  assert.match(html, /FORK<\/span><span>⑂ Tree에서 fork · 「꼬리 추가」 적용/); assert.match(html, /원래 brush 보기/);
+  assert.doesNotMatch(html, /SUB BRUSHES/, "not a sub brush of the original");
+});
+
+test("the inspection panel turns recommendation previews on and off, shows how long the last inspection took, and shows a preview where one was asked", () => {
+  const scene = sampleScene(), [brush] = makeBrushes(scene);
+  const base = { kind: "transformation" as const, nodeId: "tree", targetId: "branching-growth", targetIds: [], title: "가지 기울이기", detail: "d", changes: [] };
+  const result = targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [{ ...base, preview: null }, { ...base, title: "이전 것" }] });
+  const tool = { id: "t1", name: "기울기", concern: "c", marks: [], markStyles: [], result, overlayUpdates: [], timing: { ms: 34210, previews: true } };
+  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true,
+    previews: true, onPreviews: noop, renderPreview: (listed: { title: string }) => createElement("i", { className: "marker" }, listed.title),
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, props as never));
+  assert.match(html, /class="inspection-preview-switch"[^>]*><input type="checkbox" checked=""/);
+  assert.match(html, /지난 inspection 34\.2초 · recommendation preview 켬/);
+  assert.match(html, /<i class="marker">가지 기울이기<\/i>/, "asked with previews: shown");
+  assert.doesNotMatch(html, /<i class="marker">이전 것<\/i>/, "made with previews off: none");
+  assert.equal(brushSchema.parse({ ...brush, targeted: [tool] }).targeted[0].timing?.ms, 34210, "the time is kept with the tool");
 });

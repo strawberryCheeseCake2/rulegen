@@ -2,7 +2,7 @@ import { z } from "zod";
 import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema, suggestionKey, type ParameterSuggestion } from "./hidden-parameters";
 import { findNode } from "./scene/graph";
 export { readsPerItem } from "./item-values";
-import type { ScalarValue, Scene, SceneBinding } from "./scene/schema";
+import { idSchema, numberValueSchema, toggleValueSchema, type ScalarValue, type Scene, type SceneBinding } from "./scene/schema";
 import { findProperty, propertyOwner } from "./scene/transformations";
 import { bindingKey, nodeLeaves, sceneBindings, layoutKey } from "./scene/values";
 
@@ -181,7 +181,18 @@ export const inspectResultSchema = z.object({
  * applied remembers the transformation it added (`addedId`), so it then reads as
  * that transformation (while it exists).
  */
-export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional() })).max(6),
+/**
+ * A quick visual preview of a recommendation (asked with the inspection when previews are on): small edits to
+ * the brush's module that make it draw roughly as it would with the recommendation, and the new values those
+ * edits read. Run on the held step's marks in the panel; nothing is applied.
+ */
+export const recommendationPreviewSchema = z.object({ caption: z.string().max(160),
+  edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) })).max(4),
+  values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3) });
+export type RecommendationPreview = z.infer<typeof recommendationPreviewSchema>;
+/** What the model returns with previews on: each recommendation with its preview (null for value ones: their values are the preview). */
+export const inspectPreviewResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() })).max(6) });
+export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(6),
   /** A suggested parameter the user turned down keeps `rejected`. */
   parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
@@ -672,7 +683,9 @@ export function remapResult(result: InspectResultInput, ids: Map<string, string>
         handle: overlay.handle ? { ...overlay.handle, key: remapKey(overlay.handle.key, map), x: expression(overlay.handle.x), y: expression(overlay.handle.y), pivotX: expression(overlay.handle.pivotX), pivotY: expression(overlay.handle.pivotY), value: expression(overlay.handle.value) } : null };
     }),
     valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
-    recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })) })),
+    recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })),
+      // Asked with previews: the key stays (null for none), so the panel knows to show the value ones too.
+      ...("preview" in item ? { preview: item.preview ? { ...item.preview, edits: item.preview.edits.map(edit => ({ ...edit, nodeId: map(edit.nodeId) })), values: item.preview.values.map(value => ({ ...value, nodeId: map(value.nodeId) })) } : null } : {}) })),
     // The edits are module code: it uses the code's node ids, the same in every frame.
     parameters: (result.parameters ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
     records: result.records ? { ...result.records, nodeId: map(result.records.nodeId) } : null,

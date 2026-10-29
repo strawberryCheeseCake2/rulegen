@@ -110,7 +110,7 @@ test("Create Minimal Example adds a sub brush to the brush the transformation be
     busy: false, canAddSketch: true, canUndo: false, canRedo: false, canClear: false, zoom: 1, brushes: all, groupTools: {}, openGroup: parent.id, onBrushRemove: () => {} } as Record<string, unknown>;
   const html = renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : () => {} }) as never));
   assert.equal([...html.matchAll(/class="rail-button brush-group-button/g)].length, 1);
-  assert.match(html, new RegExp(`aria-label="Tree brush tools" title="Tree › ${sub.name} · Brush`), "the group shows the sub brush in use");
+  assert.match(html, new RegExp(`aria-label="Brushes" title="Brush · Tree › ${sub.name} · Brush`), "the Brush tool shows the sub brush in use");
   assert.match(html, /SUB BRUSHES/); assert.match(html, new RegExp(`class="brush-sub-row picked"><button class="active" aria-pressed="true" aria-label="${sub.name} Brush"`));
 });
 

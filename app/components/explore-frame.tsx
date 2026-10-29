@@ -164,6 +164,7 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
       }} />}
     <div className="explore-bar" onPointerDown={e => e.stopPropagation()}>
       <span className="section-kicker">{execution ? "EXECUTION · STEP BY STEP" : "KEY PARAMETERS"} · {frame.source.kind === "cause" ? "원인" : frame.source.title}</span>
+      {frame.status === "queued" && <span className="explore-status" role="status"><span className="loading-spinner" />순서를 기다리는 중입니다. 앞의 탐색 프레임이 끝나면 AI가 만듭니다…</span>}
       {frame.status === "loading" && <span className="explore-status" role="status"><span className="loading-spinner" />{execution ? "AI가 내부 동작을 단계로 나누고 단계마다 실행할 gesture를 만들고 있습니다…" : "AI가 핵심 파라미터 손잡이를 만들고 있습니다…"}</span>}
       {frame.status === "error" && <span className="explore-status error" role="alert">{frame.error}<button onClick={onRetry}>다시 시도</button></span>}
       {result && <p>{result.summary}</p>}

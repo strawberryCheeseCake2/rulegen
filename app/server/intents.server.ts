@@ -13,7 +13,7 @@ import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
-import { concernSuggestionsSchema, evaluate, handleProblem, inspectResultSchema, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { concernSuggestionsSchema, evaluate, handleProblem, inspectPreviewResultSchema, inspectResultSchema, type RecommendationPreview, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
@@ -23,7 +23,9 @@ import { prepareCode, prepareHandle } from "./code.server";
 
 export type AIInput = z.infer<typeof requestSchema>;
 type Intent = {
-  schema: z.ZodType; maxTokens: (input: AIInput) => number; effort?: "low" | "medium";
+  schema: z.ZodType;
+  /** The output schema for this request when it differs from `schema` (e.g. an option asks for more), and the prompt parts it adds. */
+  variant?: (input: AIInput) => { schema: z.ZodType; prompts: string[] } | null; maxTokens: (input: AIInput) => number; effort?: "low" | "medium";
   /** Returns an error message when the request cannot run. */
   check?: (input: AIInput) => string | void;
   context: (input: AIInput) => Record<string, unknown>;
@@ -108,7 +110,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     },
   },
   inspect: {
-    schema: inspectResultSchema, maxTokens: () => 16000, effort: "medium",
+    schema: inspectResultSchema, maxTokens: input => input.inspection?.previews ? 24000 : 16000, effort: "medium",
+    variant: input => input.inspection?.previews && !input.inspection.update ? { schema: inspectPreviewResultSchema, prompts: ["inspect-preview"] } : null,
     check: input => !input.scene || !input.inspection ? "검사할 brush와 기록이 필요합니다." : !input.instruction.trim() && !input.inspection.marks.length ? "알고 싶은 점을 적거나 Inspection annotation으로 표시해주세요." : undefined,
     context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
       algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
@@ -159,10 +162,20 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const gripped = overlays.map(handled), shared = gripped.filter(item => item.each && item.handle && !perItem(item.handle.key)).length;
       const note = (overlays.length < drawable.length ? ` (항목 기록을 추가하는 코드가 올바르지 않아 오버레이 ${drawable.length - overlays.length}개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요.)` : "")
         + (shared ? ` (손잡이 ${shared}개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다. Inspect again으로 다시 시도해주세요.)` : "");
+      // A recommendation's preview is kept only if its edits apply to the brush's modules, give valid code and read only values it brings.
+      const previewOf = (item: InspectResult["recommendations"][number] & { preview?: RecommendationPreview | null }) => {
+        const preview = item.preview;
+        if (!preview || item.kind === "value" || !preview.edits.length || preview.edits.some(edit => !nodes.has(edit.nodeId)) || preview.values.some(value => !nodes.has(value.nodeId))) return null;
+        const program = exploreProgram(input.previous, input.scene!, preview);
+        if ("error" in program) return null;
+        const keys = [...new Set(preview.edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))];
+        return keys.every(key => parsesModule(programModules(program.code).get(key) ?? "")) ? preview : null;
+      };
       return { ...output, summary: output.summary.slice(0, 1500 - note.length) + note, overlays: gripped.map(item => item.each && item.handle && !perItem(item.handle.key) ? { ...item, handle: null } : item), valueFixes: output.valueFixes.filter(change),
         parameters, records,
         recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : item.kind === "add-transformation" ? (nodes.get(item.nodeId)?.transformations.length ?? MAX_TRANSFORMATIONS) < MAX_TRANSFORMATIONS : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
-          targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [] })) };
+          targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [],
+          ...("preview" in item ? { preview: previewOf(item) } : {}) })) };
     },
   },
   concern: {
@@ -290,4 +303,4 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
 export type IntentName = keyof typeof intents;
 export const isIntent = (name: string): name is IntentName => name in intents;
 /** JSON schema sent as the structured output format; `npm run prompts:schemas` writes it to prompts/schemas. */
-export const outputSchema = (intent: IntentName) => z.toJSONSchema(intents[intent].schema, { target: "draft-7" });
+export const outputSchema = (intent: IntentName, input?: AIInput) => z.toJSONSchema((input && intents[intent].variant?.(input)?.schema) || intents[intent].schema, { target: "draft-7" });

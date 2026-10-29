@@ -346,3 +346,30 @@ test("a step can be performed by sketching its mark: many kinds of marks are rec
   assert.match(view, /const submit = \(\) => \{ if \(!recognized\?\.ok\) return; setPlaying\(false\); setStrokes\(\[\]\); goTo\(done \+ 1\); \};/, "submitting a recognized mark executes the step");
   assert.match(readFileSync("prompts/explore.md", "utf8"), /`"custom"`: ANY other mark that fits the operation/);
 });
+
+test("recommendation previews: asked only when turned on, written with the inspection, kept only when the code applies, and carried to the panel", async () => {
+  const { inspectPreviewResultSchema, inspectResultSchema, remapResult } = await import("../app/lib/inspection");
+  const { outputSchema } = await import("../app/server/intents.server");
+  const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
+  const good = { caption: "가지가 기울어집니다", edits: [{ nodeId: "tree", find: "p.stroke(m.v(\"tree/ink\"));", replace: "p.stroke(m.v(\"tree/ink\")); p.line(0, 0, m.v(\"tree/lean\"), 9);" }],
+    values: [{ nodeId: "tree", id: "lean", label: "기울기", value: { type: "number", value: 12, min: 0, max: 40, step: 1, unit: "px" } }] };
+  const recommendation = (title: string, kind: string, preview: unknown) => ({ kind, nodeId: "tree", targetId: kind === "transformation" ? "branching-growth" : "", targetIds: [], title, detail: "d", changes: kind === "value" ? [{ key: "orb/radius", stateId: "", value: 30 }] : [], preview });
+  const answer = { summary: "원인", overlays: [], valueFixes: [], parameters: [], records: null, recommendations: [
+    recommendation("good", "transformation", good), recommendation("broken", "transformation", { ...good, edits: [{ ...good.edits[0], find: "not in the code" }] }), recommendation("values", "value", null)] };
+  const ask = (previews: boolean) => runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "가지가 왜 곧은지", previous: code,
+    inspection: { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints, steps: [stepInput], previews } }), new AbortController().signal);
+  await withMockedAI(() => answer, async calls => {
+    const on = inspectPreviewResultSchema.parse(await ask(true));
+    assert.deepEqual(on.recommendations.map(item => item.preview?.caption ?? null), ["가지가 기울어집니다", null, null], "a preview whose code does not apply is dropped; value ones need none");
+    assert.match(calls[0].instructions, /a quick visual preview of each recommendation/);
+    assert.ok(JSON.stringify(calls[0].text.format.schema).includes("\"preview\""), "the output schema asks for it");
+    const off = inspectResultSchema.parse(await ask(false));
+    assert.ok(off.recommendations.every(item => !("preview" in item)));
+    assert.doesNotMatch(calls[1].instructions, /quick visual preview/, "off: not asked at all");
+    assert.equal(JSON.stringify(outputSchema("inspect")).includes("\"preview\""), false, "the default schema file stays as it was");
+    // The panel shows a frame's ids: the preview's nodes follow, and "asked, none" stays null.
+    const shown = remapResult(on, new Map([["tree", "tree-2"]]));
+    assert.equal(shown.recommendations[0].preview?.edits[0].nodeId, "tree-2");
+    assert.ok("preview" in shown.recommendations[2] && shown.recommendations[2].preview === null);
+  });
+});

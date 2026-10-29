@@ -24,7 +24,7 @@ export const EXPLORE_MODES = ["execution", "parameters"] as const;
 export type ExploreMode = (typeof EXPLORE_MODES)[number];
 /** The value an execution handle changes: how far execution has gone (0..1 along the axis). */
 export const EXEC_KEY = "@execution";
-export const MAX_EXPLORE_FRAMES = 8;
+export const MAX_EXPLORE_FRAMES = 16;
 
 const editSchema = z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) });
 /** A value a preview reads that the scene does not have (the recommendation's new quantity), with its range. */
@@ -78,7 +78,8 @@ export type ExploreFrame = {
   base: ExploreBase;
   /** The prepared program it runs ("" while a preview is prepared). */
   executable: string;
-  status: "loading" | "ready" | "error"; error: string;
+  /** "queued": made with its targeted tool, waiting for its turn (the AI requests go one after another). */
+  status: "queued" | "loading" | "ready" | "error"; error: string;
   result: ExploreResult | null;
   /** How far execution has gone (0..1 along the axis). */
   progress: number;

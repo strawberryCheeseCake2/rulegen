@@ -1,6 +1,6 @@
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
-import { concernSuggestionsSchema, constraintRows, emptyInspection, heldIndex, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, stepValues, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { concernSuggestionsSchema, constraintRows, emptyInspection, heldIndex, inspectPreviewResultSchema, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, stepValues, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { exposeParameter, moduleKeyOf, recordFields, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
 import type { GeneratedCode } from "../lib/schema";
 import type { Scene } from "../lib/scene/schema";
@@ -49,7 +49,9 @@ export function applyChanges(deps: StudioDeps, owner: string, changes: Change[])
  * inspection annotation and/or written) and suggests fixes. Returns the result.
  * With `update`, a recommendation just added a transformation and the overlays are rebuilt to show it.
  */
-export async function inspectConcern(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"]; markStyles?: MarkStyle[] }, update: InspectionInput["update"] = null) {
+export async function inspectConcern(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"]; markStyles?: MarkStyle[] }, update: InspectionInput["update"] = null,
+  /** `previews`: also write a quick visual preview for each recommendation; `onTimed`: how long the AI took (ms). */
+  options: { previews?: boolean; onTimed?: (ms: number) => void } = {}) {
   const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner);
   if (!nodeIds.length) { deps.updatePanel(owner, { error: `이 프레임에는 ${brush.name} brush가 없습니다.` }); return null; }
   const snapshot = JSON.stringify(panel.scene), out: { result?: InspectResult } = {};
@@ -57,13 +59,14 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
     // The result is held at the selected step, so the live capture shows that moment.
     const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
     const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
-    const rows = constraintRows(panel.scene, nodeIds);
+    const rows = constraintRows(panel.scene, nodeIds), started = performance.now();
     // The code, so hard-coded constants the concern depends on can be suggested as parameters.
-    const result = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
+    const result: InspectResult = (options.previews && !update ? inspectPreviewResultSchema : inspectResultSchema).parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
       inspection: { brushName: brush.name, nodeIds, cursor: heldIndex(state),
         constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: stepValues(item)!, runtime: runtimeForAI(item, nodeIds) })),
-        marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update } }, owner));
+        marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update, previews: Boolean(options.previews) } }, owner));
+    options.onTimed?.(performance.now() - started);
     if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("검사 중 장면이 변경되었습니다. 다시 시도해주세요.");
     out.result = result;
   }, owner);

@@ -20,8 +20,12 @@ type Props = {
   onFocus: (focus: InspectionFocus | null) => void; onConcern: (text: string) => void; onClearMarks: () => void;
   /** Inspection annotation: make a new targeted tool from the annotation and concern. Targeted: run its concern again. */
   onInspect: () => void;
+  /** Recommendation previews: whether the inspection also writes them (on/off, to compare the time), and the preview of one recommendation. */
+  previews?: boolean; onPreviews?: (on: boolean) => void; renderPreview?: (listed: Recommendation, index: number) => React.ReactNode;
   onApplyChanges: (changes: Change[]) => void; /** Apply a recommendation as it reads now (an added transformation is that transformation); `index` in the list, `listed` as stored. */
   onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
+  /** Applying a recommendation makes a fork of the brush (the brush stays): the forks made from this recommendation, and going to one. */
+  forksOf?: (listed: Recommendation) => { id: string; name: string }[]; onOpenFork?: (forkId: string) => void;
   /** Rebuild the targeted tool's overlays for a recommendation that was applied (Undo apply brings the previous ones back). */
   onUpdateOverlays?: (listed: Recommendation) => void;
   /** Whether the tool shows overlays updated for this applied entry. */
@@ -184,6 +188,9 @@ function MarkPen({ pen, onPen }: { pen: MarkStyle; onPen: (pen: MarkStyle) => vo
  * inspection tool (AI overlays, value fixes and recommendations).
  */
 export function InspectionPanel(props: Props) {
+  // Recommendation previews on/off (the next inspection writes them or not; its time is shown to compare).
+  const previewSwitch = props.onPreviews && <label className="inspection-preview-switch" title="With it on, the inspection also writes a quick visual preview (code) for each recommendation; it takes longer">
+    <input type="checkbox" checked={Boolean(props.previews)} disabled={props.busy} onChange={e => props.onPreviews!(e.target.checked)} />Recommendation preview도 생성</label>;
   const { brush, scene, nodeIds, state, busy } = props;
   // Reset history asks once more, in place, before deleting the steps.
   const [confirmReset, setConfirmReset] = useState(false);
@@ -303,12 +310,15 @@ export function InspectionPanel(props: Props) {
               </div>}
             </>;
           })()}
+          {previewSwitch}
           <button type="submit" className="primary" disabled={busy || !(state.concern.trim() || state.marks.length)}><Icon name="target" size={13} />{busy ? "Creating…" : "Create targeted inspection"}</button>
         </form>}
         {targeted && <div className="inspection-concern">
           <span className="section-kicker">TARGETED INSPECTION</span>
           <strong>{targeted.name}</strong>
           {targeted.concern && <span className="inspection-muted">{targeted.concern}</span>}
+          {targeted.timing && <small className="inspection-timing">지난 inspection {(targeted.timing.ms / 1000).toFixed(1)}초 · recommendation preview {targeted.timing.previews ? "켬" : "끔"}</small>}
+          {previewSwitch}
           <button type="button" className="inspection-apply-all" disabled={busy} title="Build this inspection again from the current steps" onClick={props.onInspect}><Icon name="target" size={12} />{busy ? "Inspecting…" : "Inspect again"}</button>
         </div>}
         {result && <div className="inspection-result">
@@ -343,9 +353,13 @@ export function InspectionPanel(props: Props) {
               <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
                 aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
               <span>{item.detail}</span>
+              {/* Made with previews on: roughly what it would draw, before applying it. */}
+              {"preview" in listed && props.renderPreview?.(listed, i)}
               {/* Understand it by hand before (or after) applying it, in a frame of its own. */}
               {props.onExplore && <div className="inspection-explore">{explore("execution", i)}{explore("parameters", i)}</div>}
-              <button disabled={busy} title={added ? "Refine the transformation this recommendation added" : undefined} onClick={() => props.onApplyRecommendation(item, i, listed)}>{item.kind === "value" ? "Apply values" : item.kind === "add-transformation" ? "Add with AI" : "Apply with AI"}</button>
+              <button disabled={busy} title={added ? "Refine the transformation this recommendation added (in a new fork)" : "Copy this frame and apply it to a fork of the brush there; this brush stays as it is"} onClick={() => props.onApplyRecommendation(item, i, listed)}>
+                <span className="fork-mark">⑂</span>{item.kind === "value" ? "Fork & apply values" : item.kind === "add-transformation" ? "Fork & add with AI" : "Fork & apply with AI"}</button>
+              {(props.forksOf?.(listed) ?? []).map(fork => <button key={fork.id} type="button" className="inspection-fork-link" title="Go to this fork (its frame, with its targeted tool)" onClick={() => props.onOpenFork?.(fork.id)}>⑂ fork에 적용됨 · {fork.name}<Icon name="arrow" size={11} /></button>)}
               {applied && <small className="inspection-applied-mark">✓ 적용됨{added ? " · 위 transformation으로 추가되었습니다" : ""} · Undo apply로 되돌릴 수 있습니다</small>}
               {/* The overlays follow what was applied when asked; Undo apply takes them back with it. */}
               {appliedEntry && targeted && props.onUpdateOverlays && <div className="inspection-overlay-update">

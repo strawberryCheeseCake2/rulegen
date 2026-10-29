@@ -27,7 +27,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 작업 도구와 캔버스 조작 도구는 왼쪽 툴바에 모은다: 스케치 프레임 추가, 사진 첨부, **Select(V)**, 연필(P), 지우개(E), 라쏘(L), 이동(H), 알고리즘 펜·Interaction pen, Undo/Redo/지우기, 확대·축소.
 - 연필의 색상·굵기·투명도 메뉴는 연필을 눌렀을 때만 연필 버튼 옆 팝오버로 나타난다.
 - Select 도구로 스케치 위의 Collection·Object를 선택하고 움직인다(6절).
-- 펜 아래에는 **Brush tool group**이 brush마다 하나씩 놓인다(22절). 그룹 버튼은 그 그룹에서 마지막으로 고른 도구의 아이콘을 보여준다.
+- 펜 아래에는 brush가 몇 개든 **Brush 도구 버튼 하나**만 놓인다(22절). 버튼은 지금 쓰는 brush의 색 점과 마지막으로 고른 도구의 아이콘을 보여준다.
 
 ## 3. Collection · Object 모델
 
@@ -55,7 +55,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - 만든 예제는 interact가 필요하든 아니든 모두 **sub brush**로 추가된다(Create Minimal Example, Decompose 둘 다). 그 transformation이 속한 source brush(그 brush가 sub brush라면 그 부모)의 tool group 안에 들어가고, 툴바에 그룹 버튼이 따로 생기지 않는다. 원래 프레임에 brush 표시가 없으면(예: brush를 추출해 낸 원본 스케치) 그 노드 root의 code id가 같은 brush의 그룹을 찾는다. 어느 brush와도 이어지지 않을 때만 독립된 brush가 된다. 입력에 반응하는 transformation이면 예제 코드도 그 interaction을 그대로 유지하도록 지시한다.
     - 그룹 패널의 **SUB BRUSHES**에 sub brush마다 Brush 도구와 Inspection 도구가 있다. 이름 기본값은 "<transformation> · example"이고, 색은 부모와 같으며, ×로 지운다.
     - Brush 도구로 다른 프레임에 칠하면 추가되거나 interaction으로 동작하고, Inspection으로 검사할 수 있다. 일반 brush와 같다.
-    - 예제 프레임의 collection이 그 sub brush의 master다. sub brush 도구를 쓰는 동안 그룹 버튼 제목은 "부모 › sub brush · 도구"이다.
+    - 예제 프레임의 collection이 그 sub brush의 master다. sub brush 도구를 쓰는 동안 Brush 버튼 제목은 "Brush · 부모 › sub brush · 도구"이다.
     - 부모 brush를 지우면 sub brush도 함께 지워진다.
 - Layers의 노드 배지는 transformation 수를 보여주고, 툴팁에 적용 순서를 표시한다.
 
@@ -244,11 +244,13 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
     - Master를 지우면 brush는 저장된 사본으로 계속 쓸 수 있고, instance에서 Make master로 새 master를 정할 수 있다.
   - Master에서 바꾼 내용은 앞으로 찍는 instance에 쓰인다. 이미 찍힌 instance는 자동으로 따라 바뀌지 않는다.
 - **Brush 자동 생성**: AI가 Collection을 만들 때마다(**Extract**, **Compose**) 그 장면의 **루트 Collection 하나당 brush 하나**가 툴바에 Brush tool group으로 생긴다. 중첩된 Collection은 그 brush의 부분이라 따로 만들지 않는다. 최대 32개이며 프로젝트에 저장된다. 원본 Collection에는 brush 표시(`brushId`)가 붙는다. 찍은 복사본도 이 표시를 이어받아 그 brush의 Inspection 도구로 검사할 수 있다. 원본 프레임을 지워도 brush는 저장된 장면·코드 사본으로 계속 찍히고, 그 복사본에도 표시가 붙는다(예전에 표시 없이 찍힌 복사본은 brush의 노드 id로 알아본다).
-- **Brush tool group 동작**
-  - 그룹 버튼을 처음 누르면 그 그룹의 도구(기본은 Brush)가 선택된다.
-  - 이미 선택된 그룹을 다시 누르면 도구 패널이 열리고, 한 번 더 누르면 닫힌다(Esc로도 닫힘).
-  - 패널에는 **Brush**, **Inspection**, **Inspection annotation** 도구와, 그 brush에 지금까지 만든 **Targeted inspection 도구들**(concern마다 하나, ×로 삭제), brush 설정(master 위치, 이름, 삭제)이 있다. Targeted inspection 도구는 처음에는 없다(23절).
-  - 패널에서 다른 도구를 고르면 그룹 버튼 아이콘이 그 도구 아이콘으로 바뀐다.
+- **Brush 도구 동작**(brush tool group들을 하나의 Brush 도구로 통합)
+  - 툴바의 Brush 버튼을 누르면 마지막으로 쓴 brush(없으면 첫 brush)의 도구(그 brush가 기억하는 도구, 기본은 Brush)가 선택되고 Brush 패널이 열린다. 한 번 더 누르면 닫힌다(Esc, × 로도 닫힘).
+  - 패널 **위쪽은 brush 고르기**: brush마다 카드 하나(썸네일, 색, 이름, sub brush·targeted 도구 수)가 나오고, 고른 brush가 강조된다. 카드를 누르면 그 brush의 기억된 도구가 선택되고 패널은 열린 채로 아래 내용이 그 brush 것으로 바뀐다. 목록이 길면 그 안에서 스크롤한다.
+  - **썸네일**: 패널을 열 때마다 각 brush의 master 프레임 결과에서 master 영역(약간 여유를 둔 가로로 긴 모양)을 잘라 새로 찍는다. 그 부분이 비어 있으면(입력해야 그려지는 brush 등) 이전 썸네일을 그대로 두고, 한 번도 찍지 못했으면 색 막대만 보인다. 썸네일은 brush와 함께 프로젝트에 저장되어 master 프레임이 지워져도 남는다.
+  - **Master 프레임 강조**: 패널이 열려 있는 동안 고른 brush의 master가 있는 프레임이 brush 색 테두리로 강조되고, 프레임 왼쪽 위에 「◆ MASTER · 이름」 배지, master 영역에 점선 박스가 보인다. 목록에서 다른 brush에 마우스를 올리면(또는 키보드 포커스) 그 brush의 master로 잠시 바뀐다. 패널을 닫으면 사라진다.
+  - 패널 **아래쪽은 고른 brush의 도구·옵션**: **Brush**, **Inspection**, **Inspection annotation** 도구, 그 brush에 지금까지 만든 **Targeted inspection 도구들**(concern마다 하나, ×로 삭제), **SUB BRUSHES**, brush 설정(master 위치, 이름, 삭제)이 있다. Targeted inspection 도구는 처음에는 없다(23절).
+  - 아래에서 도구를 고르면 Brush 버튼 아이콘이 그 도구 아이콘으로 바뀐다. brush를 삭제하면 패널은 남은 brush로 넘어간다.
 - **Brush 도구 = 추가 또는 interaction**: Brush 도구로 프레임 위를 클릭하거나 드래그하면
   - **그 프레임에 그 brush가 없을 때**: 제스처를 시작한 자리에 Collection **하나**가 멤버·블록·상태 머신과 함께 **그 프레임의 장면에 생성**되고, **AI를 거치지 않고 바로 그려진다.** brush의 코드 모듈(원본 프레임 프로그램에서 꺼낸 것, 원본이 없으면 brush가 보관한 사본)을 그 프레임 프로그램에 넣고 새 노드를 그 모듈의 instance로 추가하기 때문이다. 이름이 같은데 내용이 다른 모듈이 이미 있으면 `tree~2`처럼 새 이름으로 넣는다. 그리고 **그 제스처(누름·움직임·놓기)가 그대로 결과에 입력으로 전달**되어, brush가 곧바로 반응한다(프로그램이 처음 준비되는 짧은 동안 입력을 모아 두었다가 이어서 보낸다).
   - **이미 있을 때**(master든 instance든): 더 찍지 않고 **interaction**으로 동작한다. 활성 프레임에서는 결과가 입력을 직접 받고, 다른 프레임에서 시작한 제스처는 그 프레임을 활성으로 만들면서 결과에 전달된다. 그 프레임에 결과가 아직 없으면 결과를 먼저 생성하라고 안내한다.
@@ -340,6 +342,20 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
   - Transformation recommendation은 대상 transformation을 여러 개 가질 수 있다. 주 대상은 `targetId`, 같은 노드에서 함께 바꿔야 하는 다른 것들은 `targetIds`에 들어간다(같은 노드에 실제로 있는 것만 남김).
   - 대상마다 칩이 하나씩 생기고, 각 칩은 자기 transformation 카드 하나만 강조한다.
   - **Apply with AI**는 대상들을 차례로 다시 만든다. 각 요청에는 함께 바뀌는 다른 transformation이 무엇인지와, 이번에는 그중 자기 몫만 하라는 지시가 붙는다. 코드는 마지막에 한 번만 다시 만들고, Undo apply로 전체가 한 번에 되돌아간다.
+- **Recommendation visual preview (켜고 끌 수 있음, 2026-10-29)**
+  - Inspection 패널의 Create targeted inspection / Inspect again 위에 **Recommendation preview도 생성** 체크박스가 있다. 이 브라우저에 기억된다(기본 꺼짐).
+  - 켜면 inspection을 만드는 같은 `inspect` 요청에서 recommendation마다 간단한 미리보기 코드도 함께 받는다(요청 수는 그대로, 응답이 길어짐). 이때만 출력 스키마에 `preview`가 들어가고 `prompts/inspect-preview.md`가 프롬프트에 붙는다. 끄면 예전과 똑같은 요청이다.
+  - `preview`는 brush 모듈을 고치는 작은 코드 수정(`edits`, 1–4개)과 그 코드가 읽는 새 값(`values`), 한 줄 설명(`caption`)이다. 값 recommendation은 `null`이다(그 값 자체로 그린다). 서버는 수정이 brush 모듈에 그대로 들어가고 올바른 코드가 될 때만 남기고, 아니면 `null`로 버린다.
+  - 패널에서는 그 recommendation 카드 안에 **PREVIEW** 썸네일(240×160)이 보인다. inspection이 보고 있는 단계의 brush 자국을 프로그램 사본(미리보기 수정 적용, 값 recommendation은 그 값)으로 그린 것이다. 아무것도 적용되지 않는다. preview를 끈 채 만든 결과에는 썸네일이 없다.
+  - **시간 비교**: inspection이 끝나면 토스트에 "inspection n초 (recommendation preview 켬/끔)"이 뜨고, targeted 도구 아래에 "지난 inspection n초 · recommendation preview 켬/끔"이 남는다(도구와 함께 저장, `timing`). 이 시간은 `inspect` 요청만 잰 것이다(함께 도는 원인 Execution 요청은 빼고).
+- **Recommendation은 brush의 fork에 적용된다 (2026-10-29)**
+  - Recommendation 버튼은 **Fork & apply with AI / Fork & apply values / Fork & add with AI**다. 누르면 그 brush 자체에는 적용하지 않는다.
+  - 대신 지금 프레임을 옆에 복사해 fork 프레임을 만든다(같은 그림·사진, 장면, 코드, 기록된 inspection 단계). 그 안의 이 brush stamp(recommendation이 바꾸는 stamp, 없으면 첫 stamp)가 **새 brush(fork)의 master**가 된다.
+  - fork는 **독립된 brush**다(원래 brush의 sub brush가 아님). Brush 패널 위쪽 목록에 따로 카드로 뜨고 이름 앞에 ⑂ 표시가 붙는다. 색·썸네일은 원래 brush와 같고, 이름은 "brush · recommendation 제목"이다. 이 targeted inspection 도구도 복사되어 들어가서, 아래쪽에서 fork 자신의 도구·targeted 도구·sub brush를 그대로 쓴다. 아래쪽 **FORK** 줄에 "⑂ 원래 brush에서 fork · 「제목」 적용"과 **원래 brush 보기** 버튼이 있다. 원래 brush를 지워도 fork는 남는다. 예전에 그룹 안에 저장된 fork도 불러오면 독립 brush가 된다.
+  - Recommendation은 그 fork 프레임에 적용된다(값은 바로, transformation·state·transition은 AI로). 화면은 fork 프레임으로 옮겨 가고 fork의 targeted 도구가 선택된다. 새 transformation 추가면 fork 도구의 overlay가 자동으로 업데이트된다.
+  - 원래 brush와 프레임은 그대로다. 원래 프레임에서 fork 프레임으로 「⑂ fork · 제목」 점선 화살표가 이어진다. recommendation 항목 아래에 「⑂ fork에 적용됨 · fork 프레임 이름」 링크가 생기고, 누르면 그 fork로 간다.
+  - 같은 recommendation을 또 누르면 fork가 하나 더 생긴다. fork 안에서 다시 적용하면 fork의 fork가 생긴다.
+  - fork 정보(`fork`: 원래 brush, 원래 프레임, recommendation)는 brush와 함께 저장된다. Undo apply / Redo와 Update overlays는 fork 프레임 안에서 그 적용에 대해 동작한다(아래 설명 그대로).
 - **Recommendation 적용 되돌리기**
   - Recommendation을 적용하면(**Apply with AI** 또는 **Apply values**) 적용 전과 후의 프레임을 함께 저장한다. 저장되는 것은 장면, 결과 코드(transformation 적용 뒤 이어서 다시 만든 코드까지), Compose prompt다.
   - RECOMMENDATIONS 제목 옆 **Undo apply / Redo**로 한 번의 적용 전체를 되돌리거나 다시 적용한다. 장면만 되돌리는 레이어 undo와 달리 코드도 함께 돌아간다.
@@ -355,6 +371,8 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - **탐색 프레임: 원인·recommendation을 손으로 이해하기 (2026-10-25)**
   - 원인 설명(summary) 아래에는 **Execution 조절해보기** 버튼이 있다. 원인의 값은 이미 overlay handle로 조절할 수 있어서 이 버튼만 둔다.
   - 각 recommendation 항목 안에는 **Execution 조절해보기**와 **핵심 파라미터 조절해보기**가 있다.
+  - **targeted inspection 도구를 만들면(또는 Inspect again) 탐색 프레임도 같이 만들어진다.** 원인의 Execution 프레임 하나와 recommendation마다 Execution·핵심 파라미터 프레임 두 개다. 한 프롬프트로 다 만들지 않고 요청마다 따로 보내되, 서버가 한 번에 받는 만큼 **둘씩 함께** 보낸다: ① `inspect`와 원인 Execution(`explore`)을 함께 → ② recommendation 1의 Execution·핵심 파라미터를 함께 → ③ recommendation 2의 둘 → … 순서다. 원인 Execution은 inspection과 동시에 만들어지므로 아직 찾은 원인 없이 concern·표시·코드·기록된 단계만 보고 만든다(프롬프트에 그 경우를 적어 둠). inspection이 끝나면 그 프레임의 요청에 찾은 원인이 들어가 "다시 시도" 때는 원인과 함께 묻는다. 차례를 기다리는 프레임에는 "순서를 기다리는 중"이 보이고, 서버가 바빠 거절하면 잠시 기다렸다가 다시 보낸다. recommendation 3개면 요청 8번이 4번에 나눠 가서, 하나씩 보내던 때보다 기다리는 시간이 약 절반이다. 화면은 원래 프레임에 그대로 있다. Inspect again이면 그 도구의 이전 탐색 프레임은 닫고 새로 만든다. 새 도구를 만들다 inspection이 실패하면 먼저 만들던 원인 프레임도 닫는다. 최대 16개라 넘치는 것은 만들지 않고, 버튼으로 열 수 있다. 기록된 단계가 없으면 만들지 않고 알려준다.
+  - 버튼은 그대로 남아 이미 만든 프레임으로 이동하거나, 닫았거나 실패한 것을 다시 만든다.
   - 누르면 원래 프레임 옆에 **새 탐색 프레임**(◇)이 생긴다. 원래 프레임은 바뀌지 않는다.
     - 그 프레임에는 inspection이 보고 있던 단계의 brush 자국이 그대로 있다. 그 단계의 runtime(입력 기록 포함)과 프로그램 사본으로 그린다.
     - AI(`explore`, `prompts/explore.md`)가 손잡이를 만든다. 답을 기다리는 동안에도 brush 자국은 보인다.
@@ -623,9 +641,9 @@ Semantic transformation의 property마다 그 property에 맞게 **직접 만든
   - 이 에러가 나면 메시지에 "드래그마다 m.memo로 한 번만 계산하라"는 안내가 들어가 **Fix with AI**가 그 방향으로 고친다. "Update code to adjust in place" 지시에도 같은 내용을 넣었다.
   - 이미 생성된 코드는 그대로이므로, 그 프레임에서 Fix with AI나 Update로 다시 생성해야 빨라진다.
 
-## 25. Brush tool group 패널 스크롤
+## 25. Brush 패널 스크롤
 
-Brush tool group을 눌러 여는 패널은 제목 줄 아래 높이가 고정된다(최대 190px, 창이 작으면 그에 맞춰 줄어듦, 최소 80px). Targeted inspection 도구, sub brush, master, 이름 같은 내용이 많아지면 그 안에서 스크롤해 내린다.
+Brush 패널 위쪽 brush 목록은 최대 150px(창 높이의 22%까지)이고, 아래쪽 고른 brush의 도구·옵션 영역은 높이가 고정된다(최대 190px, 창이 작으면 그에 맞춰 줄어듦, 최소 80px). Targeted inspection 도구, sub brush, master, 이름 같은 내용이 많아지면 각자 그 안에서 스크롤해 내린다.
 
 ## 주요 사용 흐름
 

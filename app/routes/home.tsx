@@ -25,11 +25,13 @@ import { InspectionOverlay } from "../components/inspection-overlay";
 import { ExploreFrameView } from "../components/explore-frame";
 import { isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, sameExplore, type ExploreFrame, type ExploreMode, type ExploreSource } from "../lib/explore";
 import { exploreExecutable, requestExplore } from "../studio/explore-actions";
-import { brushesFor, brushGroup, brushNodeIds, brushRole, brushRoots, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
+import { brushesFor, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
 import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
-import { subScene } from "../lib/scene/graph";
+import { descendantIds, subScene } from "../lib/scene/graph";
 import { findTransformation } from "../lib/scene/transformations";
+import { captureThumbnail } from "../lib/brush-thumbnail";
+import { RecommendationPreview } from "../components/recommendation-preview";
 import { sceneValues } from "../lib/scene/values";
 import { prepareBrushFor, startBrushGesture } from "../studio/brush-actions";
 import { programModules } from "../lib/scene/machines";
@@ -102,6 +104,14 @@ export default function Home() {
   const setBrushes = (next: Brush[]) => { brushesRef.current = next; setBrushesState(next); };
   // The tool each group shows (a toolbar tool id), so a group remembers its last tool.
   const [groupTools, setGroupTools] = useState<Record<string, string>>({}), [openGroup, setOpenGroup] = useState<string | null>(null);
+  /** The brush the Brush tool picks up again when its button is pressed. */
+  const [lastBrush, setLastBrush] = useState<string | null>(null);
+  /** Whether inspections also write a quick visual preview for each recommendation (kept in this browser, to compare the time). */
+  const [recommendationPreviews, setRecommendationPreviewsState] = useState(false);
+  useEffect(() => { try { setRecommendationPreviewsState(localStorage.getItem("rulegen:recommendation-previews") === "1"); } catch { /* storage unavailable */ } }, []);
+  const setRecommendationPreviews = (on: boolean) => { setRecommendationPreviewsState(on); try { localStorage.setItem("rulegen:recommendation-previews", on ? "1" : "0"); } catch { /* storage unavailable */ } };
+  /** The brush pointed at in the Brush panel (its master frame is shown on the board). */
+  const [brushHover, setBrushHover] = useState<string | null>(null);
   const brushPick = parseBrushTool(tool), activeBrush = brushPick ? brushes.find(brush => brush.id === brushPick.brushId) : undefined;
   const activeTargeted = brushPick?.kind === "targeted" ? activeBrush?.targeted.find(item => item.id === brushPick.targetedId) : undefined;
   const inspectionKind = activeBrush && isInspectionTool(brushPick!.kind) && (brushPick!.kind !== "targeted" || activeTargeted) ? brushPick!.kind : null;
@@ -229,10 +239,10 @@ export default function Home() {
     setToast(`${name}을 툴바에 추가했습니다. 자유롭게 그린 뒤 Compose prompt로 조합하세요.`);
   }
   /** A new sketch frame placed beside `fromId` (used for extracted/composed scenes). */
-  function createFrame(fromId: string, name: string): string | null {
+  function createFrame(fromId: string, name: string, marks?: Pick<Artwork, "strokes" | "photo">): string | null {
     if (sketchFramesRef.current.length >= 24) return null;
     const id: FrameId = `sketch-${crypto.randomUUID()}`;
-    const frames = [...sketchFramesRef.current, { id, artwork: { ...blank(), name: name.slice(0, 200) } }];
+    const frames = [...sketchFramesRef.current, { id, artwork: { ...blank(), ...(marks ? { strokes: marks.strokes, photo: marks.photo } : {}), name: name.slice(0, 200) } }];
     sketchFramesRef.current = frames; setSketchFrames(frames);
     setWorkspace(current => ({ ...current, frames: { ...current.frames, [id]: besideFramePosition(current.frames, fromId) } }));
     setSketchHistories(current => ({ ...current, [id]: { past: [], future: [] } }));
@@ -535,56 +545,143 @@ export default function Home() {
     if (annotating) { setPencilOpen(false); return; }
     setPencilOpen(next === "pen" ? !pencilOpen : false);
   }
-  // ── Brush tool groups ─────────────────────────────────────────────────────
-  /** First click selects the group's tool; clicking the selected group opens, then closes, its tool panel. */
-  function clickBrushGroup(brushId: string) {
-    if (brushPick && brushGroup(brushesRef.current, brushPick.brushId) === brushId) { setOpenGroup(open => open === brushId ? null : brushId); return; }
+  // ── The Brush tool ────────────────────────────────────────────────────────
+  // Opening the Brush panel takes a new thumbnail of each brush from its master frame's result (as it is now).
+  const brushPanelOpen = openGroup !== null;
+  useEffect(() => {
+    if (!brushPanelOpen) { setBrushHover(null); return; }
+    let cancelled = false;
+    void (async () => {
+      const made: Record<string, string> = {};
+      for (const brush of brushesRef.current) {
+        const owner = panelsRef.current[brush.sourceFrameId], node = owner && findNode(owner.scene, brush.nodeId);
+        const image = node && owner.generated ? resultPreviews.current.get(brush.sourceFrameId)?.capture() : "";
+        const thumbnail = image ? await captureThumbnail(image, node!.region).catch(() => null) : null;
+        if (thumbnail && thumbnail !== brush.thumbnail) made[brush.id] = thumbnail;
+      }
+      if (!cancelled && Object.keys(made).length) setBrushes(brushesRef.current.map(brush => made[brush.id] ? { ...brush, thumbnail: made[brush.id] } : brush));
+    })();
+    return () => { cancelled = true; };
+  }, [brushPanelOpen]);
+  /** The tool a brush (its group) remembers, if it still exists; else its Brush tool. */
+  function rememberedTool(brushId: string) {
     const remembered = groupTools[brushId], pick = remembered ? parseBrushTool(remembered) : null;
     // The remembered tool may be a sub brush's; it must still exist.
     const owner = pick ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
     const exists = pick && owner && brushGroup(brushesRef.current, owner.id) === brushId && (pick.kind !== "targeted" || owner.targeted.some(item => item.id === pick.targetedId));
-    chooseTool(exists ? remembered! : brushTool("brush", brushId)); setOpenGroup(null);
+    return exists ? remembered! : brushTool("brush", brushId);
+  }
+  /** Pick a brush in the Brush panel: its remembered tool is selected and the panel shows its tools and options. */
+  function clickBrushGroup(brushId: string) {
+    const using = brushPick && brushGroup(brushesRef.current, brushPick.brushId) === brushId;
+    if (!using) chooseTool(rememberedTool(brushId));
+    setLastBrush(brushId); setOpenGroup(brushId);
+  }
+  /** The Brush tool's button: selects the brush tool (the last brush used) and opens its panel; pressed again, closes it. */
+  function toggleBrushPanel() {
+    if (openGroup) { setOpenGroup(null); return; }
+    const groups = groupBrushes(brushesRef.current), using = brushPick ? brushGroup(brushesRef.current, brushPick.brushId) : null;
+    const brushId = using ?? groups.find(item => item.id === lastBrush)?.id ?? groups[0]?.id;
+    if (brushId) clickBrushGroup(brushId);
   }
   /** Pick a tool of a brush (or of one of its sub brushes); its group remembers it. */
   function chooseBrushTool(brushId: string, toolId: string) {
     const pick = parseBrushTool(toolId), group = brushGroup(brushesRef.current, pick?.brushId ?? brushId);
-    chooseTool(toolId); setGroupTools(current => ({ ...current, [group]: toolId }));
+    chooseTool(toolId); setGroupTools(current => ({ ...current, [group]: toolId })); setLastBrush(group);
+    if (openGroup) setOpenGroup(group);
     const brush = pick?.kind === "brush" ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
     if (brush) prepareBrushFor(deps, brush, activeSketchRef.current);
   }
-  /** Inspection annotation → a new targeted inspection tool in the group; a targeted tool → its concern again. */
+  /**
+   * Inspection annotation → a new targeted inspection tool in the group; a targeted tool → its concern again.
+   * Its exploration frames come with it, two AI requests at a time (what the server takes at once):
+   * the inspection together with the cause's Execution frame (that one reads the concern, not the
+   * cause found yet), then each recommendation's Execution and key parameter frames together.
+   */
   async function runTargeted(brush: Brush) {
     const frame = activeSketch, state = inspectionFor(panelsRef.current[frame] || panel, brush.id);
     const tool = activeTargeted, draft = tool ? { concern: tool.concern, marks: tool.marks, markStyles: tool.markStyles } : { concern: state.concern, marks: state.marks, markStyles: state.markStyles };
-    const found = await inspectConcern(deps, frame, brush, draft);
-    if (!found) return;
+    // A new tool's id is known before it exists, so its cause frame can start with the inspection.
+    const toolId = tool?.id ?? crypto.randomUUID(), empty: TargetedTool["result"] = { summary: "", overlays: [], valueFixes: [], recommendations: [], parameters: [], records: null };
+    // Inspected again: the old frames read the old result.
+    closeExploreFrames(item => item.targetFrameId === frame && item.toolId === toolId);
+    const cause = placeExploreFrames(brush, { id: toolId, name: "", concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.markStyles ?? [], result: empty, overlayUpdates: [] }, frame, [["execution", null]])[0];
+    const timing = { ms: 0, previews: recommendationPreviews };
+    const [found] = await Promise.all([inspectConcern(deps, frame, brush, draft, null, { previews: timing.previews, onTimed: ms => { timing.ms = ms; } }), cause ? fillExploreFrames([cause]) : Promise.resolve()]);
+    if (!found) { if (!tool && cause) closeExploreFrames(item => item.id === cause.id); return; }
     // Kept in the brush's shared ids, so the tool works on the master and on every instance.
     const frameScene = (panelsRef.current[frame] || panel).scene, result = remapResult(found, sharedIds(frameScene, brushRoots(frameScene, brush, frame)));
     const latest = brushesRef.current.find(item => item.id === brush.id); if (!latest) return;
-    if (tool) { setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: item.targeted.map(entry => entry.id === tool.id ? { ...entry, result } : entry) } : item)); return; }
-    const made = { id: crypto.randomUUID(), name: targetedName(draft.concern, latest.targeted.length), concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.marks.map((_, i) => markStyleAt(draft.markStyles, i)), result, overlayUpdates: [] };
-    setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: [...item.targeted, made].slice(-MAX_TARGETED) } : item));
-    updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], markStyles: [], concern: "", focus: null }));
-    chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
-    setToast(`「${made.name}」 targeted inspection 도구를 ${brush.name} 그룹에 만들었습니다.`);
+    let made: TargetedTool;
+    if (tool) {
+      made = { ...tool, result, timing };
+      setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: item.targeted.map(entry => entry.id === tool.id ? made : entry) } : item));
+    } else {
+      made = { id: toolId, name: targetedName(draft.concern, latest.targeted.length), concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.marks.map((_, i) => markStyleAt(draft.markStyles, i)), result, overlayUpdates: [], timing };
+      setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: [...item.targeted, made].slice(-MAX_TARGETED) } : item));
+      updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], markStyles: [], concern: "", focus: null }));
+      chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
+    }
+    setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}) · targeted inspection 도구를 ${brush.name} 그룹에 ${tool ? "다시 만들었습니다" : "만들었습니다"}.`);
+    // The cause frame now knows the cause found (asked again with it on retry).
+    const owner = panelsRef.current[frame];
+    if (cause && owner) patchExplore(cause.id, current => ({ request: { ...current.request, inspection: toolIn(frame, owner, brush, made).result } }));
+    const pairs = made.result.recommendations.map((_, i) => placeExploreFrames(brush, made, frame, [["execution", i], ["parameters", i]]));
+    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개의 Execution·핵심 파라미터 탐색 프레임을 둘씩 함께 만들고 있습니다…`);
+    for (const pair of pairs) await fillExploreFrames(pair);
   }
   /** Change one targeted tool of a brush as it is now. */
   function patchTargeted(brushId: string, toolId: string, patch: (tool: TargetedTool) => TargetedTool) {
     setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, targeted: item.targeted.map(entry => entry.id === toolId ? patch(entry) : entry) } : item));
   }
   /**
-   * Apply a recommendation of the selected targeted tool. One that adds a
-   * transformation then reads as that transformation in the list, and the tool's
-   * overlays are rebuilt by AI so they show the added transformation too (as
-   * "Update overlays" does for any applied recommendation).
+   * Apply recommendation `index` of a targeted tool (as it reads in `frame`) to a FORK of the
+   * brush, not to the brush: the frame is copied beside it (the same marks, scene, code and
+   * recorded steps), the brush's stamp there
+   * becomes the master of a new brush of its own (a fork, listed in the Brush panel with this
+   * targeted tool), and the recommendation is applied in that copy. The brush and its frame
+   * stay as they were. One that adds a transformation reads as that transformation in the fork's
+   * list, and the fork tool's overlays are rebuilt by AI so they show it too.
    */
-  async function applyTargetedRecommendation(brush: Brush, recommendation: Recommendation, index: number, listed: Recommendation) {
-    const frame = activeSketch, tool = activeTargeted;
-    const added = await applyRecommendation(deps, frame, recommendation, recommendationKey(listed));
-    if (!added || !tool) return;
+  async function forkRecommendation(frame: string, brush: Brush, tool: TargetedTool, index: number) {
+    const owner = panelsRef.current[frame], art = artworkOf(frame);
+    if (!owner || !art) return;
+    const listed = toolIn(frame, owner, brush, tool).result.recommendations[index];
+    if (!listed) return;
+    const recommendation = currentRecommendation(listed, owner.scene);
+    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `Brush는 최대 ${MAX_BRUSHES}개까지 만들 수 있습니다. 쓰지 않는 brush를 지워주세요.` }); return; }
+    // The stamp the recommendation changes (master or instance), else the first.
+    const roots = brushRoots(owner.scene, brush, frame), rootId = roots.find(id => id === recommendation.nodeId || descendantIds(owner.scene, id).includes(recommendation.nodeId)) ?? roots[0];
+    if (!rootId) return;
+    const id = createFrame(frame, `${art.name} · fork: ${listed.title}`, art);
+    if (!id) { updatePanel(frame, { error: "스케치 프레임은 최대 24개까지 만들 수 있습니다. fork를 만들 자리가 없습니다." }); return; }
+    const forkTool: TargetedTool = { ...tool, id: crypto.randomUUID(), overlayUpdates: [] };
+    const fork: Brush = { id: crypto.randomUUID(), name: `${brush.name} · ${listed.title}`.slice(0, 100), color: brush.color, sourceFrameId: id, nodeId: rootId, scene: subScene(owner.scene, [rootId]),
+      code: instanceCode(owner, rootId) || brush.code, targeted: [forkTool], parentId: "", thumbnail: brush.thumbnail,
+      fork: { brushId: brush.id, frameId: frame, key: recommendationKey(listed), title: listed.title } };
+    setBrushes([...brushesRef.current, fork]);
+    // The copy: the stamp is the fork's master there; its recorded steps come along, so the fork can be inspected at the same moment.
+    mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(), scene: { ...owner.scene, nodes: owner.scene.nodes.map(node => node.id === rootId ? { ...node, brushId: fork.id } : node) },
+      generated: owner.generated, codeDraft: owner.codeDraft, executable: owner.executable, preparedCode: owner.preparedCode, runtimeError: owner.runtimeError,
+      composePrompt: owner.composePrompt, instruction: owner.instruction, generationMode: owner.generationMode, sourceFrameId: owner.sourceFrameId, analysisRevision: owner.analysisRevision,
+      editingStates: owner.editingStates, machineLayouts: owner.machineLayouts, selectedNodeIds: [rootId],
+      inspections: { ...owner.inspections, [fork.id]: { ...inspectionFor(owner, brush.id), brushId: fork.id } } } }));
+    activateSketch(id); chooseBrushTool(fork.id, brushTool("targeted", fork.id, forkTool.id)); setPendingFrameFocus(id as FrameId);
+    setToast(`「${listed.title}」을(를) ${brush.name}의 fork에 적용하고 있습니다. 원래 brush와 프레임은 그대로입니다.`);
+    const key = recommendationKey(listed), added = await applyRecommendation(deps, id, recommendation, key);
+    if (!panelsRef.current[id]?.applied.past.some(entry => entry.key === key)) return;
+    if (!added) return;
     // The stored result keeps the brush's shared ids, so the recommendation is matched by its place in the list.
-    patchTargeted(brush.id, tool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: entry.result.recommendations.map((item, i) => i === index ? { ...item, addedId: added.id } : item) } }));
-    await updateTargetedOverlays(brush, { ...listed, addedId: added.id }, tool);
+    patchTargeted(fork.id, forkTool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: entry.result.recommendations.map((item, i) => i === index ? { ...item, addedId: added.id } : item) } }));
+    const latest = brushesRef.current.find(item => item.id === fork.id), latestTool = latest?.targeted.find(item => item.id === forkTool.id);
+    if (latest && latestTool) await updateTargetedOverlays(latest, { ...listed, addedId: added.id }, latestTool, id);
+  }
+  /** Go to a fork made from a recommendation: its frame, with its targeted tool. */
+  function openFork(forkId: string) {
+    const fork = brushesRef.current.find(item => item.id === forkId); if (!fork) return;
+    activateSketch(fork.sourceFrameId);
+    chooseBrushTool(fork.id, fork.targeted[0] ? brushTool("targeted", fork.id, fork.targeted[0].id) : brushTool("brush", fork.id));
+    setPendingFrameFocus(fork.sourceFrameId as FrameId);
   }
   /**
    * "Update overlays" of an applied recommendation: AI rebuilds the selected
@@ -592,8 +689,8 @@ export default function Home() {
    * scene and code as they are after it. What they replace is kept with the applied
    * entry (and the item records the update applies), so Undo apply brings it back.
    */
-  async function updateTargetedOverlays(brush: Brush, listed: Recommendation, tool = activeTargeted) {
-    const frame = activeSketch, applied = [...(panelsRef.current[frame]?.applied.past ?? [])].reverse().find(item => item.key === recommendationKey(listed));
+  async function updateTargetedOverlays(brush: Brush, listed: Recommendation, tool = activeTargeted, frame = activeSketchRef.current) {
+    const applied = [...(panelsRef.current[frame]?.applied.past ?? [])].reverse().find(item => item.key === recommendationKey(listed));
     if (!tool) return;
     if (!applied) { setToast("이 recommendation을 먼저 적용해주세요."); return; }
     await settledResult(frame);
@@ -626,6 +723,29 @@ export default function Home() {
   }
   // ── Exploration frames ─────────────────────────────────────────────────────
   /**
+   * A new exploration frame (not placed yet) for the cause (index null) or one recommendation of
+   * `tool` as it reads in `frame`, or why it cannot be made now.
+   */
+  function newExplore(mode: ExploreFrame["mode"], index: number | null, brush: Brush, tool: TargetedTool, frame: string, status: ExploreFrame["status"] = "loading"): ExploreFrame | string {
+    const owner = panelsRef.current[frame];
+    if (!owner) return "원래 프레임이 없습니다.";
+    const shown = toolIn(frame, owner, brush, tool), listed = index === null ? null : shown.result.recommendations[index];
+    if (index !== null && !listed) return "recommendation을 찾지 못했습니다.";
+    const key = listed ? recommendationKey(listed) : "", applied = Boolean(listed && owner.applied.past.some(entry => entry.key === key));
+    const source: ExploreSource = listed ? { kind: "recommendation", index: index!, title: listed.title, key, applied } : { kind: "cause" };
+    const state = inspectionFor(owner, brush.id), at = heldIndex(state);
+    if (at === null) return "먼저 Brush 도구로 이 프레임의 brush를 움직여 단계를 기록해주세요. 탐색 프레임은 그 brush 자국으로 만들어집니다.";
+    if (!owner.generated || !owner.executable) return "이 프레임의 결과가 실행된 뒤 다시 눌러주세요.";
+    const item = listed ? currentRecommendation(listed, owner.scene) : null;
+    return { id: `explore-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, mode, source,
+      name: `${brush.name} · ${mode === "execution" ? "Execution" : mode === "parameters" ? "핵심 파라미터" : "Recommendation"} · ${listed ? listed.title : "원인"}`.slice(0, 120), nodeIds: brushNodeIds(owner.scene, brush, frame),
+      // The brush marks as the inspection holds them; a value recommendation not applied yet is drawn with its values.
+      base: { runtime: state.steps[at].runtime, values: stepValues(state.steps[at])!, steps: state.steps.map(step => ({ runtime: step.runtime, values: stepValues(step)! })),
+        params: item?.kind === "value" && !applied ? Object.fromEntries(item.changes.map(change => [change.key, change.value])) : {} },
+      executable: syncScene(owner.executable, owner.scene), status, error: "", result: null, progress: 1, values: {},
+      request: { concern: tool.concern, inspection: shown.result, recommendation: item && { ...item, applied } } };
+  }
+  /**
    * Explore the selected targeted tool's cause (index null) or one of its
    * recommendations in a new frame beside this one: the same brush marks (the step
    * the inspection holds, run by a copy of the program), with a metaphoric handle that
@@ -635,39 +755,51 @@ export default function Home() {
   function openExplore(mode: ExploreMode, index: number | null) {
     const brush = activeBrush, tool = activeTargeted, frame = activeSketchRef.current, owner = panelsRef.current[frame];
     if (!brush || !tool || !owner) return;
-    const shown = targetedIn(frame, owner)!, listed = index === null ? null : shown.result.recommendations[index];
-    if (index !== null && !listed) return;
-    const key = listed ? recommendationKey(listed) : "", applied = Boolean(listed && owner.applied.past.some(entry => entry.key === key));
-    const source: ExploreSource = listed ? { kind: "recommendation", index: index!, title: listed.title, key, applied } : { kind: "cause" };
-    const existing = exploreRef.current.find(item => sameExplore(item, { targetFrameId: frame, toolId: tool.id, mode, source }));
-    if (existing && existing.status !== "error" && (existing.source.kind === "cause" || (existing.source.kind === "recommendation" && existing.source.applied === applied))) { setPendingFrameFocus(existing.id); return; }
-    const state = inspectionFor(owner, brush.id), at = heldIndex(state);
-    if (at === null) { setToast("먼저 Brush 도구로 이 프레임의 brush를 움직여 단계를 기록해주세요. 탐색 프레임은 그 brush 자국으로 만들어집니다."); return; }
-    if (!owner.generated || !owner.executable) { setToast("이 프레임의 결과가 실행된 뒤 다시 눌러주세요."); return; }
+    const made = newExplore(mode, index, brush, tool, frame);
+    const existing = typeof made === "string" ? undefined : exploreRef.current.find(item => sameExplore(item, made));
+    if (existing && existing.status !== "error" && (existing.source.kind === "cause" || (existing.source.kind === "recommendation" && typeof made !== "string" && made.source.kind === "recommendation" && existing.source.applied === made.source.applied))) { setPendingFrameFocus(existing.id); return; }
+    if (typeof made === "string") { setToast(made); return; }
     if (!existing && exploreRef.current.length >= MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫아주세요.`); return; }
-    const item = listed ? currentRecommendation(listed, owner.scene) : null;
-    const id = existing?.id ?? `explore-${crypto.randomUUID()}` as const;
-    const made: ExploreFrame = { id, targetFrameId: frame, brushId: brush.id, toolId: tool.id, mode, source,
-      name: `${brush.name} · ${mode === "execution" ? "Execution" : "핵심 파라미터"} · ${listed ? listed.title : "원인"}`.slice(0, 120), nodeIds: brushNodeIds(owner.scene, brush, frame),
-      // The brush marks as the inspection holds them; a value recommendation not applied yet is drawn with its values.
-      base: { runtime: state.steps[at].runtime, values: stepValues(state.steps[at])!, steps: state.steps.map(step => ({ runtime: step.runtime, values: stepValues(step)! })),
-        params: item?.kind === "value" && !applied ? Object.fromEntries(item.changes.map(change => [change.key, change.value])) : {} },
-      executable: syncScene(owner.executable, owner.scene), status: "loading", error: "", result: null, progress: 1, values: {},
-      request: { concern: tool.concern, inspection: shown.result, recommendation: item && { ...item, applied } } };
-    setExploreFrames([...exploreRef.current.filter(frame => frame.id !== id), made]);
-    if (!existing) setWorkspace(current => ({ ...current, frames: { ...current.frames, [id]: besideFramePosition(current.frames, frame) } }));
-    setPendingFrameFocus(id);
-    void runExplore(made);
+    const frameMade = existing ? { ...made, id: existing.id } : made;
+    setExploreFrames([...exploreRef.current.filter(item => item.id !== frameMade.id), frameMade]);
+    if (!existing) setWorkspace(current => ({ ...current, frames: { ...current.frames, [frameMade.id]: besideFramePosition(current.frames, frame) } }));
+    setPendingFrameFocus(frameMade.id);
+    void runExplore(frameMade);
+  }
+  /** Exploration frames of a tool in `frame`, placed beside it and waiting for their turn (none past the limit). */
+  function placeExploreFrames(brush: Brush, tool: TargetedTool, frame: string, wanted: [ExploreMode, number | null][]) {
+    const made: ExploreFrame[] = [];
+    for (const [mode, index] of wanted) {
+      if (exploreRef.current.length + made.length >= MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); break; }
+      const item = newExplore(mode, index, brush, tool, frame, "queued");
+      if (typeof item === "string") { setToast(`탐색 프레임은 만들지 않았습니다: ${item}`); break; }
+      made.push(item);
+    }
+    if (!made.length) return made;
+    setExploreFrames([...exploreRef.current, ...made]);
+    setWorkspace(current => ({ ...current, frames: made.reduce((frames, item) => ({ ...frames, [item.id]: besideFramePosition(frames, frame) }), current.frames) }));
+    return made;
+  }
+  /** Fill exploration frames by AI at the same time; a request the busy server turned away waits and goes again. */
+  async function fillExploreFrames(frames: ExploreFrame[]) {
+    await Promise.all(frames.map(async item => {
+      for (let attempt = 1; exploreRef.current.some(open => open.id === item.id); attempt++) {
+        await runExplore(exploreRef.current.find(open => open.id === item.id)!);
+        const now = exploreRef.current.find(open => open.id === item.id);
+        if (!now || now.status !== "error" || !/요청이 진행 중/.test(now.error) || attempt >= 6) break;
+        await new Promise(resolve => setTimeout(resolve, 2500 * attempt));
+      }
+    }));
   }
   /** Ask AI for an exploration frame's handles (and a recommendation's preview program). */
   async function runExplore(frame: ExploreFrame) {
-    const brush = brushesRef.current.find(item => item.id === frame.brushId);
+    const mode = frame.mode, brush = brushesRef.current.find(item => item.id === frame.brushId);
     if (!brush || !panelsRef.current[frame.targetFrameId]) { patchExplore(frame.id, { status: "error", error: "원래 프레임이나 brush가 없어 다시 만들 수 없습니다." }); return; }
     exploreAborts.current.get(frame.id)?.abort();
     const controller = new AbortController(); exploreAborts.current.set(frame.id, controller);
     patchExplore(frame.id, { status: "loading", error: "" });
     try {
-      const found = await requestExplore(deps, frame.targetFrameId, brush, { mode: frame.mode, ...frame.request }, controller.signal);
+      const found = await requestExplore(deps, frame.targetFrameId, brush, { mode, ...frame.request }, controller.signal);
       const executable = await exploreExecutable(deps, frame.targetFrameId, found);
       if (controller.signal.aborted) return;
       // A run is executed step by step from its first step (the finished marks show faintly); input or steps start where the process ends.
@@ -710,7 +842,9 @@ export default function Home() {
   /** Remove a brush; a group goes with its sub brushes. */
   function removeBrush(brush: Brush) {
     const gone = new Set([brush.id, ...brushesRef.current.filter(item => item.parentId === brush.id).map(item => item.id)]);
-    setBrushes(brushesRef.current.filter(item => !gone.has(item.id))); if (!brush.parentId) setOpenGroup(null);
+    setBrushes(brushesRef.current.filter(item => !gone.has(item.id)));
+    // The Brush panel stays open on another brush (closed when none is left).
+    if (!brush.parentId && openGroup === brush.id) setOpenGroup(groupBrushes(brushesRef.current)[0]?.id ?? null);
     if (brushPick && gone.has(brushPick.brushId)) setTool("pen");
   }
   // A brush gesture is fed to the frame's result while the user moves (after placing the brush there if needed).
@@ -800,10 +934,12 @@ export default function Home() {
    * on the selected stamp (else the first).
    */
   function targetedIn(frameId: string, owner: SketchPanel) {
-    if (!activeTargeted || !activeBrush) return activeTargeted;
-    const roots = brushRoots(owner.scene, activeBrush, frameId);
-    const selectedRoot = owner.selectedNodeIds.map(id => brushRole(owner.scene, frameId, id, brushes)).find(role => role?.brush.id === activeBrush.id)?.rootId;
-    return { ...activeTargeted, result: resultInFrame(activeTargeted.result, roots.map(root => frameIds(owner.scene, root)), Math.max(0, roots.indexOf(selectedRoot ?? ""))) };
+    return activeTargeted && activeBrush ? toolIn(frameId, owner, activeBrush, activeTargeted) : activeTargeted;
+  }
+  function toolIn(frameId: string, owner: SketchPanel, brush: Brush, tool: TargetedTool) {
+    const roots = brushRoots(owner.scene, brush, frameId);
+    const selectedRoot = owner.selectedNodeIds.map(id => brushRole(owner.scene, frameId, id, brushesRef.current)).find(role => role?.brush.id === brush.id)?.rootId;
+    return { ...tool, result: resultInFrame(tool.result, roots.map(root => frameIds(owner.scene, root)), Math.max(0, roots.indexOf(selectedRoot ?? ""))) };
   }
 
   // ── Master and instances ───────────────────────────────────────────────────
@@ -813,6 +949,10 @@ export default function Home() {
     return ids.map(id => ({ id, name: artworkOf(id)!.name, master: id === brush.sourceFrameId })).sort((a, b) => Number(b.master) - Number(a.master));
   }
   /** The master's frame name, or null when that frame (or the master in it) is gone. */
+  /** On the board: the master of the brush pointed at in the Brush panel, else of the brush picked there while it is open. */
+  const highlightedBrush = brushes.find(item => item.id === (brushHover ?? openGroup));
+  const masterNode = highlightedBrush && artworkOf(highlightedBrush.sourceFrameId) && panels[highlightedBrush.sourceFrameId] ? findNode(panels[highlightedBrush.sourceFrameId].scene, highlightedBrush.nodeId) : undefined;
+  const masterHighlight = highlightedBrush && masterNode ? { frame: highlightedBrush.sourceFrameId as FrameId, name: highlightedBrush.name, color: highlightedBrush.color, region: masterNode.region } : null;
   const masterFrame = (brush: Brush) => { const owner = panels[brush.sourceFrameId]; return artworkOf(brush.sourceFrameId) && owner && findNode(owner.scene, brush.nodeId) ? artworkOf(brush.sourceFrameId)!.name : null; };
   /**
    * Semantic transformations and state machines of an instance follow its brush:
@@ -1063,6 +1203,7 @@ export default function Home() {
     return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", exampleOf ? `example of ${exampleOf}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame && playingBrush && interactingIn(id, frame) ? `playing ${playingBrush.name}` : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
   // Minimal examples hang off the frame they were decomposed from, named by their transformation.
+  const forkLinks = brushes.flatMap(item => item.fork && artworkOf(item.fork.frameId) && artworkOf(item.sourceFrameId) ? [{ from: item.fork.frameId as FrameId, to: item.sourceFrameId as FrameId, label: `⑂ fork · ${item.fork.title}`.slice(0, 60) }] : []);
   const exampleLinks = Object.entries(panels).flatMap(([id, frame]) => {
     const of = frame.exampleOf, node = of && panels[of.frameId] && findNode(panels[of.frameId].scene, of.nodeId);
     return of && artworkOf(id) && artworkOf(of.frameId) ? [{ from: of.frameId as FrameId, to: id as FrameId, label: `▣ ${(node && findTransformation(node, of.transformationId)?.label) || "minimal example"}` }] : [];
@@ -1101,7 +1242,7 @@ export default function Home() {
       const target = panels[explore.targetFrameId], targetName = artworkOf(explore.targetFrameId)?.name || "frame";
       const rows = target ? constraintRows(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : [];
       const preview = (key: string) => explore.result?.values.find(value => previewKey(value) === key);
-      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "execution 조절" : "핵심 파라미터 조절", explore.result?.edits.length ? "추천 미리보기 코드" : "", "원래 프레임은 바뀌지 않음"].filter(Boolean).join(" · "),
+      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "execution 조절" : explore.mode === "parameters" ? "핵심 파라미터 조절" : "recommendation · 아직 만들지 않음", explore.result?.edits.length ? "추천 미리보기 코드" : "", "원래 프레임은 바뀌지 않음"].filter(Boolean).join(" · "),
         actions: <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}`} title={`이 탐색 프레임은 ${targetName}의 brush 자국으로 만들었습니다. 눌러서 이동`}
           onMouseEnter={() => setLinkHover(explore.targetFrameId as FrameId)} onMouseLeave={() => setLinkHover(null)}
           onClick={() => { setLinkHover(null); setPendingFrameFocus(explore.targetFrameId as FrameId); }}>
@@ -1177,8 +1318,8 @@ export default function Home() {
         onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
-        brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushGroup={clickBrushGroup} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)} onTargetedRemove={removeTargeted}
-        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }}
+        brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushPanel={toggleBrushPanel} onBrushGroup={clickBrushGroup} onBrushHover={setBrushHover} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)} onTargetedRemove={removeTargeted}
+        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }} brushForkOf={brush => brush.fork ? brushesRef.current.find(item => item.id === brush.fork!.brushId)?.name ?? null : null}
         onHelp={() => setToast("V 선택·이동 · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제")} />
       <aside className="layer-sidebar">
         <LayerPanel scene={scene} sketchId={activeSketch} selected={panel.selectedNodeIds} hovered={panel.hovered} busy={busy} canUndo={panel.sceneHistory.length > 0} canRedo={panel.sceneFuture.length > 0} title={currentSketch.name}
@@ -1190,8 +1331,8 @@ export default function Home() {
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} highlight={linkHover}
-          links={[...exampleLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))]} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
-          onActivateFrame={id => activateFrame(id)} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
+          links={[...exampleLinks, ...forkLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))]} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          onActivateFrame={id => activateFrame(id)} masterHighlight={masterHighlight} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
       </main>
@@ -1220,6 +1361,9 @@ export default function Home() {
         pen={inspectionPen} onPen={setInspectionPen}
         suggestions={concernSuggest.key === `${activeSketch}|${activeBrush.id}` ? concernSuggest : { items: [], loading: false, error: "" }} onSuggest={() => { void requestConcerns(); }}
         targeted={targetedIn(activeSketch, panel)} onInspect={() => { void runTargeted(activeBrush); }}
+        previews={recommendationPreviews} onPreviews={setRecommendationPreviews}
+        renderPreview={listed => { const held = inspectionFor(panel, activeBrush.id), at = heldIndex(held);
+          return panel.generated && at !== null ? <RecommendationPreview code={liveSource} scene={scene} runtime={held.steps[at].runtime} recommendation={listed} preview={listed.preview} /> : null; }}
         applied={{ past: panel.applied.past, future: panel.applied.future, undoClean: appliedCurrent(panel, "undo"), redoClean: appliedCurrent(panel, "redo") }} recommendationKey={recommendationKey}
         onUndoApplied={() => { const entry = stepApplied(deps, activeSketch, "undo"); if (entry) setToast(`「${entry.title}」 적용을 되돌렸습니다 (장면과 코드${followApplied(entry.id, "undo") ? ", overlay" : ""}).`); }}
         onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`「${entry.title}」을(를) 다시 적용했습니다${followApplied(entry.id, "redo") ? " (업데이트한 overlay도)" : ""}.`); }}
@@ -1229,8 +1373,8 @@ export default function Home() {
         code={panel.generated?.code} onApplyRecording={item => { void applyRecording(deps, activeSketch, item).then(done => { if (done) setToast(`그려진 항목마다 ${item.fields.join(", ")}을(를) 기록하도록 코드를 고쳤습니다.`); }); }}
         onAcceptParameter={acceptSuggested} onRejectParameter={rejectSuggested}
         onParameterValue={(nodeId, propertyId, value) => edits.scalar(nodeId, propertyId, [], value)}
-        onApplyRecommendation={(recommendation, index, listed) => recommendation.kind === "value" ? void applyRecommendation(deps, activeSketch, recommendation, recommendationKey(listed))
-          : guardEach([recommendation.nodeId], recommendation.kind === "transformation" || recommendation.kind === "add-transformation" ? "semantic transformation" : "state machine", () => { void applyTargetedRecommendation(activeBrush, recommendation, index, listed); })} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
+        onApplyRecommendation={(_recommendation, index) => { if (activeTargeted) void forkRecommendation(activeSketch, activeBrush, activeTargeted, index); }}
+        forksOf={listed => brushes.filter(item => item.fork?.brushId === activeBrush.id && item.fork.key === recommendationKey(listed)).map(item => ({ id: item.id, name: artworkOf(item.sourceFrameId)?.name ?? item.name }))} onOpenFork={openFork} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
       machinePanel={<NodeMachinePanel scene={scene} node={machineNode}
         inspected={inspection && machineNode && inspectedIds.includes(machineNode.id) ? machineInspection(inspection, inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result ?? null : null, machineNode.id) : null} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
         playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}

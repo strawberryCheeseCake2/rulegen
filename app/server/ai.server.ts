@@ -34,7 +34,8 @@ export const configuration = () => ({ configured: Boolean(process.env.OPENAI_API
 /** Instructions = prompts/<intent>.md (+ the interaction contract when interaction marks exist). */
 export function instructionsFor(input: AIInput) {
   const interaction = input.compositionPens.some(pen => pen.kind === "interaction") && ["compose-prompt", "extract", "compose", "state-machine", "machine-refine", "code"].includes(input.intent);
-  return loadPrompt(input.intent) + (interaction ? `\n\n${loadPrompt("contracts/interaction")}` : "");
+  const extra = intents[input.intent as keyof typeof intents]?.variant?.(input)?.prompts ?? [];
+  return loadPrompt(input.intent) + (interaction ? `\n\n${loadPrompt("contracts/interaction")}` : "") + extra.map(name => `\n\n${loadPrompt(name)}`).join("");
 }
 
 export async function runAI(input: z.infer<typeof requestSchema>, signal: AbortSignal, context?: RecoveryContext) {
@@ -90,7 +91,7 @@ async function respond(input: AIInput, messages: Message[], signal: AbortSignal,
   const model = configuration().model;
   const payload = { model, store: false, instructions: instructionsFor(input), input: messages, max_output_tokens: intent.maxTokens(input),
     ...(/^gpt-[56]/.test(model) ? { reasoning: { effort: intent.effort || "low" } } : {}),
-    text: { format: { type: "json_schema", name: `rulegen_${input.intent}`, strict: true, schema: outputSchema(input.intent as keyof typeof intents) } } };
+    text: { format: { type: "json_schema", name: `rulegen_${input.intent}`, strict: true, schema: outputSchema(input.intent as keyof typeof intents, input) } } };
   await log.prompt(payload, attempt);
   let response: Response, rawBody: string;
   // Transient provider failures (overload, 5xx, rate limit) are retried with backoff.
@@ -117,6 +118,6 @@ async function respond(input: AIInput, messages: Message[], signal: AbortSignal,
   if (body.status === "incomplete") throw new Error("생성 응답이 완료되지 않았습니다. 더 간단한 장면으로 다시 시도해주세요.");
   const text: string = body.output?.flatMap((item: { content?: { type: string; text?: string }[] }) => item.content || []).filter((item: { type: string }) => item.type === "output_text").map((item: { text: string }) => item.text).join("");
   if (!text) throw new Error("모델이 결과를 반환하지 않았습니다. 다른 이미지나 설명으로 시도해주세요.");
-  const output = intent.schema.parse(JSON.parse(text));
+  const output = (intent.variant?.(input)?.schema ?? intent.schema).parse(JSON.parse(text));
   return { text, result: intent.finalize ? intent.finalize(input, output) : output };
 }

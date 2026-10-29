@@ -16,6 +16,8 @@ export const targetedToolSchema = z.object({
   result: targetedResultSchema,
   /** Overlays rebuilt for an applied recommendation (see overlayUpdateSchema), newest last. */
   overlayUpdates: z.array(overlayUpdateSchema).max(MAX_OVERLAY_UPDATES).default([]),
+  /** How long the inspection that made this tool took, and whether it also wrote recommendation previews (to compare). */
+  timing: z.object({ ms: z.number().nonnegative(), previews: z.boolean() }).optional(),
 });
 export type TargetedTool = z.infer<typeof targetedToolSchema>;
 export const MAX_TARGETED = 12;
@@ -32,7 +34,12 @@ export const brushSchema = z.object({
   targeted: z.array(targetedToolSchema).max(MAX_TARGETED).default([]),
   /** A sub brush (a minimal example of one of its transformations) lives inside this brush's tool group ("" = a group of its own). */
   parentId: z.string().max(80).default(""),
-});
+  /** A small picture of the brush: its master's box cut from the master frame's result (shown in the Brush panel). */
+  thumbnail: z.string().max(200000).regex(/^data:image\/(jpeg|png);base64,/).optional(),
+  /** A fork: a copy of brush `brushId` (stamped in frame `frameId`) that a recommendation (`key`, `title`) was applied to instead of that brush. */
+  fork: z.object({ brushId: z.string().max(80), frameId: z.string().max(80), key: z.string().max(400), title: z.string().max(200) }).optional(),
+// A fork is a brush of its own (its own tools, targeted tools and sub brushes), not inside the group it came from.
+}).transform(brush => brush.fork && brush.parentId ? { ...brush, parentId: "" } : brush);
 export type Brush = z.infer<typeof brushSchema>;
 export const MAX_BRUSHES = 32;
 
