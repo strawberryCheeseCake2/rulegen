@@ -25,10 +25,11 @@ import { InspectionOverlay } from "../components/inspection-overlay";
 import { ExploreFrameView } from "../components/explore-frame";
 import { isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, sameExplore, type ExploreFrame, type ExploreMode, type ExploreSource } from "../lib/explore";
 import { exploreExecutable, requestExplore } from "../studio/explore-actions";
-import { brushesFor, brushGroup, brushNodeIds, brushRole, brushRoots, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
+import { brushesFor, brushGroup, brushNodeIds, brushRole, brushRoots, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
 import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { subScene } from "../lib/scene/graph";
+import { findTransformation } from "../lib/scene/transformations";
 import { sceneValues } from "../lib/scene/values";
 import { prepareBrushFor, startBrushGesture } from "../studio/brush-actions";
 import { programModules } from "../lib/scene/machines";
@@ -124,6 +125,8 @@ export default function Home() {
   const exploreAborts = useRef(new Map<string, AbortController>());
   // The frame at the other end of a hovered proxy link (highlighted on the board).
   const [linkHover, setLinkHover] = useState<FrameId | null>(null);
+  /** Frames picked on the board with the select tool (a dragged box), deleted together with Backspace/Delete. */
+  const [pickedFrames, setPickedFrames] = useState<FrameId[]>([]);
   const [handleErrors, setHandleErrors] = useState<Record<string, { code: string; message: string }>>({});
   // An edit an instance could not take, waiting for detach / the master.
   const [detachPrompt, setDetachPrompt] = useState<DetachPrompt | null>(null);
@@ -271,9 +274,9 @@ export default function Home() {
     },
     openProxy: (owner, nodeId) => openProxy(owner, nodeId),
     addSubBrush: (owner, nodeId, frameId, scene, name) => {
-      const ownerScene = panelsRef.current[owner]?.scene, role = ownerScene ? brushRole(ownerScene, owner, nodeId, brushesRef.current) : null;
-      // Inside the group of the brush the node belongs to (its group, if that brush is a sub brush itself).
-      const parent = role ? brushesRef.current.find(item => item.id === brushGroup(brushesRef.current, role.brush.id)) : undefined;
+      const ownerScene = panelsRef.current[owner]?.scene;
+      // Inside the tool group of the brush the node comes from (its group, if that brush is a sub brush itself).
+      const parent = ownerScene ? sourceBrushGroup(ownerScene, owner, nodeId, brushesRef.current) : undefined;
       const made = subBrushFor(scene, frameId, name, parent, brushesRef.current, crypto.randomUUID());
       if (made) setBrushes([...brushesRef.current, made]);
       return made;
@@ -362,10 +365,11 @@ export default function Home() {
       const command = e.metaKey || e.ctrlKey, key = e.key.toLowerCase();
       // Playing with a brush: the frame only takes input for its running result; Esc puts the brush down.
       if (interactingIn(activeSketch, panel)) { if (e.key === "Escape") chooseTool("select"); return; }
-      if (e.key === "Escape") { setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); setFrameJson(null); if (tool === "select") edits.select(null); }
+      if (e.key === "Escape") { setPickedFrames([]); setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); setFrameJson(null); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
       else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
+      else if (tool === "select" && pickedFrames.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteFrames(pickedFrames); }
       else if (tool === "select" && panel.selectedNodeIds.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); edits.remove(); }
       else if (tool === "select" && panel.selectedNodeIds.length && e.key.startsWith("Arrow")) { e.preventDefault(); const step = e.shiftKey ? 10 : 1; edits.nudge((e.key === "ArrowRight" ? step : e.key === "ArrowLeft" ? -step : 0) / 900, (e.key === "ArrowDown" ? step : e.key === "ArrowUp" ? -step : 0) / 600); }
       else if (!(command || e.altKey)) { if (key === "v") chooseTool("select"); if (key === "p") chooseTool("pen"); if (key === "e") chooseTool("eraser"); if (key === "l") chooseTool("lasso"); if (key === "h") chooseTool("hand"); }
@@ -445,6 +449,15 @@ export default function Home() {
     const proxy = proxyFramesRef.current.find(frame => frame.id === id); if (!proxy) return;
     activateSketch(proxy.targetFrameId);
     if (findNode(panelsRef.current[proxy.targetFrameId]?.scene ?? { nodes: [], algorithms: [] }, proxy.nodeId) && panelsRef.current[proxy.targetFrameId]?.selectedNodeIds.join() !== proxy.nodeId) sceneEdits(deps, proxy.targetFrameId).select(proxy.nodeId);
+  }
+  /** Delete the frames picked on the board (frames still busy with AI work stay). */
+  function deleteFrames(ids: FrameId[]) {
+    if (busy) return;
+    const kept = ids.filter(id => !isExploreFrame(id) && !isProxyFrame(id) && panelsRef.current[id]?.loading);
+    for (const id of ids) if (!kept.includes(id)) deleteFrame(id);
+    setPickedFrames(kept);
+    const gone = ids.length - kept.length;
+    setToast(`프레임 ${gone}개를 삭제했습니다.${kept.length ? ` AI 작업 중인 ${kept.length}개는 남겨두었습니다.` : ""}`);
   }
   function deleteFrame(id: FrameId) {
     if (isExploreFrame(id)) { closeExploreFrames(frame => frame.id === id); setToast("탐색 프레임을 닫았습니다. 원래 프레임은 그대로입니다."); return; }
@@ -1040,13 +1053,20 @@ export default function Home() {
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
+      {frame.scene.nodes.some(node => node.transformations.some(item => item.properties.length)) && <button disabled={frameBusy} title="Make a minimal example frame for every semantic transformation (base state), linked to this frame"
+        onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).decompose(); }}><Icon name="layers" size={13} />Decompose</button>}
       <button disabled={frameBusy || !(present || frame.generated)} title="Extract brush stamps into a new frame" onClick={() => { activateSketch(id); void sceneAI(deps, id).extract(); }}>{selection ? "Extract selection" : "Extract"}<Icon name="spark" size={13} /></button>
     </>;
   };
   const frameSubtitle = (id: string, artwork: Artwork, selection: boolean) => {
-    const frame = panels[id], from = frame?.sourceFrameId ? artworkOf(frame.sourceFrameId)?.name : null;
-    return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame && playingBrush && interactingIn(id, frame) ? `playing ${playingBrush.name}` : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
+    const frame = panels[id], from = frame?.sourceFrameId ? artworkOf(frame.sourceFrameId)?.name : null, exampleOf = frame?.exampleOf ? artworkOf(frame.exampleOf.frameId)?.name : null;
+    return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", exampleOf ? `example of ${exampleOf}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame && playingBrush && interactingIn(id, frame) ? `playing ${playingBrush.name}` : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
+  // Minimal examples hang off the frame they were decomposed from, named by their transformation.
+  const exampleLinks = Object.entries(panels).flatMap(([id, frame]) => {
+    const of = frame.exampleOf, node = of && panels[of.frameId] && findNode(panels[of.frameId].scene, of.nodeId);
+    return of && artworkOf(id) && artworkOf(of.frameId) ? [{ from: of.frameId as FrameId, to: id as FrameId, label: `▣ ${(node && findTransformation(node, of.transformationId)?.label) || "minimal example"}` }] : [];
+  });
   const frames = [
     { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork, hasSelection),
       actions: <><button title="Load example sketch" aria-label="Load example sketch" disabled={busy} onClick={() => { activateSketch("source"); commit({ ...blank(), name: "Branch studies", strokes: exampleStrokes() }); updatePanel("source", createSketchPanel()); }}><Icon name="pen" size={13} /></button>{frameActions("source", hasSelection, Boolean(artwork.photo || artwork.strokes.length))}</>,
@@ -1170,8 +1190,8 @@ export default function Home() {
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} highlight={linkHover}
-          links={[...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))]} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
-          onActivateFrame={id => activateFrame(id)}
+          links={[...exampleLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))]} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          onActivateFrame={id => activateFrame(id)} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
       </main>

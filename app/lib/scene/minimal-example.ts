@@ -48,15 +48,18 @@ export function minimalExampleScene(scene: Scene, nodeId: string, transformation
   return { algorithms: algorithmClosure(scene.algorithms, refs), nodes };
 }
 
-/** The code instruction for a minimal example frame. */
+/** The code instruction for a minimal example frame (given with every code generation of that frame). */
 export function minimalExampleInstruction(node: SceneNode, transformationId: string) {
-  const transformation = findTransformation(node, transformationId)!;
+  const transformation = findTransformation(node, transformationId);
+  if (!transformation) return "";
   return [
     `This frame is a minimal example for trying the semantic transformation "${transformation.label}" of "${node.name}" on its own.`,
     transformation.description && `What it does: ${transformation.description}`,
     node.kind === "collection"
       ? "Draw the collection's single member as a plain, neutral shape and let ONLY this transformation decide how many instances there are and how they vary."
       : "Draw the object (inside its plain collection) as a neutral instance of its primitive and apply ONLY this transformation to it.",
+    // Most transformations of an input-driven brush are not about the input: they must show without it.
+    "Whether it needs input: only if this transformation is ABOUT the input itself (what pressing, dragging, releasing, clicking or a key does: emitting along a drag, freezing on release, following the pointer) keep exactly that interaction, since the user plays with this example as a brush. Otherwise it must NOT need any input: its effect is on the canvas from the first frame and stays there. Where the original brush makes things from the user's input (a trail along a drag, stamps at clicks), make them here from a fixed sample laid out in the code (e.g. a gentle curve across the node's box), without input handlers or m.history(). The node descriptions describe the original brush (e.g. that the canvas starts empty and things appear only after input); that part does not apply to this example.",
     "Make its effect obvious and every property's slider visibly change the result. No background decoration, extra elements, colors or motion that this transformation does not define. Keep it inside the node's box.",
-  ].filter(Boolean).join("\n").slice(0, 2000);
+  ].filter(Boolean).join("\n").slice(0, 2400);
 }

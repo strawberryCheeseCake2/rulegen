@@ -23,6 +23,10 @@ import type { StudioDeps } from "./deps";
 
 export const compositionPromptLabel = "AI가 스케치와 펜의 의미를 읽어 Compose prompt를 만들고 있습니다…";
 
+/** How example frames wait when the server is busy with other AI requests (tests shorten it). */
+export const exampleRetry = { ms: 2500, attempts: 6 };
+const BUSY = /요청이 진행 중/;
+
 /** Local scene edits (no AI) for one sketch panel. */
 export function sceneEdits(deps: StudioDeps, owner: string) {
   const apply = (op: (panel: SketchPanel) => Partial<SketchPanel>) => deps.updatePanel(owner, panel => panel.loading ? {} : op(panel));
@@ -193,10 +197,12 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     await deps.task(repair ? "실행 오류를 수정하고 있습니다…" : "Brush stamp와 object를 p5.js 코드로 번역하고 있습니다…", async () => {
       // Derived frames are coded against the sketch they were extracted from.
       const context = await sketchContext(deps, panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : owner);
-      const base = instructionOverride ?? (panel.generationMode === "compose" ? panel.composePrompt : panel.instruction);
+      // A minimal example frame keeps its hint for every generation (also Update and fixes later on).
+      const example = panel.exampleOf && findNode(panel.scene, panel.exampleOf.nodeId), hint = example ? minimalExampleInstruction(example, panel.exampleOf!.transformationId) : "";
+      const base = [hint, instructionOverride ?? (panel.generationMode === "compose" ? panel.composePrompt : panel.instruction)].filter(Boolean).join("\n");
       const scene = ownCodeIds(panel.scene);
       const result = generatedSchema.parse(await deps.request("code", { scene, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
-        previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: repair ? `${base}\nFix this runtime error: ${panel.runtimeError}` : base }, owner));
+        previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: (repair ? `${base}\nFix this runtime error: ${panel.runtimeError}` : base).slice(0, 6000) }, owner));
       if (document !== deps.documentId() || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 brush stamp 또는 property 구조가 변경되었습니다. 다시 생성해주세요.");
       deps.updatePanel(owner, { scene, generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [] });
       // Brushes made from this frame keep a copy of their module for when the frame is gone.
@@ -216,19 +222,52 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     }, owner);
   }
   /** A new sketch frame holding a scene derived from this one. */
-  function derive(scene: Scene, name: string, revision: number, extra: Partial<SketchPanel>, brushes = false) {
+  function derive(scene: Scene, name: string, revision: number, extra: Partial<SketchPanel>, brushes = false, quiet = false) {
     const id = deps.createFrame(owner, name);
     if (!id) { deps.updatePanel(owner, { error: "스케치 프레임은 최대 24개까지 만들 수 있습니다." }); return null; }
     // Collections AI made become reusable brushes in the toolbar.
     if (brushes) scene = markBrushes(scene, deps.addBrushes(id, scene));
     deps.updatePanel(id, panel => ({ ...ops.commitScene(panel, scene), sourceFrameId: owner, analysisRevision: revision, instruction: deps.panel(owner).instruction, pendingResult: true, ...extra }));
     // A frame made by AI work the user has moved away from appears without taking the view.
-    if (stillHere(owner)) { deps.activate(id); deps.focus(id as FrameId); }
+    if (stillHere(owner) && !quiet) { deps.activate(id); deps.focus(id as FrameId); }
     return id;
   }
   async function renderDerived(id: string, instruction?: string) {
     try { await sceneAI(deps, id).generateCode(false, instruction); }
     finally { deps.updatePanel(id, { pendingResult: false }); }
+  }
+  /**
+   * A new frame beside this one with only `transformationId` of the node (plus a plain member
+   * for a collection), linked back to this frame; it is rendered afterwards with `instruction`.
+   * Throws when the example cannot be made; null when there is no room for another frame.
+   */
+  function exampleFrame(nodeId: string, transformationId: string, quiet = false) {
+    const panel = deps.panel(owner), node = findNode(panel.scene, nodeId), transformation = node && findTransformation(node, transformationId);
+    if (!node || !transformation) throw new Error("Transformation을 찾지 못했습니다.");
+    const scene = sceneSchema.parse(minimalExampleScene(panel.scene, nodeId, transformationId));
+    const label = transformation.label || "Transformation";
+    // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
+    // instead of the original, so only this transformation shows; after that it is edited like any frame.
+    const id = derive(scene, `${node.name} · ${label} example`, deps.artwork(owner)?.revision ?? 0,
+      { sourceFrameId: null, exampleOf: { frameId: owner, nodeId, transformationId }, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] }, false, quiet);
+    if (!id) return null;
+    // Every example is also a sub brush in the tool group of the brush it came from, so it can be brushed and played with.
+    const sub = deps.addSubBrush?.(owner, nodeId, id, scene, `${label} · example`);
+    if (sub) deps.updatePanel(id, current => ({ scene: markBrushes(current.scene, [sub]) }));
+    return { id, label, sub: Boolean(sub) };
+  }
+  /**
+   * Render an example frame. The server takes only a couple of AI requests at once: a request turned
+   * away for that waits and goes again, instead of leaving the frame empty.
+   */
+  async function renderExample(id: string) {
+    for (let attempt = 1; ; attempt++) {
+      await renderDerived(id);
+      const panel = deps.panel(id);
+      if (panel.generated || !deps.artwork(id) || attempt >= exampleRetry.attempts || !BUSY.test(panel.error)) return;
+      deps.updatePanel(id, { error: "", pendingResult: true });
+      await new Promise(resolve => setTimeout(resolve, exampleRetry.ms * attempt));
+    }
   }
   /** Regenerate one property/transformation (or add one); returns what changed, or null. */
   async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = []) {
@@ -271,10 +310,6 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       }, owner);
       if (out.frame) await renderDerived(out.frame);
     },
-    /**
-     * A new frame beside this one with only `transformationId` of the node (plus a
-     * plain member for a collection), rendered so that transformation can be tried alone.
-     */
     /** AI makes a direct manipulation interface for one property, a transformation's properties, or every property of the node; they run in its proxy frame. */
     async suggestHandles(nodeId: string, target: HandleTarget, instruction = "") {
       const out: { count?: number; skipped?: number } = {};
@@ -290,22 +325,34 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       deps.toast(`direct manipulation handle ${out.count}개를 만들었습니다${out.skipped ? ` (${out.skipped}개는 코드 오류로 빠짐)` : ""}. proxy frame에서 조작하면 결과가 바로 바뀝니다.`);
     },
     async minimalExample(nodeId: string, transformationId: string) {
-      const panel = deps.panel(owner), node = findNode(panel.scene, nodeId), transformation = node && findTransformation(node, transformationId);
-      if (!node || !transformation) return;
-      let scene: Scene;
-      try { scene = sceneSchema.parse(minimalExampleScene(panel.scene, nodeId, transformationId)); }
+      let made: ReturnType<typeof exampleFrame>;
+      try { made = exampleFrame(nodeId, transformationId); }
       catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "최소 예제를 만들지 못했습니다." }); return; }
-      const instruction = minimalExampleInstruction(node, transformationId);
-      // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
-      // instead of the original, so only this transformation shows; after that it is edited like any frame.
-      const id = derive(scene, `${node.name} · ${transformation.label || "Transformation"} example`, deps.artwork(owner)?.revision ?? 0,
-        { sourceFrameId: null, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] });
-      if (!id) return;
-      // The example is also a sub brush in the tool group of the brush it came from, so it can be brushed and played with.
-      const sub = deps.addSubBrush?.(owner, nodeId, id, scene, `${transformation.label || "Transformation"} · example`);
-      if (sub) deps.updatePanel(id, current => ({ scene: markBrushes(current.scene, [sub]) }));
-      deps.toast(`「${transformation.label || "Transformation"}」만 담은 최소 예제 프레임을 만들었습니다${sub ? " (brush 그룹에 sub brush로 추가)" : ""}. 결과를 생성하는 중입니다…`);
-      await renderDerived(id, instruction);
+      if (!made) return;
+      deps.toast(`「${made.label}」만 담은 최소 예제 프레임을 만들었습니다${made.sub ? " (원래 brush의 tool group에 sub brush로 추가)" : ""}. 결과를 생성하는 중입니다…`);
+      await renderExample(made.id);
+    },
+    /**
+     * Decompose: a minimal example frame for every semantic transformation of every node, as
+     * defined in the base state (state machines left out), each linked back to this frame.
+     */
+    async decompose() {
+      const panel = deps.panel(owner);
+      const targets = panel.scene.nodes.flatMap(node => node.transformations.filter(item => item.properties.length).map(item => ({ nodeId: node.id, transformationId: item.id })));
+      if (!targets.length) { deps.updatePanel(owner, { error: "분해할 semantic transformation이 없습니다." }); return; }
+      const made: NonNullable<ReturnType<typeof exampleFrame>>[] = [], failed: string[] = [];
+      for (const target of targets) {
+        try { const frame = exampleFrame(target.nodeId, target.transformationId, true); if (!frame) break; made.push(frame); }
+        catch { failed.push(target.transformationId); }
+      }
+      if (!made.length) { if (failed.length) deps.updatePanel(owner, { error: "최소 예제를 만들지 못했습니다." }); return; }
+      const left = targets.length - made.length - failed.length;
+      const subs = made.filter(frame => frame.sub).length;
+      deps.toast([`transformation ${made.length}개를 최소 예제 프레임으로 분해했습니다${subs ? ` (${subs}개를 원래 brush의 tool group에 sub brush로 추가)` : ""}. 결과를 생성하는 중입니다…`,
+        left ? `${left}개는 프레임이 가득 차(최대 24개) 만들지 못했습니다.` : "", failed.length ? `${failed.length}개는 예제를 만들 수 없었습니다.` : ""].filter(Boolean).join(" "));
+      // Two at a time (what the server takes at once): each frame's code is its own AI request.
+      const queue = [...made];
+      await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => { for (let next = queue.shift(); next; next = queue.shift()) await renderExample(next.id); }));
     },
     /** AI on the transformation stack: one property, one transformation, or (neither) a new stacked transformation. Then the code follows. */
     async regenerate(nodeId: string, target: { transformationId?: string; propertyId?: string } = {}, instruction?: string, marks: Marks = []) {

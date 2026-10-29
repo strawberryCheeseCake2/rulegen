@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FreeformWorkspace } from "../app/components/freeform-workspace";
-import { besideFramePosition, ensureFramePositions, fitFrames, workspaceSchema, removeWorkspaceFrame, showWorkspaceFrame } from "../app/lib/workspace";
+import { besideFramePosition, ensureFramePositions, fitFrames, framesInBox, workspaceSchema, removeWorkspaceFrame, showWorkspaceFrame } from "../app/lib/workspace";
 import { projectSchema } from "../app/lib/project";
 
 test("deleting a sketch removes only its position; the base frame is hidden and can be shown again", () => {
@@ -72,4 +72,14 @@ test("saved projects keep each sketch's generated result and frame positions", (
   assert.deepEqual(restored.workspace.frames["sketch-a"], { x: 2080, y: 0 });
   assert.deepEqual(restored.sketchPanels["sketch-a"].generated, { ...generated, sceneBindings: [], machineSignature: "" });
   assert.equal(restored.sketchPanels["sketch-a"].sourceFrameId, "source");
+});
+
+test("a box dragged with the select tool picks the frames it touches, shown as picked", () => {
+  const frames = workspaceSchema.parse({ frames: { "sketch-a": { x: 1040, y: 0 }, "sketch-b": { x: 0, y: 2000 } } }).frames, ids = ["source", "sketch-a", "sketch-b"];
+  assert.deepEqual(framesInBox(frames, ids, { x: 800, y: 100, w: 400, h: 100 }), ["source", "sketch-a"]);
+  assert.deepEqual(framesInBox(frames, ids, { x: 1200, y: 200, w: -400, h: -100 }), ["source", "sketch-a"], "drawn either way");
+  assert.deepEqual(framesInBox(frames, ids, { x: 950, y: 700, w: 50, h: 50 }), [], "the gaps between frames pick nothing");
+  const html = renderToStaticMarkup(createElement(FreeformWorkspace, { layout: workspaceSchema.parse({}), onChange() {}, tool: "select", onDrop() {}, onBackground() {}, selectedFrames: ["source"],
+    frames: [{ id: "source", title: "Sketch", subtitle: "", content: "" }] }));
+  assert.match(html, /class="world-frame [^"]*picked-frame/); assert.match(html, /picked-frame-header/); assert.match(html, /Drag to select frames/);
 });

@@ -46,6 +46,11 @@ export function besideFramePosition(frames: WorkspaceLayout["frames"], fromId: s
   while (taken.some(f => Math.abs(f.x - candidate.x) < FRAME_WIDTH && (f.y <= candidate.y ? candidate.y - f.y < f.h : f.y - candidate.y < FRAME_HEIGHT))) candidate.y += FRAME_HEIGHT + FRAME_GAP_Y;
   return candidate;
 }
+/** The frames a box drawn on the board (in board coordinates) touches. */
+export function framesInBox(frames: WorkspaceLayout["frames"], ids: readonly string[], box: { x: number; y: number; w: number; h: number }) {
+  const left = Math.min(box.x, box.x + box.w), top = Math.min(box.y, box.y + box.h), right = Math.max(box.x, box.x + box.w), bottom = Math.max(box.y, box.y + box.h);
+  return ids.filter(id => { const at = frames[id]; return at && at.x < right && at.x + FRAME_WIDTH > left && at.y < bottom && at.y + FRAME_HEIGHT > top; });
+}
 export function zoomAt(camera: Viewport, zoom: number, anchor: { x: number; y: number }): Viewport {
   const next = Math.max(.15, Math.min(3, zoom));
   return { zoom: next, x: anchor.x - (anchor.x - camera.x) * next / camera.zoom, y: anchor.y - (anchor.y - camera.y) * next / camera.zoom };

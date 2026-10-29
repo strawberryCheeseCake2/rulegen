@@ -113,3 +113,68 @@ test("Create Minimal Example adds a sub brush to the brush the transformation be
   assert.match(html, new RegExp(`aria-label="Tree brush tools" title="Tree › ${sub.name} · Brush`), "the group shows the sub brush in use");
   assert.match(html, /SUB BRUSHES/); assert.match(html, new RegExp(`class="brush-sub-row picked"><button class="active" aria-pressed="true" aria-label="${sub.name} Brush"`));
 });
+
+test("Decompose makes a linked minimal example frame for every transformation of the base state and renders each", async () => {
+  const { sceneAI } = await import("../app/studio/scene-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const scene = sampleScene(), panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: createSketchPanel({ scene }) };
+  const expected = scene.nodes.flatMap(node => node.transformations.filter(item => item.properties.length).map(item => `${node.id}/${item.id}`));
+  let frames = 0, activated = 0;
+  const requests: string[] = [], subs: string[] = [];
+  const deps = {
+    panel: (id: string) => panels[id] ?? createSketchPanel(), activate: () => { activated++; }, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, active: () => "a", refreshBrushCode: () => {},
+    updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
+    createFrame: () => { const id = `sketch-${++frames}`; panels[id] = createSketchPanel(); return id; },
+    addSubBrush: (_owner: string, nodeId: string, frameId: string) => { subs.push(`${nodeId}@${frameId}`); return null; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    request: async (_intent: string, body: any) => { requests.push(body.instruction); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
+  } as any;
+  await sceneAI(deps, "a").decompose();
+  const examples = Object.entries(panels).filter(([id]) => id !== "a");
+  assert.equal(examples.length, expected.length);
+  assert.deepEqual(examples.map(([, panel]) => `${panel.exampleOf?.nodeId}/${panel.exampleOf?.transformationId}`).sort(), [...expected].sort());
+  assert.ok(examples.every(([, panel]) => panel.exampleOf?.frameId === "a" && panel.generated && !panel.pendingResult), "each is linked to the frame and rendered");
+  assert.ok(examples.every(([, panel]) => panel.scene.nodes.every(node => !node.machine) && panel.scene.nodes.flatMap(node => node.transformations).length === 1), "one transformation each, without state machines");
+  assert.equal(requests.length, expected.length); assert.ok(requests.every(text => /minimal example/.test(text)));
+  assert.equal(activated, 0, "the view stays on the decomposed frame");
+  assert.equal(subs.length, expected.length, "every example becomes a sub brush, interactive or not");
+});
+
+test("a minimal example's sub brush goes into the tool group of the brush its node comes from", async () => {
+  const { brushesFor, markBrushes, sourceBrushGroup, subBrushFor } = await import("../app/lib/brushes");
+  const scene = sampleScene(), [own] = brushesFor(scene, "a", [], () => "brush-tree"), other = { ...own, id: "brush-other", nodeId: "elsewhere", sourceFrameId: "z" };
+  const brushes = [other, own], marked = markBrushes(scene, [own]);
+  assert.equal(sourceBrushGroup(marked, "a", "orb", brushes)?.id, own.id, "a member's example joins its root's brush");
+  const sub = subBrushFor(scene, "b", "example", own, brushes, "brush-sub")!;
+  assert.equal(sourceBrushGroup(scene, "b", sub.nodeId, [...brushes, sub])?.id, own.id, "an example of an example stays in the same group");
+  // A frame without brush marks (e.g. the sketch the brushes were extracted from): found by the root's code id.
+  const unmarked = { ...scene, nodes: scene.nodes.map(node => node.id === "tree" ? { ...node, id: "copy", codeId: "tree" } : node.parentId === "tree" ? { ...node, parentId: "copy" } : node) };
+  assert.equal(sourceBrushGroup(unmarked, "source", "orb", brushes)?.id, own.id);
+});
+
+test("example frames show non-input transformations without input, keep the hint on every generation and wait when the server is busy", async () => {
+  const { sceneAI, exampleRetry } = await import("../app/studio/scene-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const scene = sampleScene(), tree = scene.nodes.find(node => node.id === "tree")!;
+  assert.match(minimalExampleInstruction(tree, "ink-wash"), /must NOT need any input/); assert.match(minimalExampleInstruction(tree, "ink-wash"), /fixed sample/);
+  exampleRetry.ms = 1;
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: createSketchPanel({ scene }) };
+  let frames = 0, calls = 0;
+  const instructions: string[] = [];
+  const deps = {
+    panel: (id: string) => panels[id] ?? createSketchPanel(), activate: () => {}, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, active: () => "a", refreshBrushCode: () => {},
+    updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
+    createFrame: () => { const id = `sketch-${++frames}`; panels[id] = createSketchPanel(); return id; },
+    task: async (_label: string, work: () => Promise<void>, owner: string) => { try { await work(); } catch (error) { panels[owner] = { ...panels[owner], error: (error as Error).message }; } },
+    request: async (_intent: string, body: any) => { instructions.push(body.instruction); if (++calls <= 2) throw new Error("요청이 진행 중입니다. 잠시 후 다시 시도해주세요."); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
+  } as any;
+  await sceneAI(deps, "a").minimalExample("tree", "ink-wash");
+  assert.ok(panels["sketch-1"].generated, "turned away twice, then rendered"); assert.equal(panels["sketch-1"].error, "");
+  await sceneAI(deps, "sketch-1").generateCode();
+  assert.ok(instructions.every(text => /minimal example/.test(text) && /must NOT need any input/.test(text)), "a later Update keeps the example's hint");
+  exampleRetry.ms = 2500;
+});

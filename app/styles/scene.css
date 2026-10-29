@@ -674,3 +674,8 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .explore-sketch-bar button { border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 10px; cursor: pointer; font-size: 12px; }
 .explore-sketch-bar button.primary { border-color: #2a4f86; background: #2a4f86; color: #fff; }
 .explore-sketch-bar button:disabled { opacity: .45; cursor: default; }
+
+/* Frames picked together on the board (a box dragged with the select tool, or shift-clicked headers) */
+.frame-pick-box { position: absolute; z-index: 30; pointer-events: none; border: 1.5px solid #2f7d62; background: #2f7d6214; border-radius: 2px; }
+.world-frame.picked-frame { outline: 4px solid #4f9fd8; outline-offset: 5px; }
+.world-frame-header.picked-frame-header strong { color: #2b78b4; }

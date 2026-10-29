@@ -49,8 +49,10 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - 각 transformation은 고유 id, 이름, 설명, property 목록(최대 8개)을 가진다. 반복(`count` + 배치 블록)도 하나의 transformation으로 둔다.
 - Property id는 노드 전체에서 고유하다(노드당 property 최대 32개). 그래서 라이브 키는 transformation과 무관하게 `nodeId/propertyId…`이고, state machine 값도 property id만으로 가리킨다.
 - 우측 패널에서 transformation을 추가(빈 것 또는 **Add transformation with AI**), 이름·설명 수정, ↑↓로 순서 변경, AI로 다시 만들기, 삭제(그 property와 상태 값도 함께 삭제)할 수 있다. 블록은 원하는 transformation의 소켓에 끼우거나 드롭한다. 상태 편집 중에는 스택 구조를 바꿀 수 없다.
-- transformation 카드의 **Create Minimal Example**은 그 transformation 하나만 시험해 보는 새 sketch frame을 옆에 만든다. 특수한 프레임이 아니라 일반 sketch frame이고, 안에는 collection 하나와 object 하나만 들어간다. collection의 transformation이면 그 collection에 그 transformation만 남기고 구성원 하나를 transformation 없는 평범한 object로 넣는다(구성원이 없으면 빈 object를 만든다). object의 transformation이면 그 object에 그 transformation만 남겨 평범한 collection 안에 넣는다. 상태 머신은 빼고, 쓰는 알고리즘만 가져오며, 프레임 가운데에 배치한 뒤 바로 결과를 생성한다. 첫 코드 생성만 "이 transformation만 보이게 단순하게 그려라"는 지시와 그 프레임 자체 스케치로 하고, 이후에는 다른 프레임과 똑같이 편집·Update한다.
-  - 만든 예제는 **sub brush**로도 추가된다. 그 transformation이 속한 brush(그 brush가 sub brush라면 그 부모)의 tool group 안에 들어가고, 툴바에 그룹 버튼이 따로 생기지 않는다. 그 노드가 brush에 속하지 않으면 독립된 brush가 된다.
+- transformation 카드의 **Create Minimal Example**은 그 transformation 하나만 시험해 보는 새 sketch frame을 옆에 만든다. 특수한 프레임이 아니라 일반 sketch frame이고, 안에는 collection 하나와 object 하나만 들어간다. collection의 transformation이면 그 collection에 그 transformation만 남기고 구성원 하나를 transformation 없는 평범한 object로 넣는다(구성원이 없으면 빈 object를 만든다). object의 transformation이면 그 object에 그 transformation만 남겨 평범한 collection 안에 넣는다. 상태 머신은 빼고, 쓰는 알고리즘만 가져오며, 프레임 가운데에 배치한 뒤 바로 결과를 생성한다. 코드 생성은 "이 transformation만 보이게 단순하게 그려라"는 지시와 그 프레임 자체 스케치로 한다. 이 지시는 첫 생성뿐 아니라 이후 Update·오류 수정 때도 계속 붙는다(전에는 첫 생성에만 붙어서, 다시 생성하면 원래 brush 동작이 통째로 돌아왔다). 입력에 관한 transformation(드래그하면 생김, 손 떼면 고정, 포인터 따라감 등)만 interaction을 유지하고, 나머지는 입력 없이 처음부터 화면에 떠 있어야 한다. 원래 brush가 입력 경로로 만들던 것(드래그를 따라가는 trail 등)은 코드 안에 정한 샘플 경로로 대신 그린다.
+- 프레임 위쪽 메뉴의 **Decompose**는 그 프레임 base state(상태 머신 값이 아닌 원래 정의)의 모든 노드, 모든 semantic transformation(property가 있는 것)에 대해 위와 같은 최소 예제 프레임을 한꺼번에 만든다. 화면은 원래 프레임에 그대로 두고, 예제 프레임들의 결과는 서버가 한 번에 받는 만큼(2개씩) 나눠 생성하고, 서버가 바빠 거절한 요청은 잠시 기다렸다가 다시 보낸다(하나씩 만든 예제도 같음). 프레임 수 한도(24개)를 넘는 것은 만들지 않고 몇 개가 빠졌는지 알려준다.
+- 최소 예제 프레임(하나씩 만든 것이든 Decompose로 만든 것이든)은 원래 프레임과 점선 화살표로 연결되고, 선에는 「▣ transformation 이름」이 붙는다. 프레임 부제에도 `example of <원래 프레임>`이 보이며, 이 연결은 프로젝트에 저장된다. 원래 프레임을 지우면 선만 사라지고 예제 프레임은 남는다.
+  - 만든 예제는 interact가 필요하든 아니든 모두 **sub brush**로 추가된다(Create Minimal Example, Decompose 둘 다). 그 transformation이 속한 source brush(그 brush가 sub brush라면 그 부모)의 tool group 안에 들어가고, 툴바에 그룹 버튼이 따로 생기지 않는다. 원래 프레임에 brush 표시가 없으면(예: brush를 추출해 낸 원본 스케치) 그 노드 root의 code id가 같은 brush의 그룹을 찾는다. 어느 brush와도 이어지지 않을 때만 독립된 brush가 된다. 입력에 반응하는 transformation이면 예제 코드도 그 interaction을 그대로 유지하도록 지시한다.
     - 그룹 패널의 **SUB BRUSHES**에 sub brush마다 Brush 도구와 Inspection 도구가 있다. 이름 기본값은 "<transformation> · example"이고, 색은 부모와 같으며, ×로 지운다.
     - Brush 도구로 다른 프레임에 칠하면 추가되거나 interaction으로 동작하고, Inspection으로 검사할 수 있다. 일반 brush와 같다.
     - 예제 프레임의 collection이 그 sub brush의 master다. sub brush 도구를 쓰는 동안 그룹 버튼 제목은 "부모 › sub brush · 도구"이다.
@@ -193,6 +195,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 ## 18. 프레임 삭제
 
 - 각 프레임 헤더의 휴지통 버튼으로 프레임을 삭제한다. 프레임을 삭제하면 그림·사진·장면·결과·패널·Undo/Redo·선택 상태를 함께 정리하고, 다른 프레임은 유지한다(추출된 프레임은 원본과 독립적이다).
+- **여러 프레임 한꺼번에 삭제**: Select 도구로 보드의 빈 곳에서 드래그하면 박스가 그려지고, 박스에 걸친 프레임들이 파란 테두리로 선택된다(Shift+드래그는 추가 선택, 헤더 Shift+클릭은 하나씩 넣고 빼기). 이 상태에서 Backspace/Delete를 누르면 선택한 프레임을 모두 삭제한다. AI 작업 중인 프레임은 남기고 선택된 채로 둔다. 선택된 프레임 헤더를 끌면 함께 움직이고, 빈 곳 클릭·프레임 안 클릭·Esc로 선택이 풀린다. Select 도구에서는 빈 곳 드래그가 박스 선택이므로 보드 이동은 Space+드래그, Hand 도구, 휠/트랙패드로 한다.
 - 선택된 프레임을 삭제하면 남은 프레임으로 선택을 옮긴다. 기본 원본 스케치도 삭제할 수 있으며(내용을 비우고 숨김) **Add sketch frame**으로 다시 표시한다.
 - 삭제 상태는 로컬 저장과 JSON 내보내기·불러오기에 반영한다. 그 프레임이 AI 생성 중일 때는 그 프레임의 삭제를 막고(다른 프레임은 삭제할 수 있고 그 프레임들의 생성은 계속된다), 오래된 비동기 결과가 삭제된 프레임을 되살리지 않게 한다.
 

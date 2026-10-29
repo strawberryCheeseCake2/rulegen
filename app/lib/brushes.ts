@@ -146,6 +146,17 @@ export function frameIds(scene: Scene, root: string) {
   return new Map([root, ...descendantIds(scene, root)].map(id => [findNode(scene, id)!.codeId ?? id, id]));
 }
 
+/**
+ * The tool group a minimal example of node `nodeId` (of frame `frameId`) goes into: the group of the brush
+ * the node belongs to there, else of the brush whose master is the same node (its root's shared code id).
+ */
+export function sourceBrushGroup(scene: Scene, frameId: string, nodeId: string, brushes: Brush[]): Brush | undefined {
+  let root = findNode(scene, nodeId); while (root?.parentId) root = findNode(scene, root.parentId);
+  const role = brushRole(scene, frameId, nodeId, brushes), key = root && (root.codeId ?? root.id);
+  const brush = role?.brush ?? brushes.find(item => item.nodeId === key || item.scene.nodes.some(node => node.id === item.nodeId && (node.codeId ?? node.id) === key));
+  return brush && brushes.find(item => item.id === brushGroup(brushes, brush.id));
+}
+
 /** Detach an instance: it becomes the master of a new brush (keeping the old brush's targeted inspection tools). */
 export function detachedBrush(scene: Scene, frameId: string, rootId: string, from: Brush, brushes: Brush[], id: string, code: string): Brush {
   const root = findNode(scene, rootId)!, taken = new Set(brushes.map(brush => brush.name));

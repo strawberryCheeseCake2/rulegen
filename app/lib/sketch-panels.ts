@@ -15,6 +15,8 @@ export const sketchPanelSchema = z.object({
   machinePlaying: z.boolean().default(true),
   /** The sketch this frame's scene was extracted or composed from (for code context and staleness). */
   sourceFrameId: z.string().max(80).nullable().default(null),
+  /** For a minimal example frame: the frame, node and transformation it shows on its own (drawn as a line to that frame). */
+  exampleOf: z.object({ frameId: z.string().max(80), nodeId: z.string().max(80), transformationId: z.string().max(80) }).nullable().default(null),
   analysisRevision: z.number().default(-1), generated: generatedSchema.nullable().default(null),
   codeDraft: z.string().max(MAX_CODE_LENGTH).optional(),
   composePrompt: z.string().max(2000).default(""), generationMode: z.enum(["extract", "compose"]).default("extract"),
