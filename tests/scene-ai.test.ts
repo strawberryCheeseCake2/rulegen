@@ -156,7 +156,10 @@ test("compose turns pen strokes into a scene that reuses the pen's algorithm; in
     assert.equal(sent.compositionPens[0].algorithm.call.algorithmId, "recursive-branch");
     assert.deepEqual(sent.compositionStrokes.map((stroke: { tool: string }) => stroke.tool), ["semantic", "interaction"]);
     assert.match(calls[0].instructions, /INTERACTION ANNOTATION CONTRACT/);
-    assert.match(calls[0].instructions, /copy those definitions into your `algorithms` array with the SAME ids/);
+    // Pens are read for what the sketch shows them driving (re-targeted, read together), not pasted onto their origin.
+    assert.match(calls[0].instructions, /READING SEMANTIC PENS: INTENT, NOT LITERAL ORDERS/); assert.match(calls[0].instructions, /RE-TARGET/);
+    assert.match(calls[0].instructions, /the SAME ids when used as they are, a new id for an adapted copy/);
+    assert.match(loadPrompt("compose-prompt"), /READING SEMANTIC PENS/);
   });
   await assert.rejects(runAI(requestSchema.parse({ intent: "compose", image, instruction: " ", ...context }), signal()), /Compose prompt/);
 });

@@ -164,7 +164,7 @@ export const overlaySchema = z.object({
 });
 const change = z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: scalar });
 /** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
-const recommendationSchema = z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
+export const recommendationSchema = z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
   /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
   targetIds: z.array(z.string().max(80)).max(6).default([]),
   title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) });
@@ -185,6 +185,10 @@ export const inspectResultSchema = z.object({
  * applied remembers the transformation it added (`addedId`), so it then reads as
  * that transformation (while it exists).
  */
+export const MAX_PREVIEW_MARKS = 4, MAX_PREVIEW_HANDLES = 3;
+/** What a preview mark is: an overlay shape (canvas-pixel expressions) with a short label saying what changes there. */
+export const previewMarkSchema = overlaySchema.omit({ link: true, handle: true });
+export type PreviewMark = z.input<typeof previewMarkSchema>;
 /**
  * A quick visual preview of a recommendation (asked with the inspection when previews are on): small edits to
  * the brush's module that make it draw roughly as it would with the recommendation, and the new values those
@@ -194,14 +198,34 @@ export const recommendationPreviewSchema = z.object({ caption: z.string().max(16
   edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) })).max(4),
   values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3),
   /** The states and transitions the change brings to the brush's state machine (the edits emit its event transitions). */
-  machine: machineChangeSchema.nullable().default(null) });
+  machine: machineChangeSchema.nullable().default(null),
+  /** Simple marks drawn over the preview where it differs from now (what changes there), read like overlays. */
+  marks: z.array(previewMarkSchema).max(MAX_PREVIEW_MARKS).default([]),
+  /** Handles on the preview for what the recommendation hinges on (a value of the brush or one the preview brings): dragging one redraws the preview with it. */
+  handles: z.array(overlaySchema).max(MAX_PREVIEW_HANDLES).default([]) });
 export type RecommendationPreview = z.infer<typeof recommendationPreviewSchema>;
+/** A mark as an overlay (no link, no handle), so the overlay layer draws it. */
+export const previewMarkOverlay = (mark: PreviewMark, nodeId = ""): Overlay => ({ ...mark, link: { kind: "constraint", nodeId, id: "" }, handle: null });
 /** What the model returns with previews on: each recommendation with its preview (null for value ones: their values are the preview). */
 export const inspectPreviewResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() })).max(6) });
-export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(6),
+/** Recommendations a targeted tool keeps: the inspection's (6 at most) and ones made later from its Execution frames. */
+export const MAX_LISTED_RECOMMENDATIONS = 12;
+export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(MAX_LISTED_RECOMMENDATIONS),
   /** A suggested parameter the user turned down keeps `rejected`. */
   parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
+/**
+ * The user's direct manipulation of one part of a recommendation's preview, cropped by hand: the freeform `outline`
+ * drawn around it and its box (canvas pixels), and how it was moved (canvas pixels, its center), scaled and rotated
+ * (degrees, clockwise, about its center). `object` / `label` name the crop.
+ */
+export const previewManipulationSchema = z.object({ object: z.string().max(200), label: z.string().max(80),
+  box: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }), outline: z.array(z.object({ x: z.number(), y: z.number() })).max(64).default([]),
+  dx: z.number(), dy: z.number(), scale: z.number().min(.05).max(20), rotate: z.number().min(-360).max(360) });
+export type PreviewManipulation = z.infer<typeof previewManipulationSchema>;
+/** A recommendation revised at its preview (annotation and/or direct manipulation): the same recommendation, changed, with its preview, and what changed. */
+export const revisedRecommendationSchema = recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable(), reply: z.string().max(400) });
+export type RevisedRecommendation = z.infer<typeof revisedRecommendationSchema>;
 
 // Overlays after an applied recommendation: the user rebuilds a targeted tool's
 // overlays for what was applied ("Update overlays"). The parts it replaced are kept
@@ -701,18 +725,23 @@ export function remapExpression(source: string, map: (id: string) => string) {
 /** The same result with every node id passed through `map` (ids it does not know stay as they are). */
 export function remapResult(result: InspectResultInput, ids: Map<string, string>, suffix = ""): InspectResult {
   const map = (id: string) => ids.get(id) ?? id, expression = (source: string) => remapExpression(source, map);
-  return {
-    summary: result.summary,
-    overlays: result.overlays.map(overlay => {
+  const remapOverlay = (overlay: InspectResultInput["overlays"][number]) => {
       const cut = overlay.each.indexOf(":");
       return { ...overlay, id: `${overlay.id}${suffix}`, x: expression(overlay.x), y: expression(overlay.y), w: expression(overlay.w), h: expression(overlay.h), label: expression(overlay.label), when: expression(overlay.when),
         each: cut < 0 ? overlay.each : `${map(overlay.each.slice(0, cut))}${overlay.each.slice(cut)}`, link: { ...overlay.link, nodeId: map(overlay.link.nodeId) },
         handle: overlay.handle ? { ...overlay.handle, key: remapKey(overlay.handle.key, map), x: expression(overlay.handle.x), y: expression(overlay.handle.y), pivotX: expression(overlay.handle.pivotX), pivotY: expression(overlay.handle.pivotY), value: expression(overlay.handle.value) } : null };
-    }),
+  };
+  return {
+    summary: result.summary,
+    overlays: result.overlays.map(remapOverlay),
     valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
     recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })),
       // Asked with previews: the key stays (null for none), so the panel knows to show the value ones too.
-      ...("preview" in item ? { preview: item.preview ? { ...item.preview, edits: item.preview.edits.map(edit => ({ ...edit, nodeId: map(edit.nodeId) })), values: item.preview.values.map(value => ({ ...value, nodeId: map(value.nodeId) })) } : null } : {}) })),
+      ...("preview" in item ? { preview: item.preview ? { ...item.preview, edits: item.preview.edits.map(edit => ({ ...edit, nodeId: map(edit.nodeId) })), values: item.preview.values.map(value => ({ ...value, nodeId: map(value.nodeId) })),
+        machine: item.preview.machine ? { ...item.preview.machine, nodeId: map(item.preview.machine.nodeId) } : null,
+        marks: (item.preview.marks ?? []).map(mark => { const cut = (mark.each ?? "").indexOf(":");
+          return { ...mark, x: expression(mark.x), y: expression(mark.y), w: expression(mark.w), h: expression(mark.h), label: expression(mark.label), when: expression(mark.when ?? ""), each: cut < 0 ? mark.each ?? "" : `${map(mark.each!.slice(0, cut))}${mark.each!.slice(cut)}` }; }),
+        handles: (item.preview.handles ?? []).map(overlay => remapOverlay({ ...overlay, each: overlay.each ?? "", when: overlay.when ?? "", name: overlay.name ?? "", handle: overlay.handle ?? null })) } : null } : {}) })),
     // The edits are module code: it uses the code's node ids, the same in every frame.
     parameters: (result.parameters ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
     records: result.records ? { ...result.records, nodeId: map(result.records.nodeId) } : null,

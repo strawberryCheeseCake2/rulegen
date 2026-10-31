@@ -6,6 +6,8 @@ export type CodePreviewHandle = {
   capture: () => string; emit: (nodeId: string, transitionId: string) => void;
   /** Whether the sketch has started and accepts messages. */
   isReady: () => boolean;
+  /** Report the running sketch as it is now as a step (onTrace), e.g. to inspect a frame that has no step recorded. */
+  snapshot: () => void;
   /** Replay a recorded drag (canvas pixels, ms since its start) as real mouse input. */
   replay: (points: { x: number; y: number; t: number }[]) => void;
   /** One mouse event (canvas pixels) delivered to the running sketch. */
@@ -86,7 +88,7 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
     sentSeed.current = seed.id; post({ type: "seed", snapshot: seed.runtime });
   };
   useImperativeHandle(ref, () => ({ capture: () => image, emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
-    isReady: () => ready.current, replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
+    isReady: () => ready.current, snapshot: () => post({ type: "snapshot" }), replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
     // A forwarded press focuses the sketch, as a real one would: sketches may ignore input while unfocused (p5 focused), and keys then reach it.
     pointer: (kind, x, y) => { if (kind === "mousedown" && window.document.activeElement !== frame.current) frame.current?.focus(); post({ type: "pointer", kind, x, y }); }, isReadyFor: executable => ready.current && loaded.current === resolve(sceneStructureKey(executable)),
     inject: (module, executable, replace) => {
@@ -174,6 +176,7 @@ function rerender(changed){budgetReset();if(typeof rulegenSetup==='function'){if
 window.addEventListener('message',event=>{
   if(event.source!==parent || event.data?.channel!=='rulegen-control' || event.data.token!==${JSON.stringify(token)})return;
   try{budgetReset();
+    if(event.data.type==='snapshot'){traceQueue.push({nodeId:null,from:null,to:null,transitionId:null,params:paramsNow()});flushTrace();return;}
     if(event.data.type==='control'){
       if(hasMachine() && typeof event.data.nodeId==='string' && typeof event.data.stateId==='string')rulegenJumpState(event.data.nodeId,event.data.stateId);
       const playing=event.data.playing===true;lastPlaying=playing;

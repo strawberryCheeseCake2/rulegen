@@ -215,7 +215,7 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .machine-graph-viewport { flex: 1; min-height: 0; position: relative; overflow: hidden; cursor: grab; touch-action: none; user-select: none; background-image: radial-gradient(#dbe3de .7px, transparent .7px); background-size: 16px 16px; }
 .machine-graph-viewport.panning-graph { cursor: grabbing; }
 .machine-graph-viewport.annotating-graph, .annotating-graph .machine-state, .annotating-graph .transition-pick { cursor: crosshair; }
-.machine-graph-viewport > .machine-graph { position: absolute; left: 0; top: 0; min-width: 0; background: none; will-change: transform; }
+.machine-graph-viewport > .machine-graph { position: absolute; left: 0; top: 0; min-width: 0; background: none; }
 .machine-annotations { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .machine-annotations polyline { fill: none; stroke: #ff5a4e; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
 .machine-edges .transition-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; cursor: pointer; }
@@ -748,15 +748,72 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .board-dragging .frame-group-title { cursor: grabbing; }
 
 /* A recommendation's fork slot (in its frame group): the version it would be, and Accept */
-.fork-slot { position: relative; width: 900px; height: 600px; background: #fffefa; overflow: hidden; }
+.fork-slot { position: relative; width: 900px; height: 600px; background: #fffefa; }
+.fork-slot-view { position: absolute; inset: 0; overflow: hidden; }
+.recommendation-preview-stage > .inspection-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.recommendation-preview-legend { margin-left: 6px; font-style: normal; color: #b0356a; }
+/* What the user does on the preview to revise it: annotation strokes, objects picked and moved, scaled, rotated. */
+/* Under the preview's handle grips (they stay draggable); over them while annotating. */
+.fork-slot-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; overflow: visible; touch-action: none; cursor: crosshair; }
+.fork-slot-view .recommendation-preview-stage > .inspection-overlay { z-index: 2; }
+/* No layer of its own (opacity would make one), so the handle grips can sit over the sheet while the picture stays under it. */
+.fork-slot-view .recommendation-preview.large .recommendation-preview-view { opacity: 1; }
+.fork-slot.annotate .fork-slot-sheet { z-index: 3; cursor: crosshair; }
+.fork-slot.annotate { outline: 3px solid #7c3aed55; outline-offset: -3px; }
+.fork-slot-mark { fill: none; stroke: #7c3aed; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.fork-slot-before { fill: none; stroke: #0e7490; stroke-width: 1.5; stroke-dasharray: 6 5; opacity: .8; }
+.fork-slot-after { fill: none; stroke: #0e7490; stroke-width: 2; }
+.fork-slot-after.on { stroke-width: 2.5; }
+.fork-slot-crop { fill: #0e749014; stroke: #0e7490; stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; pointer-events: none; }
+.fork-slot-frame { fill: none; stroke: #0e7490; stroke-width: 1; stroke-dasharray: 2 3; opacity: .7; pointer-events: none; }
+.fork-slot-grip { fill: #fff; stroke: #0e7490; stroke-width: 2; cursor: grab; }
+.fork-slot-grip.scale { cursor: nwse-resize; }
+.fork-slot-grip-line { stroke: #0e7490; stroke-width: 1.5; }
+.fork-slot-hint { position: absolute; left: 24px; top: 20px; z-index: 4; padding: 8px 12px; border-radius: 8px; background: #fffffcf0; border: 1px solid #dfe6e1; font-size: 14px; color: #a3483a; }
 .recommendation-preview.large { margin: 0; position: absolute; inset: 0; }
 .recommendation-preview.large .recommendation-preview-view { width: 900px; height: 600px; border: 0; border-radius: 0; opacity: .9; }
 .recommendation-preview.large .recommendation-preview-stage { transform: none; }
 .recommendation-preview.large figcaption { display: none; }
-.fork-slot-bar { position: absolute; left: 24px; right: 24px; bottom: 24px; display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; border: 2px dashed #9fbfad; border-radius: 12px; background: #f7fbf8f2; font-size: 16px; color: #2f4a3c; }
+.fork-slot-bar { position: absolute; left: 0; right: 0; top: calc(100% + 14px); z-index: 4; display: flex; flex-direction: column; gap: 8px; padding: 18px 20px; border: 2px dashed #9fbfad; border-radius: 12px; background: #f7fbf8f7; font-size: 16px; color: #2f4a3c; }
+.fork-slot-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.fork-slot-actions > button:not(.primary), .fork-slot-tools > button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; border: 1px solid #c6d6cc; background: #fff; font-size: 14px; color: #2f4a3c; }
+.fork-slot-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.fork-slot-tools > button.active { background: #ede5fb; border-color: #7c3aed; color: #4c1d95; }
+.fork-slot-revise { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; padding-top: 12px; border-top: 1px dashed #c6d6cc; }
+.fork-slot-revise textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #c6d6cc; border-radius: 8px; font: inherit; font-size: 14px; resize: vertical; background: #fff; }
+.fork-slot-hint-line { font-size: 13px; color: #5c6d63; }
+.fork-slot-manipulations { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
+.fork-slot-manipulations li { display: flex; align-items: center; gap: 8px; }
+.fork-slot-manipulations li.on > button:first-child { color: #0e7490; font-weight: 600; }
+.fork-slot-manipulations li > button { border: 0; background: none; padding: 2px 4px; color: #2f4a3c; font-size: 14px; }
+.fork-slot-manipulations li > span { color: #5c6d63; }
 .fork-slot-bar strong { font-size: 20px; }
 .fork-slot-detail { color: #5c6d63; line-height: 1.45; max-height: 70px; overflow: hidden; }
 .fork-slot-message { display: flex; align-items: center; gap: 8px; color: #4b5d53; }
 .fork-slot-message.error { color: #a3483a; }
-.fork-slot-bar button.primary { align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; background: #2f6b52; color: #fff; font-size: 16px; font-weight: 600; }
+.fork-slot-bar button.primary { align-self: flex-start; border: 0; display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; background: #2f6b52; color: #fff; font-size: 16px; font-weight: 600; }
 .fork-slot-bar button.primary:disabled { background: #a9bdb1; }
+/* Showing on an Execution frame, at one moment, how it should come out (for a new recommendation): drawn over the
+   picture; it takes the pointer (over the handles) only while cropping or annotating. */
+.explore-edit-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; overflow: visible; touch-action: none; cursor: crosshair; }
+.explore-frame-surface.edit-annotate { outline: 3px solid #7c3aed55; outline-offset: -3px; }
+.explore-recommend { margin-top: 2px; padding-top: 8px; gap: 6px; }
+.explore-recommend .fork-slot-tools > button, .explore-recommend .fork-slot-actions > button:not(.primary) { padding: 4px 9px; font-size: 12px; }
+.explore-recommend .fork-slot-hint-line, .explore-recommend .fork-slot-manipulations, .explore-recommend .fork-slot-manipulations li > button { font-size: 11px; }
+.explore-recommend textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px; }
+.explore-recommend .fork-slot-actions > button.primary { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 6px 12px; border-radius: 8px; background: #2f6b52; color: #fff; font-size: 12px; font-weight: 600; cursor: pointer; }
+.explore-recommend .fork-slot-actions > button.primary:disabled { background: #a9bdb1; cursor: default; }
+/* Jumping: press a part of the picture to execute up to the step that draws it. */
+.explore-jump-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; overflow: visible; touch-action: none; cursor: pointer; }
+.explore-jump-box { fill: #2a4f8614; stroke: #2a4f86; stroke-width: 2; stroke-dasharray: 5 3; pointer-events: none; }
+.explore-jump-label { font-size: 14px; font-weight: 600; fill: #2a4f86; stroke: #fffefa; stroke-width: 4px; paint-order: stroke; pointer-events: none; }
+.explore-stepper button.active { border-color: #2a4f86; background: #eef3fc; color: #2a4f86; }
+/* The parts of the brush (semantic transformation, state, transition) an execution or one of its operations belongs to. */
+.explore-parts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.explore-parts > span:first-child { font-size: 10px; color: #8a978f; }
+.explore-part { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 7px; border-radius: 8px; font-size: 11px; background: #f3effc; color: #5b3aa8; }
+.explore-part em { font-style: normal; font-size: 9px; opacity: .75; }
+.explore-part.state, .explore-part.transition { background: #e9f5ef; color: #2f6b52; }
+.explore-part.small { padding: 0 6px; font-size: 10px; }
+.explore-part { border: 1px solid transparent; font-family: inherit; line-height: 1.5; cursor: pointer; }
+.explore-part:hover { border-color: currentColor; }

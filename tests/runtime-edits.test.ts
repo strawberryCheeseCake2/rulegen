@@ -82,7 +82,7 @@ test("a store key follows the brush's shared ids like the other keys of a stored
 test("an exploration frame is drawn from its moved input and lists it as a moved path, not as a raw key", () => {
   const frame: ExploreFrame = { id: "explore-1", targetFrameId: "sketch-a", brushId: "b", toolId: "t", mode: "parameters", source: { kind: "cause" }, name: "n", nodeIds: ["trail"],
     base: { runtime: runtime(), values: {}, steps: [], params: {} }, executable: "", status: "ready", error: "", progress: 0, values: { "@input:-1:10": moveValue(12, -3) },
-    result: { summary: "", axis: "run", from: 0, to: 1, edits: [], values: [], machine: null, overlays: [overlay({ key: "@input:-1:10" })], stages: [], sketches: [] },
+    result: { summary: "", axis: "run", from: 0, to: 1, edits: [], values: [], machine: null, overlays: [overlay({ key: "@input:-1:10" })], stages: [], sketches: [], of: [] },
     request: { concern: "c", inspection: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), recommendation: null } };
   const html = renderToStaticMarkup(createElement(ExploreFrameView, { frame, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: () => {}, onValue: () => {}, onRetry: () => {}, onActivate: () => {} }));
   assert.match(html, /옮긴 입력 경로 <b>12, -3px<\/b>/);

@@ -37,7 +37,9 @@ For `"run"`, add checkpoints to the brush's module in `edits` (they run in this 
 - Code inside `m.memo` runs again during the run, so checkpoints there are recorded. Steps after the first 3000 events are not kept.
 - 2–10 edits are typical.
 
-`stages`: one entry per kind of operation (`op`), in the order they first happen: `name` (Korean, a few words: `"바깥 불꽃 피우기"`, `"밝은 내부 덧칠"`), `explain` (1–2 Korean sentences on what this operation does and why it matters for the concern: the principle) and `many` (below; almost always false). `[]` for other axes.
+`stages`: one entry per kind of operation (`op`), in the order they first happen: `name` (Korean, a few words: `"바깥 불꽃 피우기"`, `"밝은 내부 덧칠"`), `explain` (1–2 Korean sentences on what this operation does and why it matters for the concern: the principle) `many` (below; almost always false) and `of`: the parts of the brush this operation belongs to, i.e. the semantic transformation(s) of `brushNodes` whose algorithm it carries out, or the state / transition whose behavior it is (`{ "kind": "transformation" | "state" | "transition", "nodeId", "id" }`, ids exactly as in `brushNodes`; 1 usually, up to 3; `[]` only when it is none of them, e.g. bookkeeping). `[]` for other axes.
+
+`of` (top level, mode `"execution"`): the parts of the brush the execution shown runs as a whole, the same way (up to 4; for a run, at least those of its stages). For a recommendation's preview, the transformation it changes or adds is not in `brushNodes` yet: name the existing parts it runs through. `[]` in mode `"parameters"`.
 
 ## overlays and handles
 
@@ -143,9 +145,10 @@ Return exactly one object matching `prompts/schemas/explore.json`:
 {
   "summary": "▶를 누르거나 다음 불꽃을 위로 당기면 코드가 한 단계씩 실행됩니다. 바깥 불꽃이 하나씩 따로 피어난 뒤, 밝은 내부가 하나씩 그 위에 덧칠되면서 이웃과 이어집니다.",
   "axis": "run", "from": 0, "to": 1, "values": [],
+  "of": [{ "kind": "transformation", "nodeId": "flame-brush", "id": "flame-layering" }],
   "stages": [
-    { "op": 1, "name": "바깥 불꽃 피우기", "explain": "불꽃마다 주황 윤곽을 따로 그립니다. 이웃과 겹쳐도 아직 각자의 모양입니다.", "many": false },
-    { "op": 2, "name": "밝은 내부 덧칠", "explain": "모든 바깥 불꽃 위에 밝은 내부를 덧칠합니다. 겹친 부분의 경계가 이 칠에 덮여 하나로 이어져 보입니다.", "many": false }
+    { "op": 1, "name": "바깥 불꽃 피우기", "explain": "불꽃마다 주황 윤곽을 따로 그립니다. 이웃과 겹쳐도 아직 각자의 모양입니다.", "many": false, "of": [{ "kind": "transformation", "nodeId": "flame-brush", "id": "flame-layering" }] },
+    { "op": 2, "name": "밝은 내부 덧칠", "explain": "모든 바깥 불꽃 위에 밝은 내부를 덧칠합니다. 겹친 부분의 경계가 이 칠에 덮여 하나로 이어져 보입니다.", "many": false, "of": [{ "kind": "transformation", "nodeId": "flame-brush", "id": "flame-layering" }] }
   ],
   "sketches": [
     { "op": 2, "shape": "scribble", "x": "s(\"@next\", \"x\")", "y": "s(\"@next\", \"y\")", "w": "s(\"@next\", \"w\")", "h": "s(\"@next\", \"h\")", "toX": "", "toY": "", "path": "", "template": [], "hint": "내부를 덧칠해 경계 덮기" }

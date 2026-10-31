@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { applyParameterEdits, moduleKeyOf } from "./hidden-parameters";
-import { overlaySchema, type InspectionStep, type InspectResult, type Recommendation, type Scalar } from "./inspection";
+import { overlaySchema, targetedResultSchema, type InspectionStep, type InspectResult, type Recommendation, type Scalar } from "./inspection";
 export { PATH_ROOT } from "./inspection";
 import { findNode } from "./scene/graph";
 import { addHostMachines, addHostParams, programModules, sceneInstances } from "./scene/machines";
@@ -8,6 +8,7 @@ import { applyMachineChange, machineChangeSchema, type MachineChange } from "./m
 import { SKETCH_SHAPES } from "./sketch-gestures";
 import { idSchema, numberValueSchema, toggleValueSchema, type Scene } from "./scene/schema";
 import { bindingKey } from "./scene/values";
+import type { PictureEdit } from "./preview-objects";
 
 // Exploration frames: from a targeted inspection's cause or one of its
 // recommendations, a new frame on the board shows the same brush marks (the step
@@ -31,6 +32,9 @@ const editSchema = z.object({ nodeId: z.string().max(80), find: z.string().min(1
 /** A value a preview reads that the scene does not have (the recommendation's new quantity), with its range. */
 export const previewValueSchema = z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) });
 export type PreviewValue = z.infer<typeof previewValueSchema>;
+/** What part of the brush an execution (or one operation of it) belongs to: a semantic transformation, a state or a transition of a node. */
+export const executionPartSchema = z.object({ kind: z.enum(["transformation", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
+export type ExecutionPart = z.infer<typeof executionPartSchema>;
 export const exploreResultSchema = z.object({
   /** What the frame lets the user see and how the handle maps onto it (Korean). */
   summary: z.string().min(1).max(1200),
@@ -54,7 +58,11 @@ export const exploreResultSchema = z.object({
    */
   stages: z.array(z.object({ op: z.number().int().min(1).max(9), name: z.string().min(1).max(40), explain: z.string().max(300),
     /** One gesture of this operation's handle may run several steps (one continuous motion through many items); otherwise one gesture is one step. */
-    many: z.boolean() })).max(6),
+    many: z.boolean(),
+    /** The semantic transformations, states or transitions of the brush this operation is part of. */
+    of: z.array(executionPartSchema).max(3).default([]) })).max(6),
+  /** Execution: the semantic transformations, states or transitions of the brush the execution shown runs (all of it). */
+  of: z.array(executionPartSchema).max(4).default([]),
   /**
    * Operations performed by drawing a mark instead of (or as well as) dragging a handle: the mark (`shape`), where it
    * goes (`x`, `y`, `w`, `h`: expressions like an overlay's, on what the next step works on) and what it means (`hint`).
@@ -91,9 +99,42 @@ export type ExploreFrame = {
   progress: number;
   /** Values dragged in this frame. */
   values: Record<string, Scalar>;
+  /** What the user showed on its picture at one moment of execution, for a new recommendation (Execution only). */
+  edit?: ExploreEdit;
   /** What AI was asked with (asked again on retry): the concern, the inspection as shown in the target frame, the recommendation. */
   request: { concern: string; inspection: InspectResult; recommendation: (Recommendation & { applied: boolean }) | null };
 };
+/** What an Execution frame shows at one moment: what it is about, how far execution is, the step just executed and the next, the kind of operation now. */
+export type ExecutionMoment = { summary: string; axis: "run" | "input" | "steps"; done: number | null; count: number | null; progress: number; last: string; next: string; stage: { name: string; explain: string } | null };
+/**
+ * Annotation and crops moved, scaled or rotated on an Execution frame's picture, made at one moment (`at`: the step's
+ * key, how far execution was, and that moment; they are drawn only there), and the recommendation asked for from them.
+ */
+export type ExploreEdit = PictureEdit & { at: { key: string; progress: number; moment: ExecutionMoment } | null; making: boolean; reply: string; error: string };
+export const emptyExploreEdit = (): ExploreEdit => ({ mode: "run", marks: [], manipulations: [], image: "", note: "", at: null, making: false, reply: "", error: "" });
+const scalar = z.union([z.number(), z.string().max(2000), z.boolean()]);
+/**
+ * An exploration frame as saved with the project: what AI made in it and where it is, without the program it runs
+ * (prepared again from its frame's code after loading) or what was being shown on it. One that was being made is
+ * saved as placed only (made again with its Generate).
+ */
+export const savedExploreFrameSchema = z.object({
+  id: z.string().regex(/^explore-/).max(80), targetFrameId: z.string().max(80), brushId: z.string().max(80), toolId: z.string().max(80), mode: z.enum(EXPLORE_MODES),
+  source: z.union([z.object({ kind: z.literal("cause") }), z.object({ kind: z.literal("recommendation"), index: z.number().int().min(0), title: z.string().max(200), key: z.string().max(400), applied: z.boolean() })]),
+  name: z.string().max(200), nodeIds: z.array(z.string().max(80)).max(40),
+  base: z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar), steps: z.array(z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar) })).max(20), params: z.record(z.string().max(1200), scalar) }),
+  status: z.enum(["idle", "ready", "error"]), error: z.string().max(2000), result: exploreResultSchema.nullable(), progress: z.number().min(0).max(1), values: z.record(z.string().max(1200), scalar),
+  request: z.object({ concern: z.string().max(4000), inspection: targetedResultSchema, recommendation: targetedResultSchema.shape.recommendations.element.extend({ applied: z.boolean() }).nullable() }),
+});
+/** What of an exploration frame is saved (see savedExploreFrameSchema); the recorded steps only when it moves through them. */
+export function savedExplore(frame: ExploreFrame): z.input<typeof savedExploreFrameSchema> {
+  const made = frame.status === "ready" || (frame.status === "error" && frame.result);
+  return { id: frame.id, targetFrameId: frame.targetFrameId, brushId: frame.brushId, toolId: frame.toolId, mode: frame.mode, source: frame.source, name: frame.name, nodeIds: frame.nodeIds,
+    base: { ...frame.base, steps: frame.result?.axis === "steps" ? frame.base.steps : [] }, status: made ? "ready" : frame.status === "error" ? "error" : "idle", error: made ? "" : frame.error,
+    result: made ? frame.result : null, progress: frame.progress, values: frame.values, request: frame.request };
+}
+/** A saved exploration frame on the board again: its program is prepared again (empty until then). */
+export const restoredExplore = (saved: z.infer<typeof savedExploreFrameSchema>): ExploreFrame => ({ ...saved, id: saved.id as ExploreFrame["id"], executable: "" });
 export const isExploreFrame = (id: string): id is `explore-${string}` => id.startsWith("explore-");
 export const sameExplore = (frame: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode" | "source">, other: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode" | "source">) =>
   frame.targetFrameId === other.targetFrameId && frame.toolId === other.toolId && frame.mode === other.mode
@@ -207,6 +248,29 @@ export function stepBlock(run: { events: RunEvent[] }, done: number): [number, n
 export function gestureRange(run: { events: RunEvent[] }, done: number, many: boolean): [number, number] {
   const [first, last] = stepBlock(run, done);
   return many ? [first, last] : [Math.max(first, done - 1), Math.min(last, done + 1)];
+}
+/**
+ * The moments of the run that draw at a point of the canvas (canvas pixels), in order: for every step that makes a
+ * drawing call (or passes a checkpoint) whose box holds the point (a few pixels of slack), the steps done once that
+ * call is drawn, with the smallest such call. When none holds it, the nearest one close by. A box covering most of
+ * the canvas (a background) is no part of anything.
+ */
+export function stepsAt(run: { events: RunEvent[] }, point: { x: number; y: number }, slack = 6, reach = 30) {
+  const starts = runSteps(run).map(step => step.index);
+  // Steps done when the event is drawn: every step that starts at or before it (an event before the first is drawn at 0).
+  const doneAt = (index: number) => { let n = 0; for (const start of starts) { if (start > index) break; n++; } return n; };
+  const area = (event: RunEvent) => (event.w ?? 0) * (event.h ?? 0);
+  const placed = run.events.filter(event => Number.isFinite(event.x) && Number.isFinite(event.y) && area(event) < 900 * 600 * .5);
+  const gap = (event: RunEvent) => Math.hypot(Math.max(event.x! - point.x, 0, point.x - event.x! - (event.w ?? 0)), Math.max(event.y! - point.y, 0, point.y - event.y! - (event.h ?? 0)));
+  const holding = placed.filter(event => gap(event) <= slack);
+  const nearest = holding.length ? holding : placed.filter(event => gap(event) <= reach).sort((a, b) => gap(a) - gap(b)).slice(0, 1);
+  const byDone = new Map<number, RunEvent>();
+  for (const event of nearest) { const done = doneAt(event.index), kept = byDone.get(done); if (!kept || area(event) < area(kept)) byDone.set(done, event); }
+  return [...byDone.entries()].sort((a, b) => a[0] - b[0]).map(([done, event]) => ({ done, event }));
+}
+/** Where pressing there goes from `done` steps: the next moment after it that draws there, else the first (pressing again goes on). */
+export function jumpTarget<T extends { done: number }>(moments: T[], done: number) {
+  return moments.find(moment => moment.done > done) ?? moments[0] ?? null;
 }
 /** The operation of a step (0: not named). */
 export const stepOp = (run: { events: RunEvent[] }, step: number) => opOf(runSteps(run)[step]?.data);

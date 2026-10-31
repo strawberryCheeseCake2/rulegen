@@ -5,11 +5,20 @@ import { createInteractionPen } from "./algorithm-pens";
 import { ensureFramePositions, liveGroups, MAX_SKETCH_FRAMES, workspaceSchema } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
 import { MAX_PROXY_FRAMES, proxyFrameSchema } from "./proxy-frames";
+import { MAX_EXPLORE_FRAMES, savedExploreFrameSchema } from "./explore";
 const strokeSchema = z.object({ points: z.array(pointSchema).max(6000), color: z.string(), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), tool: z.enum(["pen", "eraser"]), semanticPen: semanticPenSchema.optional() });
 const artworkSchema = z.object({ strokes: z.array(strokeSchema).max(500), photo: imageSchema.nullable(), name: z.string(), revision: z.number() });
+/** A recommendation's fork slot as saved (the version it would make is read again from its tool and frames). */
+export const savedForkSlotSchema = z.object({ id: z.string().regex(/^slot-/).max(80), targetFrameId: z.string().max(80), brushId: z.string().max(80), toolId: z.string().max(80),
+  index: z.number().int().min(0), key: z.string().max(400), title: z.string().max(200), detail: z.string().max(2000) });
+export const MAX_FORK_SLOTS = 48;
+/** A list of saved items where one that no longer reads is left out (not the whole project). */
+const readable = <T extends z.ZodTypeAny>(item: T, max: number) => z.preprocess(value => Array.isArray(value) ? value.filter(entry => item.safeParse(entry).success) : value, z.array(item).max(max)).default([]);
 export const sketchFrameSchema = z.object({ id: z.string().regex(/^sketch-[a-zA-Z0-9-]+$/).max(80), artwork: artworkSchema });
 export type SketchFrame = z.infer<typeof sketchFrameSchema>;
-export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(MAX_SKETCH_FRAMES).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), proxyFrames: z.preprocess(value => Array.isArray(value) ? value.filter(frame => !(frame && typeof frame === "object" && "kind" in frame && frame.kind !== "handles")) : value, z.array(proxyFrameSchema).max(MAX_PROXY_FRAMES)).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})) }).superRefine((project, ctx) => {
+export const projectSchema = z.object({ version: z.literal(2), name: z.string().max(200), artwork: artworkSchema, sketchFrames: z.array(sketchFrameSchema).max(MAX_SKETCH_FRAMES).default([]), activeSketchId: z.string().max(80).default("source"), sketchPanels: z.record(z.string(), sketchPanelSchema).default({}), semanticPens: z.array(semanticPenSchema).max(32).default([]), interactionPen: semanticPenSchema.default(createInteractionPen), activeSemanticPenId: z.string().max(80).nullable().default(null), brushes: z.array(brushSchema).max(MAX_BRUSHES).default([]), proxyFrames: z.preprocess(value => Array.isArray(value) ? value.filter(frame => !(frame && typeof frame === "object" && "kind" in frame && frame.kind !== "handles")) : value, z.array(proxyFrameSchema).max(MAX_PROXY_FRAMES)).default([]), workspace: workspaceSchema.default(() => workspaceSchema.parse({})),
+  /** Exploration frames (Execution, key parameters) and fork slots: with their frame groups. */
+  exploreFrames: readable(savedExploreFrameSchema, MAX_EXPLORE_FRAMES), forkSlots: readable(savedForkSlotSchema, MAX_FORK_SLOTS) }).superRefine((project, ctx) => {
   const ids = project.sketchFrames.map(f => f.id);
   if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "스케치 프레임 ID와 위치를 확인해주세요." });
   if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Interaction pen을 확인해주세요." });
@@ -18,13 +27,17 @@ export const projectSchema = z.object({ version: z.literal(2), name: z.string().
   const sketchPanels = Object.fromEntries(ids.map(id => [id, project.sketchPanels[id] || sketchPanelSchema.parse({})]));
   // A proxy frame goes with its target frame.
   const proxyFrames = [...new Map(project.proxyFrames.filter(frame => ids.includes(frame.targetFrameId)).map(frame => [frame.id, frame])).values()];
-  return { ...project, sketchPanels, proxyFrames, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
-    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(withoutExplore(project.workspace.frames), [...ids, ...proxyFrames.map(frame => frame.id)]),
-      // Groups keep the saved frames they hold (a fork); exploration frames and fork slots are not saved.
-      groups: liveGroups(project.workspace.groups, new Set([...ids, ...proxyFrames.map(frame => frame.id)])) } };
+  // Exploration frames and fork slots go with the frame they were made from.
+  const exploreFrames = [...new Map(project.exploreFrames.filter(frame => ids.includes(frame.targetFrameId)).map(frame => [frame.id, frame])).values()];
+  const forkSlots = [...new Map(project.forkSlots.filter(slot => ids.includes(slot.targetFrameId)).map(slot => [slot.id, slot])).values()];
+  const kept = [...ids, ...proxyFrames.map(frame => frame.id), ...exploreFrames.map(frame => frame.id), ...forkSlots.map(slot => slot.id)];
+  return { ...project, sketchPanels, proxyFrames, exploreFrames, forkSlots, activeSemanticPenId: [...project.semanticPens, project.interactionPen].some(p => p.id === project.activeSemanticPenId) ? project.activeSemanticPenId : null,
+    activeSketchId: ids.includes(project.activeSketchId) ? project.activeSketchId : "source", workspace: { ...project.workspace, frames: ensureFramePositions(withoutLost(project.workspace.frames, new Set(kept)), kept),
+      // Groups keep the frames they hold that are still there.
+      groups: liveGroups(project.workspace.groups, new Set(kept)) } };
 });
-/** Exploration frames and fork slots are not saved: their spots on the board go too. */
-const withoutExplore = <T extends Record<string, unknown>>(frames: T) => Object.fromEntries(Object.entries(frames).filter(([id]) => !id.startsWith("explore-") && !id.startsWith("slot-"))) as T;
+/** Spots of exploration frames and fork slots that were not kept go too. */
+const withoutLost = <T extends Record<string, unknown>>(frames: T, kept: Set<string>) => Object.fromEntries(Object.entries(frames).filter(([id]) => !(id.startsWith("explore-") || id.startsWith("slot-")) || kept.has(id))) as T;
 export function exampleStrokes(): Stroke[] {
   const strokes: Stroke[] = [];
   function branch(x: number, y: number, length: number, angle: number, depth: number, seed: number) {

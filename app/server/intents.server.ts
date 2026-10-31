@@ -13,7 +13,7 @@ import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
-import { concernSuggestionsSchema, evaluate, handleProblem, inspectPreviewResultSchema, inspectResultSchema, type RecommendationPreview, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { concernSuggestionsSchema, evaluate, handleProblem, inspectPreviewResultSchema, inspectResultSchema, revisedRecommendationSchema, type RecommendationPreview, type RevisedRecommendation, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { isRuntimeKey } from "../lib/runtime-edits";
 import { cleanMachineChange } from "../lib/machine-change";
 import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
@@ -50,12 +50,44 @@ function brushModules(input: AIInput) {
 function parsesModule(module: string) {
   try { parse(module, { sourceType: "script" }); return true; } catch { return false; }
 }
+/** A recommendation's preview is kept only if its edits apply to the brush's modules (`nodes`), give valid code and read only values it brings. */
+function keptPreview(input: AIInput, nodes: Map<string, unknown>, item: { kind: string; preview?: RecommendationPreview | null }) {
+  const preview = item.preview;
+  if (!preview || item.kind === "value" || !preview.edits.length || preview.edits.some(edit => !nodes.has(edit.nodeId)) || preview.values.some(value => !nodes.has(value.nodeId))) return null;
+  // The states and transitions it brings: of a brush node, and an event one only when the edits emit it.
+  const machine = preview.machine && nodes.has(preview.machine.nodeId) ? cleanMachineChange(input.scene!, preview.machine, preview.edits) : null;
+  const program = exploreProgram(input.previous, input.scene!, { ...preview, machine });
+  if ("error" in program) return null;
+  const keys = [...new Set(preview.edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))];
+  if (!keys.every(key => parsesModule(programModules(program.code).get(key) ?? ""))) return null;
+  // Its handles change a number or toggle of the brush or one the preview brings (not the running state).
+  const specs = new Map<string, { type: string }>([...(input.inspection?.constraints ?? []).map(row => [row.key, { type: row.type }] as const), ...preview.values.map(value => [previewKey(value), value.value] as const)]);
+  const handles = (preview.handles ?? []).filter(overlay => overlay.handle && !isRuntimeKey(overlay.handle.key) && !handleProblem(overlay.handle, specs.get(overlay.handle.key)));
+  return { ...preview, machine, handles };
+}
+/**
+ * A recommendation AI wrote for one brush (revised, or made from an Execution frame): its target exists in the brush and
+ * its preview runs; else an error (nothing changes). `what` says which in the error ("고친", "만든").
+ */
+function settledRecommendation(input: AIInput, output: RevisedRecommendation, what: string) {
+  const scene = input.scene!, inspection = input.inspection!, nodes = new Map(scene.nodes.filter(node => inspection.nodeIds.includes(node.id)).map(node => [node.id, node]));
+  const node = nodes.get(output.nodeId);
+  if (!node) throw new Error(`${what} recommendation이 이 brush의 노드를 가리키지 않습니다. 다시 시도해주세요.`);
+  const keys = new Set(inspection.constraints.map(row => row.key)), has = (kind: string, id: string) => kind === "transformation" ? node.transformations.some(item => item.id === id)
+    : Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
+  const changes = output.changes.filter(item => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(other => other.machine?.states.some(state => state.id === item.stateId))));
+  if (output.kind === "value" ? !changes.length : output.kind === "add-transformation" ? node.transformations.length >= MAX_TRANSFORMATIONS : !has(output.kind, output.targetId)) throw new Error(`${what} recommendation을 이 brush에 적용할 수 없습니다. 다시 시도해주세요.`);
+  const preview = output.kind === "value" ? null : keptPreview(input, nodes, output);
+  if (output.kind !== "value" && !preview) throw new Error(`${what} 미리보기 코드를 적용하지 못했습니다. 다시 시도해주세요.`);
+  return { ...output, targetId: output.kind === "add-transformation" ? "" : output.targetId, changes: output.kind === "value" ? changes : [],
+    targetIds: output.kind === "transformation" ? [...new Set(output.targetIds.filter(id => id !== output.targetId && has("transformation", id)))] : [], preview };
+}
 const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
 /** The modules the code must define: one per root node, with the node ids it draws. */
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision" | "split", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision" | "split" | "revise-recommendation" | "execution-recommendation", Intent> = {
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
     check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
@@ -181,23 +213,41 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const gripped = overlays.map(handled), shared = gripped.filter(item => item.each && item.handle && !perItem(item.handle.key)).length;
       const note = (overlays.length < drawable.length ? ` (항목 기록을 추가하는 코드가 올바르지 않아 오버레이 ${drawable.length - overlays.length}개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요.)` : "")
         + (shared ? ` (손잡이 ${shared}개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다. Inspect again으로 다시 시도해주세요.)` : "");
-      // A recommendation's preview is kept only if its edits apply to the brush's modules, give valid code and read only values it brings.
-      const previewOf = (item: InspectResult["recommendations"][number] & { preview?: RecommendationPreview | null }) => {
-        const preview = item.preview;
-        if (!preview || item.kind === "value" || !preview.edits.length || preview.edits.some(edit => !nodes.has(edit.nodeId)) || preview.values.some(value => !nodes.has(value.nodeId))) return null;
-        // The states and transitions it brings: of a brush node, and an event one only when the edits emit it.
-        const machine = preview.machine && nodes.has(preview.machine.nodeId) ? cleanMachineChange(input.scene!, preview.machine, preview.edits) : null;
-        const program = exploreProgram(input.previous, input.scene!, { ...preview, machine });
-        if ("error" in program) return null;
-        const keys = [...new Set(preview.edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))];
-        return keys.every(key => parsesModule(programModules(program.code).get(key) ?? "")) ? { ...preview, machine } : null;
-      };
+      const previewOf = (item: InspectResult["recommendations"][number] & { preview?: RecommendationPreview | null }) => keptPreview(input, nodes, item);
       return { ...output, summary: output.summary.slice(0, 1500 - note.length) + note, overlays: gripped.map(item => item.each && item.handle && !perItem(item.handle.key) ? { ...item, handle: null } : item), valueFixes: output.valueFixes.filter(change),
         parameters, records,
         recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : item.kind === "add-transformation" ? (nodes.get(item.nodeId)?.transformations.length ?? MAX_TRANSFORMATIONS) < MAX_TRANSFORMATIONS : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
           targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [],
           ...("preview" in item ? { preview: previewOf(item) } : {}) })) };
     },
+  },
+  "revise-recommendation": {
+    schema: revisedRecommendationSchema, maxTokens: () => 16000, effort: "medium",
+    check: input => !input.scene || !input.inspection?.revise ? "고칠 recommendation이 필요합니다."
+      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.revise.manipulations.length && !input.inspection.revise.adjusted.length ? "preview 위에 annotation을 그리거나 물체나 손잡이를 옮기거나, 어떻게 고칠지 적어주세요." : undefined,
+    context: input => {
+      const inspection = input.inspection!, revise = inspection.revise!, held = inspection.cursor ?? inspection.steps.length - 1;
+      return { request: input.instruction, concern: revise.concern, inspectionSummary: revise.summary, recommendation: revise.recommendation, brush: inspection.brushName,
+        brushNodes: input.scene!.nodes.filter(node => inspection.nodeIds.includes(node.id)), algorithms: input.scene!.algorithms, constraints: inspection.constraints,
+        // Only the step the preview is drawn on.
+        step: inspection.steps[held] ?? null, annotationMarks: inspection.marks, annotationMarkStyles: inspection.markStyles, manipulations: revise.manipulations, adjusted: revise.adjusted, canvas, code: brushModules(input) };
+    },
+    /** The revised recommendation stays one of this brush (its target exists) with a preview that runs; else nothing changes. */
+    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "고친"),
+  },
+  /** A new recommendation from what the user showed on an Execution frame (annotation, crops moved, scaled or rotated) at one moment of execution. */
+  "execution-recommendation": {
+    schema: revisedRecommendationSchema, maxTokens: () => 16000, effort: "medium",
+    check: input => !input.scene || !input.inspection?.fromExecution ? "Execution 프레임과 그 brush가 필요합니다."
+      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.fromExecution.manipulations.length ? "Execution 그림 위에 annotation을 그리거나 크롭해서 옮기거나, 어떻게 바뀌면 좋을지 적어주세요." : undefined,
+    context: input => {
+      const inspection = input.inspection!, from = inspection.fromExecution!, held = inspection.cursor ?? inspection.steps.length - 1;
+      return { request: input.instruction, concern: from.concern, inspectionSummary: from.summary, execution: from.execution,
+        ...(from.base ? { framedRecommendation: { ...from.base, applied: from.applied } } : {}), listedRecommendations: from.listed,
+        brush: inspection.brushName, brushNodes: input.scene!.nodes.filter(node => inspection.nodeIds.includes(node.id)), algorithms: input.scene!.algorithms, constraints: inspection.constraints,
+        step: inspection.steps[held] ?? null, annotationMarks: inspection.marks, annotationMarkStyles: inspection.markStyles, manipulations: from.manipulations, canvas, code: brushModules(input) };
+    },
+    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "만든"),
   },
   concern: {
     schema: concernSuggestionsSchema, maxTokens: () => 3000, effort: "low",
@@ -274,8 +324,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const stages = named.filter(stage => ops.has(stage.op)), lost = named.filter(stage => !ops.has(stage.op));
       const sketches = sketched.filter(sketch => ops.has(sketch.op));
       if (lost.length) notes.push(`${lost.map(stage => `「${stage.name}」`).join(", ")} 단계는 코드에 넣지 못해 빠졌습니다. 다시 만들면 들어갈 수 있습니다.`);
+      // What the execution and each operation are part of: only transformations, states and transitions the brush has (or the preview brings), each once.
+      const parts = (list: ExploreResult["of"]) => list.filter((part, i, all) => all.findIndex(other => other.kind === part.kind && other.nodeId === part.nodeId && other.id === part.id) === i
+        && (part.kind === "transformation" ? Boolean(nodes.get(part.nodeId)?.transformations.some(item => item.id === part.id)) : linked(part.kind, part.nodeId, part.id)));
+      const linkedStages = stages.map(stage => ({ ...stage, of: parts(stage.of ?? []) }));
       const note = notes.length ? ` (${notes.join(" ")})` : "";
-      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, machine, overlays, stages, sketches };
+      return { ...output, summary: output.summary.slice(0, 1200 - note.length) + note, axis, from, to, edits, values: kept, machine, overlays, stages: linkedStages, sketches,
+        of: execution ? parts([...(output.of ?? []), ...linkedStages.flatMap(stage => stage.of)]).slice(0, 4) : [] };
     },
   },
   handles: {

@@ -55,6 +55,19 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
     setPan(p => left + p.x >= 8 && right + p.x <= width - 8 && top + p.y >= 8 && bottom + p.y <= height - 8 ? p
       : { x: Math.min(0, width / 2 - (left + right) / 2), y: Math.min(0, height / 2 - (top + bottom) / 2) });
   }, [inspected?.state, inspected?.from]);
+  // A state or transition picked from elsewhere (e.g. an Execution frame's part) is panned into view, the panel too.
+  useEffect(() => {
+    const element = viewport.current; if (!element || !target) return;
+    const transition = target.kind === "transition" ? machine.transitions.find(item => item.id === target.id) : undefined;
+    const ids = target.kind === "state" ? [target.id] : transition ? [transition.from, transition.to] : [];
+    const boxes = layout.states.filter(state => ids.includes(state.id));
+    if (!boxes.length) return;
+    const left = Math.min(...boxes.map(box => box.x)), right = Math.max(...boxes.map(box => box.x + STATE_WIDTH)), top = Math.min(...boxes.map(box => box.y)), bottom = Math.max(...boxes.map(box => box.y + STATE_HEIGHT));
+    const width = element.clientWidth, height = element.clientHeight;
+    setPan(p => left + p.x >= 8 && right + p.x <= width - 8 && top + p.y >= 8 && bottom + p.y <= height - 8 ? p
+      : { x: Math.min(0, width / 2 - (left + right) / 2), y: Math.min(0, height / 2 - (top + bottom) / 2) });
+    element.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+  }, [target?.kind, target?.id]);
   const graphPoint = (e: React.PointerEvent) => { const box = viewport.current!.getBoundingClientRect(); return { x: e.clientX - box.left - current.current.pan.x, y: e.clientY - box.top - current.current.pan.y }; };
   const down = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;

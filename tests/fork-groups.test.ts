@@ -10,7 +10,7 @@ import { projectSchema } from "../app/lib/project";
 import { readSceneValues } from "../app/lib/scene/machines";
 import { sceneBindings } from "../app/lib/scene/values";
 import { FreeformWorkspace } from "../app/components/freeform-workspace";
-import { ForkSlot } from "../app/components/fork-slot";
+import { emptySlotEdit, ForkSlot } from "../app/components/fork-slot";
 
 const noop = () => {};
 
@@ -67,7 +67,13 @@ test("a group is drawn behind its frames with a title to drag it by and a delete
     groupAction: () => ({ label: "◎ fork inspection 도구", title: "t", disabled: true, onClick: noop }),
     frames: [{ id: "slot-1" as never, title: "fork", subtitle: "", content: "" }, { id: "explore-1" as never, title: "exec", subtitle: "", content: "" }] }));
   assert.match(action, /<button class="frame-group-action" title="t" disabled="">◎ fork inspection 도구<\/button>/, "a group's title can carry a button (disabled until the fork exists)");
-  const slot = (status: "waiting" | "ready") => renderToStaticMarkup(createElement(ForkSlot, { title: "합치기", detail: "d", status, message: "m", preview: null, onAccept: noop, onActivate: noop }));
-  assert.match(slot("waiting"), /<button class="primary" disabled="">/); assert.doesNotMatch(slot("ready"), /disabled=""/);
+  const slot = (status: "waiting" | "ready" | "paused", paused = false) => renderToStaticMarkup(createElement(ForkSlot, { title: "합치기", detail: "d", status, message: "m", preview: null, onAccept: noop, onActivate: noop,
+    paused, onContinue: noop, edit: emptySlotEdit(), onEdit: noop, onRevise: noop, onCancelRevise: noop }));
+  const accept = (html: string) => html.match(/<button class="primary"[^>]*><svg[^]*?<\/svg>Accept/)![0];
+  assert.match(accept(slot("waiting")), /disabled=""/); assert.doesNotMatch(accept(slot("ready")), /disabled=""/);
   assert.match(slot("ready"), /Accept · 이 버전으로 fork 만들기/);
+  // Its frames only placed: the slot makes them when asked; the menu sits under the preview, with the ways to revise it.
+  assert.doesNotMatch(slot("ready"), /마저 생성/); assert.match(slot("paused", true), /▶ 마저 생성/);
+  assert.ok(slot("ready").indexOf("fork-slot-view") < slot("ready").indexOf("fork-slot-bar"));
+  assert.match(slot("ready"), /Annotation/); assert.match(slot("ready"), /class="active" aria-pressed="true"[^>]*>[^]*?크롭 · 이동 · 크기 · 회전/, "cropping is the tool at hand from the start"); assert.match(slot("ready"), /Revise recommendation/);
 });

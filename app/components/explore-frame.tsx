@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CodePreview, type ExecutionRun } from "./code-preview";
 import { InspectionOverlay } from "./inspection-overlay";
 import { Icon } from "./icons";
-import { EXEC_KEY, exploreStep, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKey, RUN_ROOT, gestureRange, runStores, stageCounts, STEPS_ROOT, stepOp, type ExploreFrame } from "../lib/explore";
+import { EditSheet, EditTools, pictureEdited } from "./picture-edit";
+import { emptyExploreEdit, EXEC_KEY, exploreStep, jumpTarget, runSteps, stepsAt, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKey, RUN_ROOT, gestureRange, runStores, stageCounts, STEPS_ROOT, stepOp, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame } from "../lib/explore";
 import { evaluate, formatScalar, handleGrips, pathValue, stepContext, type InspectionState, type InspectResult, type Overlay, type Scalar } from "../lib/inspection";
 import { recognizeMark, SHAPE_NAMES, type MarkSpec } from "../lib/sketch-gestures";
 import type { ScalarValue } from "../lib/scene/schema";
@@ -20,7 +21,17 @@ type Props = {
   /** A value dragged in this frame (null: back to how the frame started). */
   onValue: (key: string, value: Scalar | null) => void;
   onRetry: () => void; onActivate: () => void;
+  /**
+   * Showing on an Execution frame's picture, at one moment of execution, how it should come out (annotation, crops
+   * moved, scaled or rotated, a note), and asking AI for a new recommendation from it (on this picture).
+   */
+  onEdit?: (patch: Partial<ExploreEdit>) => void; onRecommend?: (image: string, moment: ExecutionMoment) => void; onCancelRecommend?: () => void;
+  /** What a part of the brush (a semantic transformation, state or transition) is called, and on which node; null when it is gone. */
+  partName?: (part: ExecutionPart) => { name: string; node: string } | null;
+  /** Show a part in the frame's panels: a transformation in the properties panel, a state or transition in the state machine panel. */
+  onPart?: (part: ExecutionPart) => void;
 };
+const PART_KINDS: Record<ExecutionPart["kind"], string> = { transformation: "Transformation", state: "State", transition: "Transition" };
 type Step = { label: string; none: number; op: number; step: number };
 /** Canvas pixels a hand moves before a gesture counts (and the least distance from a pivot a gesture can be measured by). */
 const STEP_SLOP = 12;
@@ -39,7 +50,7 @@ const nextStepGrip = (link: Overlay["link"], stage: string | undefined): Overlay
  * the recorded steps. Value handles redraw it with the value. Nothing outside this
  * frame changes.
  */
-export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgress, onValue, onRetry, onActivate }: Props) {
+export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgress, onValue, onRetry, onActivate, onEdit, onRecommend, onCancelRecommend, partName, onPart }: Props) {
   const result = frame.result, execution = frame.mode === "execution", running = result?.axis === "run";
   // The code's run as last recorded (its events do not depend on how much of it is drawn).
   const [run, setRun] = useState<ExecutionRun | null>(null);
@@ -128,14 +139,40 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   // The steps the handle being dragged may reach (fixed when the drag starts): one step forward or back, unless its operation is one continuous motion.
   // A drag that has executed (or taken back) its step keeps that until it is released (`latched`), so moving on never undoes it.
   const block = useRef<{ range: [number, number]; start: number; many: boolean; latched: number | null } | null>(null);
-  return <div className={`explore-frame-surface explore-${frame.mode}`} tabIndex={-1} onPointerDownCapture={onActivate}
+  // Showing how it should come out, at this moment of execution: on the picture as it is drawn now (the latest one a little after it is drawn).
+  const edit = frame.edit ?? emptyExploreEdit(), showing = Boolean(onEdit && execution && result);
+  const [shot, setShot] = useState(""), wantShot = useRef(true), latestShot = useRef("");
+  const take = (image: string) => { if (!wantShot.current || !image) return; wantShot.current = false; setShot(image); };
+  const [selected, setSelected] = useState<number | null>(null);
+  const stage = stageOf(currentOp), says = (item: Step | undefined, n: number) => item && !item.none ? [item.label || `단계 ${n}`, stageOf(item.op)?.name].filter(Boolean).join(" · ") : "";
+  const moment: ExecutionMoment = { summary: result?.summary ?? "", axis: result?.axis ?? "run", done: stepwise ? done : null, count: stepwise ? count : null, progress: frame.progress,
+    last: says(last, done), next: says(next, done + 1), stage: stepwise && stage ? { name: stage.name, explain: stage.explain } : null };
+  // What was shown belongs to the moment it was shown at: elsewhere it is not drawn (and can be gone back to).
+  const here = !edit.at || edit.at.key === restoreId;
+  const editHere = (patch: Partial<ExploreEdit>) => { if (!onEdit) return; const next = { ...edit, ...patch }, empty = !next.marks.length && !next.manipulations.length;
+    onEdit({ ...patch, at: empty ? null : edit.at ?? { key: restoreId, progress: frame.progress, moment } }); };
+  // Jumping: pressing a part of the picture executes up to the step that draws it (pressed again: the next step that draws there).
+  const [jumping, setJumping] = useState(false), [aim, setAim] = useState<{ x: number; y: number } | null>(null), jumpSheet = useRef<SVGSVGElement>(null);
+  const jumpOn = jumping && stepwise && Boolean(run) && edit.mode === "run";
+  const jumpPoint = (e: React.PointerEvent) => { const box = jumpSheet.current!.getBoundingClientRect(); return { x: (e.clientX - box.left) / Math.max(1, box.width) * 900, y: (e.clientY - box.top) / Math.max(1, box.height) * 600 }; };
+  const aimed = jumpOn && aim && run ? jumpTarget(stepsAt(run, aim), done) : null;
+  const stepLabel = (n: number) => { if (!run || n <= 0) return "시작 전"; const item = runSteps(run)[n - 1]; return [item?.label || `단계 ${n}`, stageOf(stepOp(run, n - 1))?.name].filter(Boolean).join(" · "); };
+  // The parts of the brush (semantic transformations, states, transitions) the execution, or one of its operations, belongs to.
+  const parts = (list: ExecutionPart[] | undefined) => (list ?? []).flatMap(part => { const named = partName?.(part); return named ? [{ ...part, ...named }] : []; });
+  const partChips = (list: ExecutionPart[] | undefined, small = false) => parts(list).map(part => <button key={`${part.kind}:${part.nodeId}:${part.id}`} type="button" className={`explore-part ${part.kind} ${small ? "small" : ""}`}
+    title={`${PART_KINDS[part.kind]} 「${part.name}」 · ${part.node} · 눌러서 ${part.kind === "transformation" ? "오른쪽 transformation 패널" : "아래 state machine 패널"}에서 보기`}
+    onClick={() => onPart?.({ kind: part.kind, nodeId: part.nodeId, id: part.id })}><em>{PART_KINDS[part.kind]}</em>{part.name}</button>);
+  const where = (at: NonNullable<ExploreEdit["at"]>) => at.moment.done !== null ? `단계 ${at.moment.done}/${at.moment.count}` : `${Math.round(at.progress * 100)}%`;
+  return <div className={`explore-frame-surface explore-${frame.mode} ${showing && here ? `edit-${edit.mode}` : ""}`} tabIndex={-1} onPointerDownCapture={onActivate}
     onKeyDown={e => { if (e.key === "Enter" && recognized?.ok) { e.preventDefault(); e.stopPropagation(); submit(); return; }
       if (e.key === "Escape" && strokes.length) { e.preventDefault(); e.stopPropagation(); setStrokes([]); return; }
+      if (e.key === "Escape" && selected !== null) { e.preventDefault(); e.stopPropagation(); setSelected(null); return; }
+      if (e.key === "Escape" && jumping) { e.preventDefault(); e.stopPropagation(); setJumping(false); return; }
       if (!stepwise || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); setPlaying(false);
       goTo(e.key === "ArrowLeft" ? done - 1 : e.key === "ArrowRight" ? done + 1 : e.key === "Home" ? 0 : count); }}>
     {frame.executable ? <CodePreview executable={frame.executable} onError={setRunError} restore={{ id: restoreId, runtime, params, ...(running ? { run: { budget: step.budget, roots: frame.nodeIds, show: pictured } } : {}) }}
-      onCapture={image => { if (running && budget.current === null) setGhost(image); }}
-      onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) setRun(recorded); }} />
+      onCapture={image => { if (running && budget.current === null) setGhost(image); latestShot.current = image; take(image); }}
+      onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) setRun(recorded); wantShot.current = true; setTimeout(() => take(latestShot.current), 300); }} />
       : <div className="frame-render-status"><span className="loading-spinner" /><strong>Preparing the preview…</strong></div>}
     {stepwise && ghost && step.budget !== null && <img className="explore-ghost" src={ghost} alt="" aria-hidden="true" />}
     {/* Sketching the mark: where it goes (with a faint guide of the path or shape), and the strokes drawn. */}
@@ -171,15 +208,29 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
         }
         if (phase === "end") block.current = null;
       }} />}
+    {/* What the user shows at this moment: over the handles while cropping or annotating, under them (drawn only) while running. */}
+    {showing && here && <EditSheet className="explore-edit-sheet" edit={edit} onEdit={editHere} shot={shot || latestShot.current} editable={!edit.making} selected={selected} onSelect={setSelected} />}
+    {/* Jumping: the part under the pointer, and the step that draws it (pressing executes up to there). */}
+    {jumpOn && <svg ref={jumpSheet} className="explore-jump-sheet" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Press a part to jump execution to the step that draws it"
+      onPointerMove={e => setAim(jumpPoint(e))} onPointerLeave={() => setAim(null)}
+      onPointerDown={e => { if (e.button !== 0 || !run) return; e.preventDefault(); e.stopPropagation(); const at = jumpPoint(e), target = jumpTarget(stepsAt(run, at), done);
+        setAim(at); if (target) { setPlaying(false); goTo(target.done); } }}>
+      {aimed && <>
+        <rect className="explore-jump-box" x={aimed.event.x} y={aimed.event.y} width={Math.max(4, aimed.event.w ?? 0)} height={Math.max(4, aimed.event.h ?? 0)} vectorEffect="non-scaling-stroke" />
+        <text className="explore-jump-label" x={Math.min(880, Math.max(8, aim!.x + 14))} y={Math.max(18, aim!.y - 12)} textAnchor={aim!.x > 600 ? "end" : "start"}>{`단계 ${aimed.done}/${count} · ${stepLabel(aimed.done)}`}</text>
+      </>}
+    </svg>}
     <div className="explore-bar" onPointerDown={e => e.stopPropagation()}>
       <span className="section-kicker">{execution ? "EXECUTION · STEP BY STEP" : "KEY PARAMETERS"} · {frame.source.kind === "cause" ? "원인" : frame.source.title}</span>
-      {frame.status === "idle" && <span className="explore-status" role="status">아직 만들지 않았습니다. 누르면 AI가 이 과정을 단계로 나누고 단계마다 실행할 gesture를 만듭니다.<button onClick={onRetry}>생성</button></span>}
+      {frame.status === "idle" && <span className="explore-status" role="status">아직 만들지 않았습니다. {execution ? "누르면 AI가 이 과정을 단계로 나누고 단계마다 실행할 gesture를 만듭니다." : "누르면 AI가 핵심 파라미터 손잡이를 만듭니다."}{frame.source.kind === "recommendation" ? " (fork 프레임의 「마저 생성」은 둘 다 만듭니다.)" : ""}<button onClick={onRetry}>생성</button></span>}
       {frame.status === "queued" && <span className="explore-status" role="status"><span className="loading-spinner" />순서를 기다리는 중입니다. 앞의 탐색 프레임이 끝나면 AI가 만듭니다…</span>}
       {frame.status === "loading" && <span className="explore-status" role="status"><span className="loading-spinner" />{execution ? "AI가 내부 동작을 단계로 나누고 단계마다 실행할 gesture를 만들고 있습니다…" : "AI가 핵심 파라미터 손잡이를 만들고 있습니다…"}</span>}
       {frame.status === "error" && <span className="explore-status error" role="alert">{frame.error}<button onClick={onRetry}>다시 시도</button></span>}
       {runError && <span className="explore-status error" role="alert">코드 실행 오류{frame.result?.edits.length ? " (추천 미리보기 코드)" : ""}: {runError}<button onClick={onRetry}>다시 만들기</button></span>}
       {/* Handles AI made that cannot be placed at this moment (they read something this step does not have). */}
       {!runError && unplaced > 0 && <span className="explore-status error" role="alert">손잡이 {unplaced}개를 놓을 자리를 찾지 못했습니다. 손잡이 위치가 이 단계의 그림에 없는 값을 읽습니다.<button onClick={onRetry}>다시 만들기</button></span>}
+      {/* The parts of the brush this execution runs. */}
+      {result && execution && parts(result.of).length > 0 && <div className="explore-parts"><span>이 execution이 속한 곳</span>{partChips(result.of)}</div>}
       {result && <p>{result.summary}</p>}
       {result && execution && running && !stepwise && <span className="explore-status" role="status"><span className="loading-spinner" />코드 실행을 단계로 기록하고 있습니다…</span>}
       {/* Step by step: execute or take back one internal operation at a time; what was just done and what comes next. */}
@@ -191,10 +242,13 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
           <button aria-label="Execute one step" title="한 단계 실행 (→)" className="primary" disabled={done >= count} onClick={() => { setPlaying(false); goTo(done + 1); }}>▶ 한 단계</button>
           <button aria-label="Execute all steps" title="끝까지 (End)" disabled={done >= count} onClick={() => { setPlaying(false); goTo(count); }}>⏭</button>
           <button aria-label={playing ? "Pause stepping" : "Play step by step"} title={playing ? "Pause" : "한 단계씩 재생"} onClick={play}><Icon name={playing ? "pause" : "play"} size={12} /></button>
+          <button className={jumpOn ? "active" : ""} aria-pressed={jumpOn} title="그림에서 누른 부분을 그리는 단계로 실행을 옮깁니다 (Esc로 끄기)"
+            onClick={() => { const next = !jumpOn; setJumping(next); setAim(null); if (next) { setPlaying(false); if (edit.mode !== "run") onEdit?.({ mode: "run" }); } }}>◎ 누른 곳으로</button>
         </div>
+        {jumpOn && <span className="explore-explain">그림에서 누르면 그 부분을 그리는 단계까지 실행합니다 · 같은 곳을 다시 누르면 거기를 그리는 다음 단계로 · Esc로 끄기</span>}
         <div className="explore-step-now">
-          <span><em>방금 실행</em>{last && !last.none ? <><b>{last.label || `단계 ${done}`}</b>{stageOf(last.op) && <i>{stageOf(last.op)!.name}</i>}</> : "아직 아무것도 실행하지 않았습니다"}</span>
-          <span><em>다음</em>{next && !next.none ? <><b>{next.label || `단계 ${done + 1}`}</b>{stageOf(next.op) && <i>{stageOf(next.op)!.name}</i>}</> : "모든 단계를 실행했습니다"}</span>
+          <span><em>방금 실행</em>{last && !last.none ? <><b>{last.label || `단계 ${done}`}</b>{stageOf(last.op) && <i>{stageOf(last.op)!.name}</i>}{partChips(stageOf(last.op)?.of, true)}</> : "아직 아무것도 실행하지 않았습니다"}</span>
+          <span><em>다음</em>{next && !next.none ? <><b>{next.label || `단계 ${done + 1}`}</b>{stageOf(next.op) && <i>{stageOf(next.op)!.name}</i>}{partChips(stageOf(next.op)?.of, true)}</> : "모든 단계를 실행했습니다"}</span>
         </div>
         {/* The next step is done by drawing its mark here, then submitting it. */}
         {sketch && <div className={`explore-sketch-bar ${recognized?.ok ? "ok" : ""}`}>
@@ -204,7 +258,7 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
         </div>}
         {/* The kinds of operation the run is made of: how far each is, and what it does (the one now explained). */}
         {result.stages.length > 0 && <div className="explore-stages">{result.stages.map(stage => { const entry = counts.get(stage.op);
-          return <button key={stage.op} className={stage.op === currentOp ? "current" : ""} disabled={!entry} title={stage.explain}
+          return <button key={stage.op} className={stage.op === currentOp ? "current" : ""} disabled={!entry} title={[stage.explain, ...parts(stage.of).map(part => `${PART_KINDS[part.kind]} 「${part.name}」`)].filter(Boolean).join("\n")}
             onClick={() => { setPlaying(false); if (entry) goTo(entry.first); }}>{stage.name}<small>{entry ? `${entry.done}/${entry.count}` : "0"}</small></button>; })}</div>}
         {stageOf(currentOp)?.explain && <span className="explore-explain">{stageOf(currentOp)!.explain}</span>}
       </>}
@@ -216,6 +270,23 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
       {result && !execution && tried.length > 0 && <div className="explore-values">{tried.map(([key, value]) => <span key={key}>{isRuntimeKey(key) ? <>{key.startsWith(INPUT_KEY) ? "옮긴 입력 경로" : "바꾼 실행 상태"} <b>{typeof value === "number" ? formatScalar(value) : `${String(value).replace(",", ", ")}px`}</b></>
           : <>{labelOf(key)} <b>{typeof value === "number" ? formatScalar(value) : String(value)}</b></>}
         <button aria-label={`Reset ${labelOf(key)}`} title="Back to the start value" onClick={() => onValue(key, null)}><Icon name="close" size={9} /></button></span>)}</div>}
+      {/* Show how it should come out at this moment, and get a recommendation from it. */}
+      {showing && <div className="fork-slot-revise explore-recommend">
+        <span className="section-kicker">이 실행 순간에 보여주고 RECOMMENDATION 만들기 · 크롭해서 옮기기·키우기·돌리기, annotation</span>
+        {here ? <EditTools edit={edit} onEdit={editHere} editable={!edit.making} busy={edit.making} selected={selected} onSelect={setSelected} run="실행 손잡이" />
+          : <span className="explore-status">{where(edit.at!)}에서 표시한 내용이 있습니다 (그 순간에만 그려집니다).
+            <button onClick={() => { setPlaying(false); onProgress(edit.at!.progress); }}>그 순간으로</button>
+            <button disabled={edit.making} onClick={() => { setSelected(null); editHere({ marks: [], manipulations: [], image: "" }); }}>지우기</button></span>}
+        <textarea value={edit.note} rows={2} maxLength={2000} placeholder="이 순간에 어떻게 되면 좋을지 (선택) · 예: 겹치는 단계에서 이 크기로, 획 방향으로 돌려서" disabled={edit.making}
+          onChange={e => onEdit!({ note: e.target.value })}
+          onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && pictureEdited(edit)) onRecommend?.(edit.image || shot || latestShot.current, edit.at?.moment ?? moment); }} />
+        <div className="fork-slot-actions">
+          {edit.making ? <><span className="fork-slot-message waiting"><span className="loading-spinner" />AI가 보여준 대로 recommendation과 preview를 만들고 있습니다…</span><button onClick={onCancelRecommend}>취소</button></>
+            : <button className="primary" disabled={!pictureEdited(edit)} onClick={() => onRecommend?.(edit.image || shot || latestShot.current, edit.at?.moment ?? moment)}><Icon name="spark" size={13} />Recommendation 만들기</button>}
+        </div>
+        {edit.reply && <span className="fork-slot-message">{edit.reply}</span>}
+        {edit.error && <span className="fork-slot-message error" role="alert">{edit.error}</span>}
+      </div>}
     </div>
   </div>;
 }

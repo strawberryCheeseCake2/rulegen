@@ -59,6 +59,58 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 - **최소 예제 다시 분해하기 (2026-10-30)**: 최소 예제 프레임(transformation이 하나뿐인 example)에서 **Decompose**를 누르면 새 AI 요청 `split`(`prompts/split.md`)이 그 transformation을 코드가 실제로 돌리는 의미 있는 내부 알고리즘 2–5개로 나눈다. 코드에 상수로 박혀 있던 값도 그 알고리즘의 property(constraint)가 된다.
   - 부모 예제 프레임은 그대로 둔다. 나뉜 알고리즘마다 그것 하나만 담은 **자식 예제 프레임**이 생기고 부모 예제와 선으로 연결된다(선 이름은 자식이 가진 transformation 이름). 자식에서 그 알고리즘의 constraint만 조절한다. 자식도 sub brush가 되고, 자식에서 다시 Decompose할 수 있다.
   - 더 나눌 의미가 없으면(알고리즘 하나뿐이면) 프레임을 만들지 않고 "더 쪼갤 수 없습니다: <이유>" 토스트가 뜬다. 나뉜 조각이 2개 미만이어도 같다.
+- **semantic pen을 곧이곧대로 해석하지 않기 (2026-10-30)**: `prompts/contracts/pen-interpretation.md`를 compose-prompt와 compose 프롬프트에 함께 넣었다. 예전에는 펜 알고리즘을 같은 id·같은 값으로 복사해 원래 쓰이던 양에 그대로 적용하라고 했다.
+  - 이제 펜 알고리즘을 **패턴**(양을 어떻게 바꾸는지)과 **출처**(원래 어떤 양을 바꿨는지)로 나눠 본다. 출처는 힌트일 뿐이고, 스케치에서 그 자국을 따라 실제로 무엇이 바뀌는지 보고 패턴이 바꿀 양을 다시 정한다(re-target).
+  - 서로 다른 펜 자국이 겹치거나 같은 형태 위에 있으면 하나의 의도로 함께 읽는다. 보통 하나가 형태나 효과이고, 다른 하나가 그 효과의 정도·빠르기·밀도·퍼짐을 자국 순서를 따라 조절한다.
+  - 스케치가 보여 주지 않는 변화(그린 크기가 같은데 크기 바꾸기 등)에는 적용하지 않는다.
+  - 알고리즘의 식과 파라미터 의미는 지키고, 적용 대상·방향·범위·값을 스케치에 맞춘다. 그대로 쓰면 같은 id, 범위나 단위가 달라지면 새 id의 수정본을 쓴다.
+  - transformation 펜도 시작점으로만 쓴다. 어느 노드에 넣을지, 어떤 property가 중요한지와 그 값은 스케치에 맞추고, 스케치가 보여 주지 않는 property는 뺀다.
+  - instruction이나 사용자가 적은 펜 의미가 대상을 분명히 말하면 그것을 따른다. 모호하면 모든 펜이 하나의 일관된 변화에 기여하는 해석을 고르고, 그 해석을 말로 적는다.
+  - Compose prompt 초안에는 펜 이름이나 출처가 아니라, 해석한 결과(어느 형태의 어떤 양이 어떻게 바뀌는지)를 적는다.
+- **Recommendation 프레임: 멈췄다가 마저 생성, preview에서 고치기 (2026-10-30)**
+  - Inspection이 끝나면 recommendation마다 프레임 그룹(fork 자리 · Execution · 핵심 파라미터)은 바로 만들지만 **내용은 만들지 않는다**. Execution·핵심 파라미터 프레임은 "아직 만들지 않았습니다" 상태로 멈춰 있다. fork 프레임 아래 **▶ 마저 생성**을 누르면 둘을 AI로 만들고, 각 프레임의 **생성** 버튼으로 하나씩 만들 수도 있다. 원인(cause) 프레임은 예전처럼 inspection과 함께 만든다.
+    - 마저 생성 전에도 inspection preview가 있으면 그 코드로 Accept할 수 있다. 없으면 "「마저 생성」으로 … 만들면 Accept할 수 있습니다"라고 알린다.
+  - **바뀌는 곳 표시**: recommendation preview에 AI가 `marks`(1–3개)를 함께 만든다. 바뀐 부분 위에 원·사각형·선과 짧은 이름("윤곽 하나로", "새로 생김")을 그린다. overlay와 같은 수식(`p`, `s`, `item`, `each`)으로, preview 코드가 그린 store를 읽는다. 패널의 작은 preview와 fork 프레임 모두에 보인다. preview 규칙은 `prompts/contracts/recommendation-preview.md`로 옮겨 inspect-preview와 revise에 함께 넣었다.
+  - **preview 손잡이**: AI가 recommendation이 기대는 양(얼마나 키울지, 어느 거리부터 겹친 것으로 볼지 등) 0–3개에 overlay 손잡이(`preview.handles`)를 단다. 그 양을 고른 것이 concern에 대한 AI의 이해이므로, 사용자가 손으로 고칠 수 있게 한 것이다. 끌면 fork 프레임의 preview가 그 값으로 다시 그려진다. 키는 brush 값이나 preview가 가져온 값만 쓴다(실행 상태 키는 서버에서 뺀다). 바꾼 값은 메뉴에 목록으로 보이고 ×로 되돌린다. Accept하면 그 값으로 fork를 만든다. preview 값은 시작값이 되고, brush 값은 fork에 적용한다.
+  - fork 프레임 안에 있던 메뉴(Accept 등)를 **프레임 밑**으로 내렸다.
+  - **Preview에서 recommendation 고치기**: 메뉴 아래 "PREVIEW에서 고치기"에서 다음을 한다.
+    - **크롭 · 이동 · 크기 · 회전 (기본 도구)**: 따로 켜지 않아도 처음부터 쓸 수 있다. 바꿀 부분을 **자유롭게 둘러 그리면**(freeform 크롭) 그 안의 그림이 잘려 나온다.
+      - 크롭을 끌면 옮겨지고, 모서리 □로 크기를, 위의 ○로 회전을 바꾼다(중심 기준). Esc로 선택을 푼다.
+      - 잘린 그림은 새 자리에 실제로 옮겨져 보이고, 원래 자리에는 점선 외곽선이 남는다. 크롭은 외곽선 안을 눌러야 잡힌다.
+      - 앱이 물체를 정하지 않는다. 예전의 store 항목·그림 조각·사각형 영역으로 고르던 방식은 없앴다. 무엇을 크롭했는지는 AI가 그림에서 읽는다.
+      - AI에는 크롭 외곽선(점 목록)·상자·이동·배율·회전과, 잘린 그림을 옮겨 그린 이미지를 보낸다.
+      - preview 손잡이는 이 조작 층 위에 있어 그대로 끌 수 있다.
+    - **Annotation**: 켜면 preview 위에 그린다. 다시 누르면 선택 도구로 돌아간다.
+    - preview 손잡이로 값을 바꾸고, 메모를 적는다.
+    - **Revise recommendation**을 누르면 새 AI 요청 `revise-recommendation`(`prompts/revise-recommendation.md`)이 같은 recommendation을 고친다(제목·설명·종류·preview 코드·marks·handles). 이때 받는 것: preview 그림(조작 결과와 annotation을 그려 넣은 것), 조작 목록(원래 상자·이동·배율·회전), 바꾼 값(전→후), 메모, concern. 조작은 그 물체 하나가 아니라 같은 역할의 물체 모두에 대한 규칙의 시연으로 읽는다.
+    - 고친 recommendation은 targeted 도구의 그 항목을 바꾸고(shared id로 저장), fork 자리의 제목·그룹 이름이 바뀐다. Execution·핵심 파라미터 프레임은 옛 recommendation을 읽고 있었으므로 다시 "만들지 않음" 상태가 된다.
+    - preview 코드가 적용되지 않거나 대상이 brush 밖이면 아무것도 바꾸지 않고 오류를 보인다. 요청 중에는 취소할 수 있다.
+- **Execution이 속한 곳 표시 (2026-10-31)**: Execution 프레임을 만들 때 AI가 그 execution 전체(`of`)와 연산 종류(`stages[].of`)마다 brush의 어느 semantic transformation · state · transition에 속하는지 함께 적는다(`prompts/explore.md`). 서버는 brush에 없는 것을 빼고(미리보기가 가져오는 state·transition은 둠), 전체 목록에 연산들 것을 합쳐 중복을 없앤다. 프레임 아래 메뉴에 "이 execution이 속한 곳: Transformation 「…」 · State 「…」"가, 방금 실행/다음 단계 줄에는 그 연산이 속한 곳이 작은 칩으로 보인다. 연산 버튼의 툴팁에도 나온다.
+- **속한 곳 칩을 누르면 패널에서 보기 (2026-10-31)**: Execution 프레임의 "이 execution이 속한 곳"·단계 줄의 칩은 버튼이다. 누르면 그 프레임과 targeted 도구가 현재 것이 되고, 그 노드가 선택된다. Transformation이면 오른쪽 properties 패널에서 그 transformation 카드가 강조되고 그 자리로 스크롤된다. State·Transition이면 아래 state machine 패널에서 강조(첨부)되고, 그래프가 그 state(transition이면 양 끝 state)가 보이게 이동한다.
+- **확대해도 선명하게 (2026-10-31)**: 보드(`.world-layer`)에 늘 걸려 있던 `will-change: transform` 때문에 브라우저가 보드를 한 장의 그림으로 굳혀 확대할 때 늘렸다. 그래서 글자·버튼·선이 흐려졌다. 이제 보드를 끄는 동안에만 걸어서, 멈추면 그 배율로 다시 선명하게 그린다. state machine 그래프도 같은 이유로 뺐다. p5 결과 그림 자체는 900×600 캔버스(화면 배율만큼)라 크게 확대하면 여전히 부드러워진다.
+- **탐색 프레임·fork 자리·프레임 그룹 저장 (2026-10-31)**: Execution · 핵심 파라미터 프레임과 recommendation의 fork 자리를 프로젝트와 함께 저장한다(`exploreFrames`, `forkSlots`; 위치와 프레임 그룹도). 예전에는 저장하지 않아 새로고침하면 그룹이 fork만 남기고 사라졌다.
+  - 탐색 프레임은 AI가 만든 결과·실행 위치·끌어 본 값·요청 문맥·잡고 있던 brush 자국을 저장한다. 기록된 단계들은 단계를 오가는 프레임일 때만 저장한다.
+  - 돌릴 프로그램은 저장하지 않는다. 불러온 뒤 원래 프레임의 결과가 준비되면 다시 만든다(추천 미리보기 코드도 넣어서).
+  - 만드는 중이던 프레임은 "아직 만들지 않음"으로 돌아온다. 크롭·annotation 같은 표시 중인 것은 저장하지 않는다.
+  - 원래 프레임이 없어진 것은 버린다. 읽을 수 없는 항목 하나는 빼고 나머지 프로젝트는 불러온다.
+  - fork 자리는 제목·설명·어느 recommendation인지만 저장한다(바뀐 버전은 다시 읽는다).
+  - 저장 공간(localStorage)이 차면 예전처럼 "Storage full · export JSON"이 뜬다.
+- **Execution: 누른 곳으로 이동 (2026-10-31)**: 단계별 실행 줄에 **◎ 누른 곳으로** 모드를 더했다. 켜고 그림의 한 부분을 누르면 그 부분을 그리는 단계까지 실행한다(그 단계까지 그려진 모습). 같은 곳을 다시 누르면 거기를 그리는 다음 단계로 가고, 마지막 다음에는 처음으로 돌아간다(예: 원래 하트 → 합친 하트). 포인터 아래에는 갈 곳의 상자와 "단계 n/전체 · 단계 이름 · 연산"이 보인다. 단계는 실행 기록의 그리기 호출과 체크포인트 상자로 찾는다. 누른 점을 담는 것 중 가장 작은 것을 쓰고, 없으면 30px 안의 가장 가까운 것을 쓴다. 캔버스를 거의 덮는 배경은 뺀다(`stepsAt`, `jumpTarget`). 크롭·Annotation을 고르면 꺼지고, Esc로도 끈다.
+- **기록된 단계가 없는 프레임의 targeted inspection (2026-10-31)**: inspection 단계 기록(`panel.inspections`)과 fork의 시작 상태(`seed`)는 저장되지 않아서, 새로고침하면 사라진다. 단계가 없으면 원인 Execution 프레임과 recommendation 프레임 그룹을 만들 수 없는데, 그 이유를 알리는 토스트가 inspection 완료 토스트에 덮여 아무 일도 없는 것처럼 보였다. 이제 targeted inspection을 시작할 때 그 brush의 단계가 없으면, 실행 중인 결과에 지금 모습을 단계로 보고하게 하고(`CodePreviewHandle.snapshot`) 그 단계로 inspect한다. 그래도 단계가 없으면 완료 토스트에 왜 프레임을 못 만들었는지와 어떻게 하면 되는지를 붙인다.
+- **canvas에 직접 그리는 brush도 Execution 단계별로 (2026-10-31)**: 예전에는 실행 단계 제한이 p5 그리기 호출(`p.ellipse`, `p.line` 등)만 잘랐다. 그래서 `p.drawingContext`(ctx)에 `beginPath … stroke()`로 직접 그리는 brush(예: 손그림 하트)는 몇 단계든 다 그려져 그림이 단계마다 바뀌지 않았다. 이제 실행을 기록할 때 그 context의 그리는 호출(`fill`, `stroke`, `fillRect`, `strokeRect`, `fillText`, `strokeText`, `drawImage`)도 실행의 사건으로 세고, 그 단계 뒤의 것은 그리지 않는다. 사건의 위치는 그 전에 만든 경로(`moveTo`, `lineTo`, `bezierCurveTo`, `arc` 등)의 상자다. `p.background`·`p.clear`는 단계로 세지 않는다. 생성 코드 샌드박스가 `prototype`을 막아서 context 객체 자체의 메서드를 실행 시작 때 한 번 감싼다.
+- **Execution 프레임에서 보여주고 recommendation 만들기 (2026-10-31)**
+  - Execution 조절해보기 프레임 아래 메뉴에 "이 실행 순간에 보여주고 RECOMMENDATION 만들기"가 생겼다(원인 프레임과 recommendation 그룹의 Execution 프레임 모두).
+  - 도구는 셋이다.
+    - **실행 손잡이** (처음 상태): 예전처럼 손잡이·단계 버튼으로 실행을 앞뒤로 움직인다. 표시한 것은 그림 위에 보이기만 하고 포인터를 막지 않는다.
+    - **크롭 · 이동 · 크기 · 회전**: fork preview와 같은 freeform 크롭. 둘러 그려 자르고, 끌어서 옮기고, □로 크기, ○로 회전.
+    - **Annotation**: 그림 위에 그린다.
+  - 표시는 **그 실행 순간**(단계 n/전체, 또는 진행 %)에 묶인다. 다른 순간으로 가면 그려지지 않고, 메뉴에 "단계 3/8에서 표시한 내용이 있습니다 · 그 순간으로 · 지우기"가 뜬다. 크롭과 annotation은 처음 표시할 때의 그림에서 잘라 낸다.
+  - **Recommendation 만들기**를 누르면 새 AI 요청 `execution-recommendation`(`prompts/execution-recommendation.md`)이 recommendation 하나를 새로 만든다(종류·대상·제목·설명·preview 코드·marks·handles).
+    - AI가 받는 것: 그 순간의 그림(크롭 결과와 annotation을 그려 넣은 것), 크롭 목록, 메모, concern, inspection 요약, 그 순간(지금 단계·방금 실행한 단계·다음 단계·연산 종류와 설명), 프레임이 보여주는 recommendation(있으면, 적용 여부와 함께), 이미 있는 recommendation 제목.
+    - 표시한 실행 순간의 연산이 바뀌어야 할 곳으로 읽게 했다. 프레임이 아직 적용하지 않은 recommendation을 보여주고 있으면 그것을 보여준 대로 고친 새 버전을 만든다.
+  - 만든 recommendation은 targeted 도구 목록 끝에 붙고(shared id로 저장, 도구당 최대 12개, `MAX_LISTED_RECOMMENDATIONS`), 바로 옆에 자기 프레임 그룹(fork 자리 · Execution · 핵심 파라미터, 내용은 「마저 생성」으로)이 생기며 fork 자리로 이동한다. Execution 프레임의 표시는 지워지고 AI의 한 줄 답이 남는다.
+  - preview 코드가 적용되지 않거나 대상이 brush 밖이면 아무것도 더하지 않고 오류를 보인다. 요청 중에는 취소할 수 있다. Execution 프레임을 다시 만들면 표시도 지워진다.
+  - 크롭·annotation 층과 도구 버튼은 `app/components/picture-edit.tsx`로 빼서 fork 자리와 Execution 프레임이 같이 쓴다. revise와 새 요청의 결과 검증도 서버에서 한 함수(`settledRecommendation`)로 같이 쓴다. 이때 add-transformation이 노드의 transformation 한도를 넘으면 거부하는 검사가 revise에도 들어갔다.
 - **배경은 Decompose하지 않음 (2026-10-30)**: 캔버스를 다 덮는 정지 배경 object(예: Quiet background의 "Paper fill")는 brush가 아니므로 Decompose 대상에서 빠진다. 예전에는 그 예제가 들어갈 brush group이 없어서 **독립 brush**("Paper fill · example")로 생겼고, Decompose할 때마다 다시 생겼다. 이제 sub brush는 그 노드가 속한 brush group 안에만 만들고, 없으면 만들지 않는다(그런 예제에는 Sub brush 버튼도 없음). 이미 생긴 그런 brush(부모 없음·fork 아님·예제 프레임이 master·이름이 " · example")는 열 때 자동으로 지우고 토스트로 알린다.
 - **스케치 프레임 최대 60개 (2026-10-30)**: 24개에서 60개로 늘렸다(`MAX_SKETCH_FRAMES`, 저장 형식·새 프레임·fork·예제 생성 모두). 탐색 프레임(16개)과 proxy frame(24개) 한도는 따로다.
 - **예제 프레임 헤더 버튼 (2026-10-30)**
@@ -711,5 +763,6 @@ Brush 패널 위쪽 brush 목록은 최대 150px(창 높이의 22%까지)이고,
 - 모듈 코드 계약(루트마다 모듈 하나, `m` 사용 규칙, p 속성 쓰기·캔버스 호출·전역 변수 금지, 다른 모듈 노드 접근 금지), 모듈 분리 저장과 인스턴스 실행(다른 id의 복사본이 같은 모듈로 그리고 자기 머신으로 입력을 받음), AI 없이 찍기(빈 프레임, 같은 모듈 재사용, 같은 이름 다른 모듈 이름 변경, 이전 형식 거부, brush 사용 시 AI 요청 0회), concern별 targeted 도구 id와 툴바 목록을 테스트했다. 조립한 프로그램을 실제 p5.js(headless Chrome)에서 실행해 두 인스턴스가 각자 박스에 그려지고 합성 마우스 입력이 각 인스턴스의 상태 머신에 전달되는 것을 확인했다.
 - 새 transformation 추가 recommendation: 저장된 `addedId`(이전 도구도 그대로 읽힘, 프레임 간 id 변환 후 유지), 적용 후 "Transformation · 추가됨"과 추가된 transformation 칩, Undo로 없어지면 다시 "새 Transformation", overlay 갱신 요청 문맥(`appliedRecommendation`, `previousSummary`, `previousOverlays`)을 테스트했다. headless Chrome에서 AI 응답(transform·code·inspect)을 가짜로 바꿔, Add with AI → 새 transformation 추가 → 코드 실행 → overlay 재요청 → recommendation이 추가된 transformation으로 바뀌고 새 overlay가 그려지는 흐름을 확인했다.
 - 실행 상태 손잡이(키 해석, stroke 휘기·끝 고정·rev, store 숫자·점, grip 위치·`${…}` 키, 드래그 오프셋, 검증, shared id 변환, 탐색 프레임 표시)와 machine 변경(정리 규칙, scene·프로그램 반영, emit으로 새 상태 진입, AI 없는 fork) 테스트를 더했다. 전체 215개 통과. 실제 AI로는 아직 돌려 보지 않았다.
+- Recommendation preview revise(요청 문맥: 조작·바꾼 값·concern·잡고 있는 단계만, preview 검증, 손잡이 키 거르기, 실패 시 거부), preview marks·handles의 shared id 변환, preview 물체 찾기와 이동·크기·회전 계산, freeform 크롭(외곽선 솎기·너무 작은 크롭 거부·외곽선 안에서만 잡힘)과 이동·크기·회전, fork 자리 메뉴(마저 생성·기본 크롭 도구·Annotation·Revise) 테스트를 더했다. Execution 프레임에서 recommendation 만들기(요청 문맥: 실행 순간·프레임의 recommendation·기존 목록, preview 검증, 아무것도 표시하지 않으면 거부), Execution 프레임의 도구·순간에 묶인 표시·만드는 중 표시 테스트, canvas에 직접 그리는 brush가 단계별로 잘리는지, 단계 없는 프레임을 inspect할 때 지금 모습을 단계로 쓰는지, 누른 곳의 단계 찾기, execution이 속한 곳(없는 것 빼기·화면 표시), 탐색 프레임·fork 자리·그룹 저장과 불러오기 테스트도 더했다. 전체 231개 통과. 실제 AI와 브라우저로는 아직 돌려 보지 않았다.
 - 최소 예제 다시 분해(`split` 요청 문맥·id 정리·나눌 수 없을 때, 부모 유지와 자식 프레임·sub brush), transformation 펜(값·algorithm 포함, Compose 문맥), 숨긴 예제 저장 테스트를 더했다. 전체 219개 통과.
 - 타입 검사, 전체 테스트 107개, 프로덕션 빌드가 통과했다. 실제 AI가 새 모듈 계약대로 코드를 쓰는지, 그리고 앱에서 드래그 brush를 끝까지 써 보는 것은 확인하지 못했다.

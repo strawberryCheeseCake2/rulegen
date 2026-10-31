@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { algorithmCallSchema, algorithmSchema, idSchema, propertySchema, sceneBindingSchema, transformationSchema } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
-import { markStyleSchema, MAX_MARKS, overlaySchema } from "./inspection";
+import { markStyleSchema, MAX_MARKS, overlaySchema, previewManipulationSchema, recommendationPreviewSchema, recommendationSchema } from "./inspection";
 export const pointSchema = z.object({ x: z.number(), y: z.number() });
 export type Point = z.infer<typeof pointSchema>;
 export const MAX_CODE_LENGTH = 120000;
@@ -31,7 +31,7 @@ export const machineRefineResultSchema = z.object({ scene: sceneSchema, composeP
 /** split, as the app takes it: the parts of a transformation (each a transformation of its own) and the algorithms they use. */
 export const splitResultSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms: z.array(algorithmSchema).max(64), parts: z.array(transformationSchema).max(5) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
-export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern", "explore", "split"] as const;
+export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern", "explore", "split", "revise-recommendation", "execution-recommendation"] as const;
 const inspectScalar = z.union([z.number(), z.string().max(200), z.boolean()]);
 /** Targeted inspection input: the brush's nodes, its constraint rows and the recorded steps. */
 export const inspectionInputSchema = z.object({
@@ -54,6 +54,25 @@ export const inspectionInputSchema = z.object({
     targetId: z.string().max(80).default(""), transformationId: z.string().max(80).default(""),
     changes: z.array(z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: inspectScalar })).max(12).default([]),
     summary: z.string().max(1500), overlays: z.array(overlaySchema).max(12) }).nullable().default(null),
+  /**
+   * Revising one recommendation at its preview: the recommendation as it is (with its preview), the inspection's summary,
+   * and what the user did on the preview: `marks` are then annotation strokes on it, `manipulations` objects moved, scaled or rotated.
+   */
+  revise: z.object({ recommendation: recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() }), concern: z.string().max(2000).default(""), summary: z.string().max(1500),
+    manipulations: z.array(previewManipulationSchema).max(12).default([]),
+    /** Values the user changed with the preview's handles: from what to what. */
+    adjusted: z.array(z.object({ key: z.string().max(1200), label: z.string().max(100), from: inspectScalar, to: inspectScalar })).max(12).default([]) }).nullable().default(null),
+  /**
+   * A new recommendation from what the user did on an Execution frame (`marks` are then annotation strokes on its
+   * picture, `manipulations` parts of it cropped and moved, scaled or rotated): the moment of execution it shows, the
+   * recommendation the frame previews (if any) and the recommendations already listed.
+   */
+  fromExecution: z.object({ concern: z.string().max(2000).default(""), summary: z.string().max(1500),
+    execution: z.object({ summary: z.string().max(1200), axis: z.enum(["run", "input", "steps"]), done: z.number().int().nullable(), count: z.number().int().nullable(), progress: z.number(),
+      last: z.string().max(200).default(""), next: z.string().max(200).default(""), stage: z.object({ name: z.string().max(40), explain: z.string().max(300) }).nullable().default(null) }),
+    base: recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() }).nullable().default(null), applied: z.boolean().default(false),
+    listed: z.array(z.string().max(160)).max(12).default([]),
+    manipulations: z.array(previewManipulationSchema).max(12).default([]) }).nullable().default(null),
 });
 export type InspectionInput = z.infer<typeof inspectionInputSchema>;
 /**

@@ -432,13 +432,78 @@
           },
           "many": {
             "type": "boolean"
+          },
+          "of": {
+            "default": [],
+            "maxItems": 3,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "transformation",
+                    "state",
+                    "transition"
+                  ]
+                },
+                "nodeId": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "id": {
+                  "type": "string",
+                  "maxLength": 80
+                }
+              },
+              "required": [
+                "kind",
+                "nodeId",
+                "id"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
           "op",
           "name",
           "explain",
-          "many"
+          "many",
+          "of"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "of": {
+      "default": [],
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "transformation",
+              "state",
+              "transition"
+            ]
+          },
+          "nodeId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "id": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "kind",
+          "nodeId",
+          "id"
         ],
         "additionalProperties": false
       }
@@ -549,6 +614,7 @@
     "machine",
     "overlays",
     "stages",
+    "of",
     "sketches"
   ],
   "additionalProperties": false

@@ -30,6 +30,8 @@ type Props = {
     motion?: { moved: number; reach: number }) => void;
   /** One moment only (an exploration frame): no step badge, step numbers or path through the steps. */
   plain?: boolean;
+  /** Overlays react to clicks (focus); default: when `clickable`. Off: only the handles' grips take the pointer. */
+  focusable?: boolean;
 };
 
 /**
@@ -55,7 +57,7 @@ const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props
   : kind === "ellipse" ? <ellipse cx={x + w / 2} cy={y + h / 2} rx={Math.abs(w / 2)} ry={Math.abs(h / 2)} {...props} />
   : kind === "line" ? <line x1={x} y1={y} x2={x + w} y2={y + h} {...props} /> : null;
 
-export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain }: Props) {
+export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain, focusable = clickable }: Props) {
   // The step being looked at (the latest unless another is picked): overlays are recomputed from its values and stores; the other steps show as ghosts.
   const index = heldIndex(state) ?? -1, step = state.steps[index];
   // Suggested parameters are read at the value the code uses wherever a step does not record them (not accepted yet, or recorded before).
@@ -118,8 +120,8 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
             {go && shapeOf(overlay.kind, x, y, w, h, { className: `inspection-ghost-hit ${Math.max(Math.abs(w), Math.abs(h)) <= 80 ? "solid" : ""}`, vectorEffect: "non-scaling-stroke" as const })}</g>;
         }
         const shape = shapeOf(overlay.kind, x, y, w, h, props);
-        return shape && <g key={key} className={`inspection-item ${clickable ? "clickable" : ""}`} role={clickable ? "button" : undefined} aria-label={clickable ? `Highlight ${overlay.link.kind} ${overlay.link.id}` : undefined}
-          onPointerDown={e => { if (!clickable) return; e.stopPropagation(); onFocus(focused ? null : overlay.link); }}>{shape}</g>;
+        return shape && <g key={key} className={`inspection-item ${focusable ? "clickable" : ""}`} role={focusable ? "button" : undefined} aria-label={focusable ? `Highlight ${overlay.link.kind} ${overlay.link.id}` : undefined}
+          onPointerDown={e => { if (!focusable) return; e.stopPropagation(); onFocus(focused ? null : overlay.link); }}>{shape}</g>;
       })}
       {/* Order: a faint path through the steps (arrows point forward) and each step's number. */}
       <defs>{result?.overlays.map(overlay => <marker key={overlay.id} id={`${uid}-${overlay.id}`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
@@ -141,7 +143,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
       {labels.map(label => {
         const item = byKey.get(label.key)!, overlay = item.overlay, focused = same(state.focus, overlay.link);
         const tx = Math.min(Math.max(label.x, Math.min(item.x, item.x + item.w)), Math.max(item.x, item.x + item.w));
-        return <g key={`label:${label.key}`} className={`inspection-item ${clickable ? "clickable" : ""}`} onPointerDown={e => { if (!clickable) return; e.stopPropagation(); onFocus(focused ? null : overlay.link); }}>
+        return <g key={`label:${label.key}`} className={`inspection-item ${focusable ? "clickable" : ""}`} onPointerDown={e => { if (!focusable) return; e.stopPropagation(); onFocus(focused ? null : overlay.link); }}>
           {label.leader && <line className="inspection-leader" x1={tx} y1={label.y > item.y ? label.y - label.height * .8 : label.y + label.height * .2} x2={tx} y2={label.y > item.y ? Math.max(item.y, item.y + item.h) : Math.min(item.y, item.y + item.h)} stroke={overlay.color} vectorEffect="non-scaling-stroke" />}
           <text x={label.x} y={label.y} fontSize={text} fill={overlay.color} className="inspection-label">{label.text}</text>
         </g>;

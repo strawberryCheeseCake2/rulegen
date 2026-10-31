@@ -23,10 +23,10 @@ import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
 import { ExploreFrameView } from "../components/explore-frame";
-import { EXEC_KEY, isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, sameExplore, type ExploreFrame, type ExploreMode, type ExploreResult, type ExploreSource } from "../lib/explore";
+import { emptyExploreEdit, EXEC_KEY, isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, restoredExplore, sameExplore, savedExplore, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame, type ExploreMode, type ExploreResult, type ExploreSource } from "../lib/explore";
 import { exploreExecutable, requestExplore } from "../studio/explore-actions";
 import { brushesFor, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
-import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_LISTED_RECOMMENDATIONS, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { descendantIds, subScene } from "../lib/scene/graph";
 import { findTransformation } from "../lib/scene/transformations";
@@ -36,13 +36,13 @@ import { sceneValues } from "../lib/scene/values";
 import { prepareBrushFor, startBrushGesture } from "../studio/brush-actions";
 import { programModules } from "../lib/scene/machines";
 import { parameterStatus, suggestionKey, type ParameterSuggestion } from "../lib/hidden-parameters";
-import { acceptParameter, applyChanges, applyRecording, applyRecommendation, appliedCurrent, concernMarksKey, inspectConcern, suggestConcerns, inspectionFor, recommendationKey, stepApplied, targetedName, withInspection } from "../studio/inspection-actions";
+import { acceptParameter, applyChanges, applyRecording, applyRecommendation, appliedCurrent, concernMarksKey, inspectConcern, recommendFromExecution, reviseRecommendation, suggestConcerns, inspectionFor, recommendationKey, stepApplied, targetedName, withInspection } from "../studio/inspection-actions";
 import type { TraceStep } from "../components/code-preview";
 import { besideFramePosition, groupRow, liveGroups, MAX_SKETCH_FRAMES, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { previewFork } from "../lib/preview-fork";
 import { editRuntime } from "../lib/runtime-edits";
 import type { MachineChange } from "../lib/machine-change";
-import { ForkSlot, isSlotFrame, type ForkSlotFrame, type ForkSlotStatus } from "../components/fork-slot";
+import { emptySlotEdit, ForkSlot, isSlotFrame, type ForkSlotFrame, type ForkSlotStatus, type SlotEdit } from "../components/fork-slot";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, GeneratedCode, SemanticPen, Stroke, Viewport } from "../lib/schema";
@@ -212,7 +212,10 @@ export default function Home() {
   // ── Server requests ────────────────────────────────────────────────────────
   function projectData() {
     return { version: 2 as const, name: artwork.name, artwork: artworkRef.current, sketchFrames: sketchFramesRef.current, activeSketchId: activeSketchRef.current,
-      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, brushes: brushesRef.current, proxyFrames: proxyFramesRef.current, workspace };
+      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, brushes: brushesRef.current, proxyFrames: proxyFramesRef.current, workspace,
+      // Exploration frames and fork slots, with their frame groups (in the workspace).
+      exploreFrames: exploreRef.current.map(savedExplore),
+      forkSlots: forkSlotsRef.current.map(({ id, targetFrameId, brushId, toolId, index, key, title, detail }) => ({ id, targetFrameId, brushId, toolId, index, key, title, detail })) };
   }
   async function request(intent: string, body: object, owner = activeSketch) {
     updatePanel(owner, { error: "" });
@@ -340,7 +343,7 @@ export default function Home() {
     setSaveState("Saving…");
     const timer = setTimeout(() => { try { localStorage.setItem(storageKey, JSON.stringify(projectData())); setSaveState("Saved locally"); } catch { setSaveState("Storage full · export JSON"); } }, 450);
     return () => clearTimeout(timer);
-  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, brushes, workspace, restoreReady]);
+  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, brushes, workspace, exploreFrames, forkSlots, restoreReady]);
   useEffect(() => { try { const saved = Number(localStorage.getItem("rulegen-inspector-width")); if (saved >= 280 && saved <= 900) setInspectorWidth(saved); } catch { /* storage unavailable */ } }, []);
   useEffect(() => { try { if (inspectorWidth) localStorage.setItem("rulegen-inspector-width", String(inspectorWidth)); else localStorage.removeItem("rulegen-inspector-width"); } catch { /* storage unavailable */ } }, [inspectorWidth]);
   // Every error a frame shows is written to error-logs/ (runtime errors with the failing program).
@@ -412,7 +415,10 @@ export default function Home() {
     mutatePanels(() => Object.fromEntries(Object.entries(data.sketchPanels).map(([id, saved]) => [id, createSketchPanel(saved)])));
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
     setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
-    setBrushes(data.brushes); setOpenGroup(null); setProxyFrames(data.proxyFrames); proxyFramesRef.current = data.proxyFrames; setHandleErrors({}); closeExploreFrames(); closeForkSlots();
+    setBrushes(data.brushes); setOpenGroup(null); setProxyFrames(data.proxyFrames); proxyFramesRef.current = data.proxyFrames; setHandleErrors({});
+    // The project's own exploration frames and fork slots (their spots and groups are in its workspace); what the old ones were asking stops.
+    stopExploring();
+    setExploreFrames(data.exploreFrames.map(restoredExplore)); setForkSlots(data.forkSlots.map(slot => ({ ...slot, id: slot.id as ForkSlotFrame["id"], making: false, error: "", edit: emptySlotEdit() })));
     setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
   function newProject() {
@@ -618,7 +624,11 @@ export default function Home() {
    * cause found yet), then each recommendation's Execution and key parameter frames together.
    */
   async function runTargeted(brush: Brush) {
-    const frame = activeSketch, state = inspectionFor(panelsRef.current[frame] || panel, brush.id);
+    const frame = activeSketch;
+    // No step recorded (steps are not saved: e.g. after a reload): the moment the frame shows now is the step looked at,
+    // so the cause's Execution frame and the recommendations' frames can be made from it.
+    const stepped = await recordNow(frame, brush.id);
+    const state = inspectionFor(panelsRef.current[frame] || panel, brush.id);
     const tool = activeTargeted, draft = tool ? { concern: tool.concern, marks: tool.marks, markStyles: tool.markStyles } : { concern: state.concern, marks: state.marks, markStyles: state.markStyles };
     // A new tool's id is known before it exists, so its cause frame can start with the inspection.
     const toolId = tool?.id ?? crypto.randomUUID(), empty: TargetedTool["result"] = { summary: "", overlays: [], valueFixes: [], recommendations: [], parameters: [], records: null };
@@ -641,14 +651,29 @@ export default function Home() {
       updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], markStyles: [], concern: "", focus: null }));
       chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
     }
-    setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}) · targeted inspection 도구를 ${brush.name} 그룹에 ${tool ? "다시 만들었습니다" : "만들었습니다"}.`);
+    const unstepped = stepped ? "" : " 기록된 단계가 없어 원인 Execution 프레임과 recommendation 프레임 그룹은 만들지 못했습니다. Brush 도구로 이 프레임의 brush를 한 번 움직인 뒤 다시 inspect해주세요.";
+    setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}) · targeted inspection 도구를 ${brush.name} 그룹에 ${tool ? "다시 만들었습니다" : "만들었습니다"}.${unstepped}`);
+    if (!stepped) return;
     // The cause frame now knows the cause found (asked again with it on retry).
     const owner = panelsRef.current[frame];
     if (cause && owner) patchExplore(cause.id, current => ({ request: { ...current.request, inspection: toolIn(frame, owner, brush, made).result } }));
     // Each recommendation: a frame group with its fork's slot, Execution and key parameter frames side by side (no lines to this frame).
+    // Only placed: what is in them is made when "마저 생성" is pressed (or a frame's own Generate).
     const pairs = made.result.recommendations.map((listed, i) => placeRecommendationGroup(brush, made, frame, i, listed));
-    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개마다 fork·Execution·핵심 파라미터 프레임 그룹을 만들고, 둘씩 함께 채우고 있습니다…`);
-    for (const pair of pairs) await fillExploreFrames(pair);
+    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개마다 fork·Execution·핵심 파라미터 프레임 그룹을 만들었습니다. 각 fork 프레임 아래의 「마저 생성」으로 내용을 만듭니다.`);
+  }
+  /**
+   * Make sure the brush has a step recorded in `frame`: when it has none, the running result reports the moment it shows
+   * now as one (it is recorded for the brush being inspected). Whether there is a step to look at.
+   */
+  async function recordNow(frame: string, brushId: string) {
+    const stepped = () => { const owner = panelsRef.current[frame]; return Boolean(owner) && heldIndex(inspectionFor(owner, brushId)) !== null; };
+    if (stepped()) return true;
+    const preview = resultPreviews.current.get(frame);
+    if (!preview?.isReady()) return false;
+    preview.snapshot();
+    for (let i = 0; i < 30 && !stepped(); i++) await new Promise(resolve => setTimeout(resolve, 100));
+    return stepped();
   }
   /** Change one targeted tool of a brush as it is now. */
   function patchTargeted(brushId: string, toolId: string, patch: (tool: TargetedTool) => TargetedTool) {
@@ -747,19 +772,84 @@ export default function Home() {
     const listed = toolIn(slot.targetFrameId, owner, brush, tool).result.recommendations[slot.index];
     if (!listed) return null;
     const recommendation = currentRecommendation(listed, owner.scene), { members, source } = slotSource(slot, listed);
-    const waiting = members.some(item => item.status === "queued" || item.status === "loading");
+    const waiting = members.some(item => item.status === "queued" || item.status === "loading"), paused = members.some(item => item.status === "idle");
     const [status, message]: [ForkSlotStatus, string] = slot.making ? ["making", "fork를 만들고 있습니다…"] : slot.error ? ["error", slot.error]
       : waiting ? ["waiting", "Execution·핵심 파라미터 프레임이 만들어지면 Accept할 수 있습니다…"]
+      : paused && recommendation.kind !== "value" && !source ? ["paused", "「마저 생성」으로 Execution·핵심 파라미터 프레임을 만들면 그 코드로 Accept할 수 있습니다."]
       : recommendation.kind === "value" ? ["ready", "값만 바꾼 fork를 AI 없이 만듭니다."]
       : source ? ["ready", `${source.from === "parameters" ? "핵심 파라미터" : source.from === "execution" ? "Execution" : "inspection preview"} 프레임이 돌리는 바뀐 코드로 AI 없이 fork를 만듭니다.${machineNote(source.machine)}`]
       : ["error", "바뀐 버전의 코드를 만들지 못했습니다. 패널의 Fork & apply with AI로 만들 수 있습니다."];
-    return { owner, brush, tool, listed, recommendation, source, status, message };
+    return { owner, brush, tool, listed, recommendation, source, status, message, members, paused };
+  }
+  /** "마저 생성": make the slot's Execution and key parameter frames that were only placed. */
+  async function continueSlot(slot: ForkSlotFrame) {
+    const idle = slotSource(slot, undefined).members.filter(item => item.status === "idle" || item.status === "error");
+    if (!idle.length) return;
+    const ids = new Set(idle.map(item => item.id));
+    setExploreFrames(exploreRef.current.map(item => ids.has(item.id) ? { ...item, status: "queued", error: "" } : item));
+    await fillExploreFrames(exploreRef.current.filter(item => ids.has(item.id)));
+  }
+  /** The values changed with a slot's preview handles: what each is called, and from what to what. */
+  function adjustedValues(slot: ForkSlotFrame, info: NonNullable<ReturnType<typeof slotInfo>>) {
+    const held = inspectionFor(info.owner, slot.brushId), at = heldIndex(held), step = at === null ? {} : stepValues(held.steps[at]) ?? {}, preview = info.listed.preview;
+    return Object.entries(slot.edit.adjusted).map(([key, to]) => {
+      const brought = info.source?.values.find(item => previewKey(item) === key), overlay = preview?.handles?.find(item => item.handle?.key === key);
+      return { key, label: (overlay?.name || brought?.label || overlay?.handle?.hint || key).slice(0, 100), from: brought ? brought.value.value : step[key] ?? "", to };
+    });
+  }
+  function patchSlotEdit(id: string, patch: Partial<SlotEdit>) {
+    setForkSlots(forkSlotsRef.current.map(item => item.id === id ? { ...item, edit: { ...item.edit, ...patch } } : item));
+  }
+  const reviseAborts = useRef(new Map<string, AbortController>());
+  /**
+   * Revise a slot's recommendation from what the user did on its preview (annotation, objects moved, scaled or
+   * rotated, a note): AI changes the recommendation and its preview, which replace it in the targeted tool. Its
+   * Execution and key parameter frames read the old one, so they go back to being only placed.
+   */
+  async function reviseSlot(slot: ForkSlotFrame, image: string) {
+    const info = slotInfo(slot);
+    if (!info || !image) { patchSlotEdit(slot.id, { error: !image ? "미리보기가 그려진 뒤 다시 눌러주세요." : "원래 프레임이나 targeted 도구가 없습니다." }); return; }
+    const { owner, brush, tool, listed } = info, edit = slot.edit, frame = slot.targetFrameId;
+    reviseAborts.current.get(slot.id)?.abort();
+    const controller = new AbortController(); reviseAborts.current.set(slot.id, controller);
+    patchSlotEdit(slot.id, { revising: true, error: "", reply: "", mode: "select" });
+    try {
+      const revised = await reviseRecommendation(deps, frame, brush, { concern: tool.concern, summary: toolIn(frame, owner, brush, tool).result.summary, recommendation: listed },
+        { image, marks: edit.marks, manipulations: edit.manipulations.filter(item => item.dx || item.dy || item.scale !== 1 || item.rotate), note: edit.note, adjusted: adjustedValues(slot, info) }, controller.signal);
+      if (controller.signal.aborted) return;
+      const { reply, ...item } = revised, now = panelsRef.current[frame] ?? owner, latest = brushesRef.current.find(entry => entry.id === brush.id);
+      const current = latest?.targeted.find(entry => entry.id === tool.id);
+      if (!latest || !current || !current.result.recommendations[slot.index]) throw new Error("targeted 도구가 바뀌어 고친 recommendation을 넣지 못했습니다.");
+      // Kept in the brush's shared ids, like the rest of the tool.
+      const shared = remapResult({ ...current.result, overlays: [], recommendations: [item] }, sharedIds(now.scene, brushRoots(now.scene, latest, frame))).recommendations[0];
+      patchTargeted(brush.id, tool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: entry.result.recommendations.map((old, i) => i === slot.index ? shared : old) } }));
+      const key = recommendationKey(item), oldKey = slot.key;
+      setForkSlots(forkSlotsRef.current.map(entry => entry.id === slot.id ? { ...entry, key, title: item.title, detail: item.detail, error: "", edit: { ...emptySlotEdit(), reply: reply || "recommendation을 고쳤습니다." } } : entry));
+      // Its frames start over from the revised recommendation (placed only, made with "마저 생성").
+      const tooled = brushesRef.current.find(entry => entry.id === brush.id)?.targeted.find(entry => entry.id === tool.id) ?? tool;
+      const stale = exploreRef.current.filter(entry => entry.targetFrameId === frame && entry.toolId === tool.id && entry.source.kind === "recommendation" && entry.source.key === oldKey);
+      for (const entry of stale) {
+        exploreAborts.current.get(entry.id)?.abort(); exploreAborts.current.delete(entry.id);
+        const fresh = newExplore(entry.mode, slot.index, latest, tooled, frame, "idle");
+        if (typeof fresh !== "string") patchExplore(entry.id, { ...fresh, id: entry.id });
+      }
+      setWorkspace(current => ({ ...current, groups: current.groups.map(group => group.frames.includes(slot.id) ? { ...group, title: `Recommendation · ${item.title}`.slice(0, 200) } : group) }));
+      setToast(`「${item.title}」(으)로 recommendation을 고쳤습니다.${stale.length ? " Execution·핵심 파라미터 프레임은 「마저 생성」으로 다시 만듭니다." : ""}`);
+    } catch (error) {
+      if (!controller.signal.aborted) patchSlotEdit(slot.id, { revising: false, error: error instanceof Error ? error.message : "recommendation을 고치지 못했습니다." });
+    } finally {
+      if (reviseAborts.current.get(slot.id) === controller) reviseAborts.current.delete(slot.id);
+      if (controller.signal.aborted) patchSlotEdit(slot.id, { revising: false });
+    }
   }
   /** Accept a fork slot: the fork is made in its place without AI, from the version its frames run. */
   async function acceptSlot(slot: ForkSlotFrame) {
     const info = slotInfo(slot);
     if (!info || info.status !== "ready" || !info.owner.generated) return;
-    const { owner, brush, tool, listed, recommendation, source } = info, key = recommendationKey(listed);
+    const { owner, brush, tool, listed, recommendation } = info, key = recommendationKey(listed);
+    // Values changed with the preview's handles go in: one the preview brings starts at it, a brush value is set in the fork.
+    const adjusted = slot.edit.adjusted, source = info.source && { ...info.source, values: info.source.values.map(item => previewKey(item) in adjusted ? { ...item, value: { ...item.value, value: adjusted[previewKey(item)] } } as typeof item : item) };
+    const brushChanges = Object.entries(adjusted).filter(([name]) => !source?.values.some(item => previewKey(item) === name)).map(([name, value]) => ({ key: name, stateId: "", value }));
     let content: { scene: Scene; generated: GeneratedCode } | undefined;
     if (recommendation.kind !== "value") {
       const built = source ? previewFork(owner.scene, owner.generated!, recommendation, source) : { error: "바뀐 버전의 코드가 없습니다" };
@@ -772,6 +862,7 @@ export default function Home() {
     if (!made) return;
     if (content) deps.refreshBrushCode?.(made.id, content.generated.code);
     else await applyRecommendation(deps, made.id, recommendation, key);
+    if (brushChanges.length) applyChanges(deps, made.id, brushChanges);
     setToast(`「${listed.title}」 fork를 AI 없이 만들었습니다 (${content ? "탐색 프레임이 돌리던 바뀐 코드" : "값 변경"}). 원래 brush와 프레임은 그대로이고, fork에서 Undo apply로 되돌릴 수 있습니다.`);
   }
   /** Go to a fork made from a recommendation: its frame, with its targeted tool. */
@@ -870,11 +961,11 @@ export default function Home() {
    */
   function placeRecommendationGroup(brush: Brush, tool: TargetedTool, frame: string, index: number, listed: Recommendation) {
     if (exploreRef.current.length + 2 > MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); return []; }
-    const made = (["execution", "parameters"] as const).map(mode => newExplore(mode, index, brush, tool, frame, mode === "execution" && deferExecution ? "idle" : "queued"));
+    const made = (["execution", "parameters"] as const).map(mode => newExplore(mode, index, brush, tool, frame, "idle"));
     const problem = made.find((item): item is string => typeof item === "string");
     if (problem) { setToast(`탐색 프레임은 만들지 않았습니다: ${problem}`); return []; }
     const explores = made as ExploreFrame[];
-    const slot: ForkSlotFrame = { id: `slot-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, index, key: recommendationKey(listed), title: listed.title, detail: listed.detail, making: false, error: "" };
+    const slot: ForkSlotFrame = { id: `slot-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, index, key: recommendationKey(listed), title: listed.title, detail: listed.detail, making: false, error: "", edit: emptySlotEdit() };
     setExploreFrames([...exploreRef.current, ...explores]); setForkSlots([...forkSlotsRef.current, slot]);
     const members = [slot.id, ...explores.map(item => item.id)];
     setWorkspace(current => { const spots = groupRow(current, frame, members.length);
@@ -885,6 +976,7 @@ export default function Home() {
   /** Close fork slots (all, or those `which` picks): their spots go (their groups keep the other frames). */
   function closeForkSlots(which: (slot: ForkSlotFrame) => boolean = () => true) {
     const gone = forkSlotsRef.current.filter(which); if (!gone.length) return;
+    for (const slot of gone) { reviseAborts.current.get(slot.id)?.abort(); reviseAborts.current.delete(slot.id); }
     setForkSlots(forkSlotsRef.current.filter(slot => !which(slot)));
     setWorkspace(current => gone.reduce((layout, slot) => removeWorkspaceFrame(layout, slot.id), current));
   }
@@ -933,7 +1025,7 @@ export default function Home() {
       const executable = await exploreExecutable(deps, frame.targetFrameId, found);
       if (controller.signal.aborted) return;
       // A run is executed step by step from its first step (the finished marks show faintly); input or steps start where the process ends.
-      patchExplore(frame.id, current => ({ result: found, status: "ready", executable: executable ?? current.executable, progress: found.axis === "run" ? 0 : found.to, values: {} }));
+      patchExplore(frame.id, current => ({ result: found, status: "ready", executable: executable ?? current.executable, progress: found.axis === "run" ? 0 : found.to, values: {}, edit: undefined }));
     } catch (error) {
       if (!controller.signal.aborted) patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "탐색 프레임을 만들지 못했습니다." });
     } finally { if (exploreAborts.current.get(frame.id) === controller) exploreAborts.current.delete(frame.id); }
@@ -942,10 +1034,74 @@ export default function Home() {
     if (!exploreRef.current.some(frame => frame.id === id)) return;
     setExploreFrames(exploreRef.current.map(frame => frame.id === id ? { ...frame, ...(typeof patch === "function" ? patch(frame) : patch) } : frame));
   }
+  function patchExploreEdit(id: string, patch: Partial<ExploreEdit>) {
+    patchExplore(id, current => ({ edit: { ...(current.edit ?? emptyExploreEdit()), ...patch } }));
+  }
+  const recommendAborts = useRef(new Map<string, AbortController>());
+  /**
+   * A new recommendation from what the user showed on an Execution frame at one moment of execution (annotation,
+   * crops moved, scaled or rotated, a note): AI writes it with its preview; it joins the targeted tool's
+   * recommendations, with its own frame group (fork slot, Execution and key parameter frames placed only).
+   */
+  async function recommendFromFrame(explore: ExploreFrame, image: string, moment: ExecutionMoment) {
+    const owner = panelsRef.current[explore.targetFrameId], brush = brushesRef.current.find(item => item.id === explore.brushId), tool = brush?.targeted.find(item => item.id === explore.toolId);
+    if (!owner || !brush || !tool) { patchExploreEdit(explore.id, { error: "원래 프레임이나 targeted 도구가 없습니다." }); return; }
+    if (!image) { patchExploreEdit(explore.id, { error: "그림이 그려진 뒤 다시 눌러주세요." }); return; }
+    const frame = explore.targetFrameId, edit = explore.edit ?? emptyExploreEdit(), shown = toolIn(frame, owner, brush, tool).result;
+    if (shown.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) { patchExploreEdit(explore.id, { error: `recommendation은 ${MAX_LISTED_RECOMMENDATIONS}개까지 둘 수 있습니다.` }); return; }
+    recommendAborts.current.get(explore.id)?.abort();
+    const controller = new AbortController(); recommendAborts.current.set(explore.id, controller);
+    patchExploreEdit(explore.id, { making: true, error: "", reply: "", mode: "run" });
+    try {
+      // The recommendation the frame previews, as it is listed now (with its preview).
+      const listed = explore.source.kind === "recommendation" ? shown.recommendations.find(item => recommendationKey(item) === (explore.source as { key: string }).key) : undefined;
+      const base = listed ? { ...currentRecommendation(listed, owner.scene), preview: listed.preview ?? null, applied: explore.source.kind === "recommendation" && explore.source.applied } : null;
+      const made = await recommendFromExecution(deps, frame, brush, { concern: tool.concern, summary: shown.summary, moment, base, listed: shown.recommendations, step: { runtime: explore.base.runtime, values: explore.base.values } },
+        { image, marks: edit.marks, manipulations: edit.manipulations.filter(item => item.dx || item.dy || item.scale !== 1 || item.rotate), note: edit.note }, controller.signal);
+      if (controller.signal.aborted) return;
+      const { reply, ...item } = made, now = panelsRef.current[frame] ?? owner, latest = brushesRef.current.find(entry => entry.id === brush.id);
+      const current = latest?.targeted.find(entry => entry.id === tool.id);
+      if (!latest || !current) throw new Error("targeted 도구가 없어 만든 recommendation을 넣지 못했습니다.");
+      if (current.result.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) throw new Error(`recommendation은 ${MAX_LISTED_RECOMMENDATIONS}개까지 둘 수 있습니다.`);
+      // Kept in the brush's shared ids, like the rest of the tool; listed after the others.
+      const shared = remapResult({ ...current.result, overlays: [], recommendations: [item] }, sharedIds(now.scene, brushRoots(now.scene, latest, frame))).recommendations[0];
+      const index = current.result.recommendations.length;
+      patchTargeted(brush.id, tool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: [...entry.result.recommendations, shared] } }));
+      patchExploreEdit(explore.id, { ...emptyExploreEdit(), reply: reply || `「${item.title}」 recommendation을 만들었습니다.` });
+      const tooled = brushesRef.current.find(entry => entry.id === brush.id), grown = tooled?.targeted.find(entry => entry.id === tool.id);
+      const placed = tooled && grown ? placeRecommendationGroup(tooled, grown, frame, index, shared) : [];
+      setToast(`「${item.title}」 recommendation을 만들었습니다.${placed.length ? " 옆에 fork·Execution·핵심 파라미터 프레임 그룹을 만들었습니다 (fork 프레임의 「마저 생성」으로 내용을 만듭니다)." : ""}`);
+      const slot = forkSlotsRef.current.find(entry => entry.targetFrameId === frame && entry.toolId === tool.id && entry.index === index);
+      if (slot) setPendingFrameFocus(slot.id as FrameId);
+    } catch (error) {
+      if (!controller.signal.aborted) patchExploreEdit(explore.id, { making: false, error: error instanceof Error ? error.message : "recommendation을 만들지 못했습니다." });
+    } finally {
+      if (recommendAborts.current.get(explore.id) === controller) recommendAborts.current.delete(explore.id);
+      if (controller.signal.aborted) patchExploreEdit(explore.id, { making: false });
+    }
+  }
+  // Exploration frames loaded with the project run their own copy of their frame's program: prepared again once that frame's
+  // result is (with a recommendation's preview edits in it).
+  const preparingExplore = useRef(new Set<string>());
+  useEffect(() => {
+    for (const frame of exploreFrames) {
+      const owner = panels[frame.targetFrameId];
+      if (frame.executable || preparingExplore.current.has(frame.id) || !owner?.generated || !owner.executable) continue;
+      preparingExplore.current.add(frame.id);
+      const prepared = frame.result?.edits.length ? exploreExecutable(deps, frame.targetFrameId, frame.result) : Promise.resolve(null);
+      // One that cannot be prepared says so and is not tried again (its 다시 만들기 makes it anew).
+      prepared.then(executable => { preparingExplore.current.delete(frame.id); patchExplore(frame.id, current => current.executable ? {} : { executable: executable ?? syncScene(owner.executable, owner.scene) }); },
+        error => patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "탐색 프레임의 코드를 준비하지 못했습니다." }));
+    }
+  }, [exploreFrames, panels]);
+  /** Stop every AI request of exploration frames and fork slots (their frames stay). */
+  function stopExploring() {
+    for (const aborts of [exploreAborts, recommendAborts, reviseAborts]) { for (const controller of aborts.current.values()) controller.abort(); aborts.current.clear(); }
+  }
   /** Close exploration frames (all, or those `which` picks): their AI requests stop and their spots on the board go. */
   function closeExploreFrames(which: (frame: ExploreFrame) => boolean = () => true) {
     const gone = exploreRef.current.filter(which); if (!gone.length) return;
-    for (const frame of gone) { exploreAborts.current.get(frame.id)?.abort(); exploreAborts.current.delete(frame.id); }
+    for (const frame of gone) for (const aborts of [exploreAborts, recommendAborts]) { aborts.current.get(frame.id)?.abort(); aborts.current.delete(frame.id); }
     setExploreFrames(exploreRef.current.filter(frame => !which(frame)));
     setWorkspace(current => gone.reduce((layout, frame) => removeWorkspaceFrame(layout, frame.id), current));
   }
@@ -1057,6 +1213,20 @@ export default function Home() {
     const brushId = activeBrush.id;
     updatePanel(frameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brushId), focus }),
       ...(focus ? { selectedNodeIds: [focus.nodeId], machineTarget: focus.kind === "state" || focus.kind === "transition" ? { nodeId: focus.nodeId, kind: focus.kind, id: focus.id } : null } : {}) }));
+  }
+  /**
+   * Show a part of the brush an Execution frame runs (a semantic transformation, state or transition) where it is
+   * edited: its frame and targeted tool become the current ones, its node is selected, and it is highlighted (and
+   * scrolled to) in the properties panel or the state machine panel.
+   */
+  function showPart(explore: ExploreFrame, part: ExecutionPart) {
+    const brush = brushesRef.current.find(item => item.id === explore.brushId), owner = panelsRef.current[explore.targetFrameId];
+    if (!brush || !owner || !findNode(owner.scene, part.nodeId)) { setToast("이 부분이 있던 프레임이나 brush, 노드가 없습니다."); return; }
+    activateSketch(explore.targetFrameId);
+    if (brush.targeted.some(item => item.id === explore.toolId)) chooseBrushTool(brush.id, brushTool("targeted", brush.id, explore.toolId));
+    const focus: InspectionFocus = { kind: part.kind, nodeId: part.nodeId, id: part.id };
+    updatePanel(explore.targetFrameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brush.id), focus }), selectedNodeIds: [part.nodeId],
+      machineTarget: part.kind === "transformation" ? null : { nodeId: part.nodeId, kind: part.kind, id: part.id } }));
   }
   /**
    * The selected targeted tool as it reads in one frame: its overlays on every
@@ -1459,14 +1629,28 @@ export default function Home() {
           labelOf={key => preview(key)?.label ?? rows.find(row => row.key === key)?.property ?? key}
           expand={key => { const value = preview(key); return value && target ? previewKeys(target.scene, value) : [key]; }}
           onProgress={progress => patchExplore(explore.id, { progress })} onRetry={() => { void runExplore(explore); }} onActivate={() => activateFrame(explore.id)}
-          onValue={(key, value) => patchExplore(explore.id, current => { const values = { ...current.values }; if (value === null) delete values[key]; else values[key] = value; return { values }; })} /> };
+          onValue={(key, value) => patchExplore(explore.id, current => { const values = { ...current.values }; if (value === null) delete values[key]; else values[key] = value; return { values }; })}
+          partName={part => { const node = target ? findNode(target.scene, part.nodeId) : null; if (!node) return null;
+            // A state or transition the frame's preview brings is named too.
+            const brought = explore.result?.machine?.nodeId === part.nodeId ? explore.result.machine : null;
+            const name = part.kind === "transformation" ? node.transformations.find(item => item.id === part.id)?.label
+              : [...((part.kind === "state" ? node.machine?.states : node.machine?.transitions) ?? []), ...((part.kind === "state" ? brought?.states : brought?.transitions) ?? [])].find(item => item.id === part.id)?.label;
+            return name ? { name, node: node.name } : null; }}
+          onPart={part => showPart(explore, part)}
+          onEdit={patch => patchExploreEdit(explore.id, patch)} onCancelRecommend={() => recommendAborts.current.get(explore.id)?.abort()}
+          onRecommend={(image, moment) => { void recommendFromFrame(exploreRef.current.find(item => item.id === explore.id) ?? explore, image, moment); }} /> };
     }),
     ...forkSlots.map(slot => {
       const info = slotInfo(slot), target = panels[slot.targetFrameId], held = target ? inspectionFor(target, slot.brushId) : null, at = held ? heldIndex(held) : null;
+      // The version it would be, with the marks of what changes (the recommendation's own, also on the code its frames run).
       const preview = info && target?.generated && held && at !== null && (info.recommendation.kind === "value" || info.source)
-        ? <RecommendationPreview large code={liveSceneSource(target.generated, target.scene)} scene={target.scene} runtime={held.steps[at].runtime} recommendation={info.recommendation} preview={info.recommendation.kind === "value" ? null : info.source} /> : null;
+        ? { code: liveSceneSource(target.generated, target.scene), scene: target.scene, runtime: held.steps[at].runtime, values: stepValues(held.steps[at]) ?? {}, recommendation: info.recommendation,
+          preview: info.recommendation.kind === "value" ? null : { ...info.source!, marks: info.listed.preview?.marks ?? [], handles: info.listed.preview?.handles ?? [] },
+          specs: valueSpecs(target.scene, brushNodeIds(target.scene, info.brush, slot.targetFrameId)) } : null;
       return { id: slot.id as FrameId, title: `⑂ ${slot.title} · fork`, subtitle: "Accept하면 AI 없이 이 버전으로 fork를 만듭니다 · 원래 프레임은 바뀌지 않음",
         content: <ForkSlot title={slot.title} detail={slot.detail} status={info?.status ?? "error"} message={info?.message ?? "원래 프레임이나 targeted 도구가 없습니다."} preview={preview}
+          paused={Boolean(info?.paused)} onContinue={() => { void continueSlot(slot); }} edit={slot.edit} onEdit={patch => patchSlotEdit(slot.id, patch)}
+          onRevise={image => { void reviseSlot(forkSlotsRef.current.find(item => item.id === slot.id) ?? slot, image); }} onCancelRevise={() => reviseAborts.current.get(slot.id)?.abort()}
           onAccept={() => { void acceptSlot(slot); }} onActivate={() => activateFrame(slot.id)} /> };
     }),
   ].filter(frame => (frame.id !== "source" || !workspace.hiddenFrames.includes("source")) && !hiddenExamples.has(frame.id));
@@ -1590,7 +1774,7 @@ export default function Home() {
         targeted={targetedIn(activeSketch, panel)} onInspect={() => { void runTargeted(activeBrush); }}
         previews={recommendationPreviews} onPreviews={setRecommendationPreviews} deferExecution={deferExecution} onDeferExecution={setDeferExecution}
         renderPreview={listed => { const held = inspectionFor(panel, activeBrush.id), at = heldIndex(held);
-          return panel.generated && at !== null ? <RecommendationPreview code={liveSource} scene={scene} runtime={held.steps[at].runtime} recommendation={listed} preview={listed.preview} /> : null; }}
+          return panel.generated && at !== null ? <RecommendationPreview code={liveSource} scene={scene} runtime={held.steps[at].runtime} values={stepValues(held.steps[at]) ?? {}} recommendation={listed} preview={listed.preview} /> : null; }}
         applied={{ past: panel.applied.past, future: panel.applied.future, undoClean: appliedCurrent(panel, "undo"), redoClean: appliedCurrent(panel, "redo") }} recommendationKey={recommendationKey}
         onUndoApplied={() => { const entry = stepApplied(deps, activeSketch, "undo"); if (entry) setToast(`「${entry.title}」 적용을 되돌렸습니다 (장면과 코드${followApplied(entry.id, "undo") ? ", overlay" : ""}).`); }}
         onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`「${entry.title}」을(를) 다시 적용했습니다${followApplied(entry.id, "redo") ? " (업데이트한 overlay도)" : ""}.`); }}

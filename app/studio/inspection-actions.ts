@@ -1,6 +1,6 @@
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
-import { concernSuggestionsSchema, constraintRows, emptyInspection, heldIndex, inspectPreviewResultSchema, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, stepValues, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { concernSuggestionsSchema, constraintRows, revisedRecommendationSchema, type PreviewManipulation, type RevisedRecommendation, type Scalar, emptyInspection, heldIndex, inspectPreviewResultSchema, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, stepValues, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { exposeParameter, moduleKeyOf, recordFields, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
 import type { GeneratedCode } from "../lib/schema";
 import type { Scene } from "../lib/scene/schema";
@@ -14,7 +14,8 @@ import type { InspectionInput } from "../lib/schema";
 import { sceneBindings } from "../lib/scene/values";
 import type { AppliedSnapshot, SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
-import { annotatedImage, compactMarks } from "./annotated-image";
+import { annotatedImage, compactMarks, manipulatedImage } from "./annotated-image";
+import type { ExecutionMoment } from "../lib/explore";
 import type { StudioDeps } from "./deps";
 
 type Change = { key: string; stateId: string; value: number | string | boolean };
@@ -94,6 +95,55 @@ export async function suggestConcerns(deps: StudioDeps, owner: string, brush: Br
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error || "concern을 제안하지 못했습니다.");
   return concernSuggestionsSchema.parse(result).suggestions;
+}
+
+/**
+ * Revise one recommendation at its preview: AI reads what the user did on the preview (`image`, the preview as drawn
+ * then; annotation `marks` drawn on it, objects moved, scaled or rotated, a note) and returns the recommendation
+ * changed, with a preview that runs. Nothing in the frame changes.
+ */
+export async function reviseRecommendation(deps: StudioDeps, owner: string, brush: Brush, context: { concern: string; summary: string; recommendation: Recommendation },
+  edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string; adjusted: { key: string; label: string; from: Scalar; to: Scalar }[] }, signal: AbortSignal): Promise<RevisedRecommendation> {
+  const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner), at = heldIndex(state);
+  if (!nodeIds.length || at === null) throw new Error("이 프레임의 brush와 기록된 단계가 필요합니다.");
+  const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
+  const rows = constraintRows(panel.scene, nodeIds), item = context.recommendation;
+  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "revise-recommendation", scene: panel.scene, targetNodeId: nodeIds[0], instruction: edit.note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
+    inspection: { brushName: brush.name, nodeIds, cursor: at, marks: compactMarks(edit.marks, MAX_MARKS), markStyles: [],
+      constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+      steps: state.steps.map(step => ({ id: step.id, nodeId: step.nodeId, from: step.from, to: step.to, transitionId: step.transitionId, values: stepValues(step)!, runtime: runtimeForAI(step, nodeIds) })),
+      revise: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500), manipulations: edit.manipulations.slice(0, 12), adjusted: edit.adjusted.slice(0, 12),
+        recommendation: { kind: item.kind, nodeId: item.nodeId, targetId: item.targetId, targetIds: item.targetIds, title: item.title, detail: item.detail, changes: item.changes, preview: item.preview ? { ...item.preview, marks: item.preview.marks ?? [], handles: item.preview.handles ?? [] } : null } } } }) });
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || "recommendation을 고치지 못했습니다.");
+  return revisedRecommendationSchema.parse(result);
+}
+
+/**
+ * Ask AI for a new recommendation from what the user did on an Execution frame (annotation, crops moved, scaled or
+ * rotated, a note) at one moment of execution; the frame's brush marks (its held step) are what it is drawn on.
+ */
+export async function recommendFromExecution(deps: StudioDeps, owner: string, brush: Brush,
+  context: { concern: string; summary: string; moment: ExecutionMoment; base: (Recommendation & { applied: boolean }) | null; listed: Recommendation[]; step: { runtime: unknown; values: Record<string, Scalar> } },
+  edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string }, signal: AbortSignal): Promise<RevisedRecommendation> {
+  const panel = deps.panel(owner), nodeIds = brushNodeIds(panel.scene, brush, owner);
+  if (!nodeIds.length) throw new Error("이 프레임의 brush가 필요합니다.");
+  const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
+  const rows = constraintRows(panel.scene, nodeIds), base = context.base;
+  const step = { id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: context.step.values, runtime: context.step.runtime };
+  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "execution-recommendation", scene: panel.scene, targetNodeId: nodeIds[0], instruction: edit.note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
+    inspection: { brushName: brush.name, nodeIds, cursor: 0, marks: compactMarks(edit.marks, MAX_MARKS), markStyles: [],
+      constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+      steps: [{ id: step.id, nodeId: null, from: null, to: null, transitionId: null, values: step.values, runtime: runtimeForAI(step, nodeIds) }],
+      fromExecution: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500), manipulations: edit.manipulations.slice(0, 12),
+        execution: { ...context.moment, summary: context.moment.summary.slice(0, 1200), last: context.moment.last.slice(0, 200), next: context.moment.next.slice(0, 200),
+          stage: context.moment.stage && { name: context.moment.stage.name.slice(0, 40), explain: context.moment.stage.explain.slice(0, 300) } },
+        base: base && { kind: base.kind, nodeId: base.nodeId, targetId: base.targetId, targetIds: base.targetIds, title: base.title, detail: base.detail, changes: base.changes,
+          preview: base.preview ? { ...base.preview, marks: base.preview.marks ?? [], handles: base.preview.handles ?? [] } : null },
+        applied: Boolean(base?.applied), listed: context.listed.map(item => item.title.slice(0, 160)).slice(0, 12) } } }) });
+  const result = await response.json();
+  if (!response.ok || result.error) throw new Error(result.error || "recommendation을 만들지 못했습니다.");
+  return revisedRecommendationSchema.parse(result);
 }
 
 /** A name for a new targeted tool: the start of its concern. */

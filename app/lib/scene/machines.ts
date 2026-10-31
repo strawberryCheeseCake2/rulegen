@@ -214,7 +214,7 @@ let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = nu
 const RULEGEN_MAX_EVENTS = 3000;
 const RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];
 const RULEGEN_VERTICES = { vertex: [0, 1], curveVertex: [0, 1], bezierVertex: [4, 5], quadraticVertex: [2, 3] };
-function rulegenRunStart(budget, roots, show) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0 }; rulegenShape = null; }
+function rulegenRunStart(budget, roots, show) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0 }; rulegenShape = null; rulegenPath = []; rulegenWrapContext(p.drawingContext); }
 /** Whether the code running now is recorded (a run, and the module drawing is one of its roots). */
 const rulegenRunOwn = () => Boolean(rulegenRun) && !rulegenShowing && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));
 function rulegenRunEnd() { const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events }; }
@@ -260,6 +260,59 @@ for (const name of RULEGEN_SHAPES) {
 for (const name of Object.keys(RULEGEN_VERTICES)) {
   const base = p[name]; if (typeof base !== 'function') continue;
   p[name] = function (...args) { if (rulegenRunOwn() && rulegenShape && rulegenShape.length < 4000) { const [i, j] = RULEGEN_VERTICES[name]; rulegenShape.push([Number(args[i]), Number(args[j])]); } return base.apply(p, args); };
+}
+// Code that paints on the canvas itself (p.drawingContext: beginPath … stroke) is executed the same way: each paint
+// call is an event of the run (the box of the path it paints), not drawn past the budget. Paint calls p5 makes inside
+// its own drawing calls are part of those.
+// The context is wrapped (its own methods) when a run starts, once per context.
+let rulegenPath = [], rulegenWrapContext = () => {};
+{
+  const wrapped = [];
+  const tracking = () => rulegenRunOwn() && !rulegenInOp;
+  /** Points (in the context's coordinates) as canvas pixels, through its transform now. */
+  const onCanvas = (ctx, points) => {
+    const matrix = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;
+    return points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).map(([x, y]) => matrix ? [(matrix.a * x + matrix.c * y + matrix.e) / density, (matrix.b * x + matrix.d * y + matrix.f) / density] : [x, y]);
+  };
+  const boxOf = points => { if (!points.length) return null; const xs = points.map(q => q[0]), ys = points.map(q => q[1]), x = Math.min(...xs), y = Math.min(...ys);
+    return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) }; };
+  const n = Number;
+  const PATH = {
+    moveTo: a => [[n(a[0]), n(a[1])]], lineTo: a => [[n(a[0]), n(a[1])]],
+    bezierCurveTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])], [n(a[4]), n(a[5])]], quadraticCurveTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])]],
+    arcTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])]],
+    arc: a => [[n(a[0]) - n(a[2]), n(a[1]) - n(a[2])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[2])]],
+    ellipse: a => [[n(a[0]) - n(a[2]), n(a[1]) - n(a[3])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],
+    rect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]], roundRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],
+  };
+  const PAINT = {
+    fill: () => null, stroke: () => null,
+    fillRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]], strokeRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],
+    fillText: a => [[n(a[1]), n(a[2])]], strokeText: a => [[n(a[1]), n(a[2])]],
+    drawImage: a => a.length >= 9 ? [[n(a[5]), n(a[6])], [n(a[5]) + n(a[7]), n(a[6]) + n(a[8])]] : a.length >= 5 ? [[n(a[1]), n(a[2])], [n(a[1]) + n(a[3]), n(a[2]) + n(a[4])]] : [[n(a[1]), n(a[2])]],
+  };
+  // Painting the whole canvas (a background) is not a step of the brush.
+  for (const name of ['background', 'clear']) { const base = p[name]; if (typeof base === 'function') p[name] = function (...args) { rulegenInOp++; try { return base.apply(p, args); } finally { rulegenInOp--; } }; }
+  rulegenWrapContext = ctx => {
+    if (!ctx || typeof ctx !== 'object' || wrapped.includes(ctx)) return;
+    wrapped.push(ctx);
+    const begin = ctx.beginPath;
+    if (typeof begin === 'function') ctx.beginPath = function (...args) { if (tracking()) rulegenPath = []; return begin.apply(ctx, args); };
+    for (const name of Object.keys(PATH)) {
+      const base = ctx[name]; if (typeof base !== 'function') continue;
+      ctx[name] = function (...args) { if (tracking() && rulegenPath.length < 4000) rulegenPath.push(...onCanvas(ctx, PATH[name](args))); return base.apply(ctx, args); };
+    }
+    for (const name of Object.keys(PAINT)) {
+      const base = ctx[name]; if (typeof base !== 'function') continue;
+      ctx[name] = function (...args) {
+        if (!tracking()) return base.apply(ctx, args);
+        // A Path2D painted is somewhere the run cannot see: no box.
+        const own = PAINT[name](args), points = own ? onCanvas(ctx, own) : args[0] && typeof args[0] === 'object' ? [] : rulegenPath;
+        if (!rulegenEvent(Object.assign({ kind: name }, boxOf(points) || {}))) return;
+        return base.apply(ctx, args);
+      };
+    }
+  };
 }
 /** Checkpoint data made small: lists of more than 200 items keep every k-th (and the last), numbers keep one decimal. */
 function rulegenThin(value, depth) {
