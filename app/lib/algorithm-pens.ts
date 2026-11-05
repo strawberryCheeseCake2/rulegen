@@ -1,7 +1,7 @@
 import { semanticPenSchema, ART_WIDTH, ART_HEIGHT, type SemanticPen, type Artwork } from "./schema";
 
 export function createInteractionPen(): SemanticPen {
-  const meaning = "사용자 interaction을 스케치로 annotate하는 펜입니다. 클릭·탭 위치, 호버 영역, 드래그 경로와 방향, 놓기 위치, 키 입력에 따른 반응을 표시합니다. 주변 스케치와 prompt를 함께 보고 입력 대상·동작·결과를 해석하세요. 이 자국은 최종 작품에 그릴 모양이 아니라 사용자가 어떻게 조작할지에 대한 설명입니다. 대기·접근·누름·드래그·놓기·반응·복귀를 의미 있는 상태와 전이로 나누세요.";
+  const meaning = "A pen for annotating user interaction with sketches. It marks click/tap positions, hover areas, drag paths and directions, drop positions, and responses to key input. Read it together with the surrounding sketch and the prompt to interpret the input target, action, and result. These marks are not shapes to draw in the final artwork; they describe how the user will interact. Split idle, approach, press, drag, drop, response, and return into meaningful states and transitions.";
   return semanticPenSchema.parse({ kind: "interaction", id: "builtin-interaction", name: "Interaction pen", color: "#e06438", sourceSketchId: "source", source: { nodeId: "", label: "User interaction" }, meaning });
 }
 

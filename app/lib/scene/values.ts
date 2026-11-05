@@ -65,8 +65,8 @@ export const setScalarAt = (value: Value, path: string[], raw: ScalarValue["valu
 export const defaultNumber = (): NumberValue => ({ type: "number", value: 1, min: 0, max: 10, step: .1, unit: "" });
 
 export function scalarProblem(value: ScalarValue) {
-  if (value.type === "number" && (value.min >= value.max || value.value < value.min || value.value > value.max || value.step > value.max - value.min)) return "숫자 슬라이더 범위가 올바르지 않습니다.";
-  if (value.type === "select" && !value.options.includes(value.value)) return "선택값이 옵션에 없습니다.";
+  if (value.type === "number" && (value.min >= value.max || value.value < value.min || value.value > value.max || value.step > value.max - value.min)) return "The number slider range is invalid.";
+  if (value.type === "select" && !value.options.includes(value.value)) return "The selected value is not among the options.";
   return "";
 }
 

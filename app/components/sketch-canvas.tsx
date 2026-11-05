@@ -49,7 +49,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
         };
       }, host.current);
       instance.current = p;
-    }).catch(() => current.current.onError("p5.js 엔진을 불러오지 못했습니다. 페이지를 새로고침해주세요."));
+    }).catch(() => current.current.onError("Couldn't load the p5.js engine. Please refresh the page."));
     return () => { disposed = true; instance.current?.remove(); instance.current = null; };
   }, []);
   useEffect(() => { instance.current?.redraw(); }, [props.artwork, props.viewport, ready]);
@@ -58,7 +58,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     if (!props.artwork.photo) { instance.current?.redraw(); return; }
     let cancelled = false; const image = new Image();
     image.onload = () => { if (!cancelled) { photo.current = image; instance.current?.redraw(); } };
-    image.onerror = () => current.current.onError("첨부 이미지를 열지 못했습니다.");
+    image.onerror = () => current.current.onError("Couldn't open the attached image.");
     image.src = props.artwork.photo;
     return () => { cancelled = true; };
   }, [props.artwork.photo]);
@@ -67,8 +67,8 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     clearSelection() { lasso.current = []; setSelection([]); current.current.onSelection(false); },
     capture(full = false, transparentBackground = false) {
       const canvas = host.current?.querySelector("canvas");
-      if (!canvas || !ready) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
-      if (current.current.artwork.photo && !photo.current) throw new Error("사진을 불러오는 중입니다. 잠시 후 분석해주세요.");
+      if (!canvas || !ready) throw new Error("Wait a moment for the canvas to be ready.");
+      if (current.current.artwork.photo && !photo.current) throw new Error("The photo is still loading. Analyze again in a moment.");
       instance.current?.redraw(); render.current(false, transparentBackground);
       try {
       const region = { x: 0, y: 0, w: 1, h: 1 };
@@ -77,7 +77,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
         const points = lasso.current;
         const x = Math.max(0, Math.floor(Math.min(...points.map(p => p.x)))), y = Math.max(0, Math.floor(Math.min(...points.map(p => p.y))));
         const width = Math.min(W - x, Math.ceil(Math.max(...points.map(p => p.x))) - x), height = Math.min(H - y, Math.ceil(Math.max(...points.map(p => p.y))) - y);
-        if (width < 10 || height < 10) throw new Error("더 넓은 영역을 선택해주세요.");
+        if (width < 10 || height < 10) throw new Error("Please select a larger area.");
         const crop = document.createElement("canvas"); crop.width = width; crop.height = height; const ctx = crop.getContext("2d")!;
         if (!transparentBackground) { ctx.fillStyle = "#fffefa"; ctx.fillRect(0, 0, width, height); } ctx.save(); ctx.beginPath(); points.forEach((point, i) => i ? ctx.lineTo(point.x - x, point.y - y) : ctx.moveTo(point.x - x, point.y - y)); ctx.closePath(); ctx.clip(); ctx.drawImage(canvas, -x, -y); ctx.restore();
         Object.assign(region, { x: x / W, y: y / H, w: width / W, h: height / H }); image = crop.toDataURL("image/png");

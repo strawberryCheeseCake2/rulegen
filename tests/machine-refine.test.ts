@@ -23,8 +23,8 @@ const orbMachine = () => sampleScene().nodes.find(node => node.id === "orb")!.ma
 test("annotation strokes on the graph name the states and transitions they touch", () => {
   const layout = machineLayout(orbMachine());
   const idle = layout.states.find(state => state.id === "idle")!, press = layout.edges.find(edge => edge.id === "press")!;
-  assert.deepEqual(strokeTargets(layout, [{ x: idle.x + 20, y: idle.y + 20 }, { x: idle.x + 60, y: idle.y + 30 }]), ["state idle 「대기」"]);
-  assert.ok(strokeTargets(layout, [press.labelPoint, { x: press.labelPoint.x + 4, y: press.labelPoint.y }]).includes("transition press 「원 클릭」"));
+  assert.deepEqual(strokeTargets(layout, [{ x: idle.x + 20, y: idle.y + 20 }, { x: idle.x + 60, y: idle.y + 30 }]), ["state idle “대기”"]);
+  assert.ok(strokeTargets(layout, [press.labelPoint, { x: press.labelPoint.x + 4, y: press.labelPoint.y }]).includes("transition press “원 클릭”"));
   assert.deepEqual(strokeTargets(layout, [{ x: 5000, y: 5000 }, { x: 5010, y: 5010 }]), []);
   const marks = machineMarks(layout, [[{ x: -40, y: 10 }, { x: 900, y: 300 }]]);
   for (const point of marks[0].points) { assert.ok(point.x >= 0 && point.x <= 1); assert.ok(point.y >= 0 && point.y <= 1); }
@@ -42,12 +42,12 @@ test("the refine composer shows what is attached and the annotation", () => {
     draft: { ...emptyMachineDraft("orb"), open: true, strokes: Array.from({ length: strokes }, () => [{ x: 1, y: 1 }, { x: 2, y: 2 }]) },
     onSelectNode: noop, onState: noop, onTransition: noop, onClearTarget: noop, onGenerate: noop, onDraft: noop, onRefine: noop, onError: noop, onPlay: noop, onRestart: noop, onEvent: noop }));
   const transition = render({ kind: "transition", id: "press" }, 2);
-  assert.match(transition, /Transition<\/b>원 클릭 첨부됨/);
-  assert.match(transition, /Annotation<\/b>2획 첨부됨/);
+  assert.match(transition, /Transition<\/b>원 클릭 attached/);
+  assert.match(transition, /Annotation<\/b>2 strokes attached/);
   assert.match(transition, /Refine transition/);
   assert.match(transition, /selected-transition/);
-  assert.match(render({ kind: "state", id: "moving" }), /State<\/b>이동 첨부됨/);
-  assert.match(render(null), /첨부 없음 · 상태 머신 전체를 다듬습니다/);
+  assert.match(render({ kind: "state", id: "moving" }), /State<\/b>이동 attached/);
+  assert.match(render(null), /Nothing attached · refines the whole state machine/);
 });
 
 test("machine-refine sends the attached item, graph image and annotation, and returns the updated Compose prompt", async () => {
@@ -57,7 +57,7 @@ test("machine-refine sends the attached item, graph image and annotation, and re
     { id: "bounce", label: "튕김", description: "놓으면 튕기듯 돌아옵니다", values: [{ propertyId: "radius", value: num(60, 10, 140, 1, "px") }] },
   ], transitions: [...machine.transitions.filter(item => item.id !== "settle"), { id: "settle", from: "moving", to: "bounce", label: "정착 전 튕김", trigger: "after", afterMs: 600 }, { id: "bounce-done", from: "bounce", to: "idle", label: "튕김 완료", trigger: "after", afterMs: 500 }] };
   const prompt = "- 화면 가운데에 원을 그려줘.\n- 원을 클릭하면 오른쪽으로 움직였다가 튕기듯 돌아오게 해줘.";
-  const marks = [{ points: [{ x: .2, y: .2 }, { x: .4, y: .3 }], targets: ["transition settle 「정착 후 대기」"] }];
+  const marks = [{ points: [{ x: .2, y: .2 }, { x: .4, y: .3 }], targets: ["transition settle “정착 후 대기”"] }];
   await withMockedAI(() => ({ algorithms: [], machine: refined, composePrompt: prompt }), async calls => {
     const result = machineRefineResultSchema.parse(await runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb", image, machineImage: image, machineMarks: marks,
       machineTarget: { kind: "transition", id: "settle" }, instruction: "정착하기 전에 한 번 튕기게", composePrompt: "- 화면 가운데에 원을 그려줘." }), signal()));
@@ -74,9 +74,9 @@ test("machine-refine sends the attached item, graph image and annotation, and re
     assert.ok(calls[0].text.format.schema.required.includes("composePrompt"));
   });
   await withMockedAI(() => ({}), async calls => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb", machineTarget: { kind: "state", id: "missing" }, instruction: "바꿔줘" }), signal()), /첨부한 state 또는 transition/);
-    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb" }), signal()), /어떻게 바꿀지/);
-    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "tree", instruction: "바꿔줘" }), signal()), /상태 머신을 만들어주세요/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb", machineTarget: { kind: "state", id: "missing" }, instruction: "바꿔줘" }), signal()), /Could not find the attached state or transition/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb" }), signal()), /Describe how to change it/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "tree", instruction: "바꿔줘" }), signal()), /Create a state machine for this node first/);
     assert.equal(calls.length, 0);
   });
 });

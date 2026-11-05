@@ -35,9 +35,9 @@ export function FrameRender(props: Props) {
     // The previous executable keeps rendering until the new program is ready.
     props.onPatch({ runtimeError: "" });
     void fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "prepare", code }), signal: controller.signal })
-      .then(async response => { const result = await response.json(); if (!response.ok || result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error || "코드를 실행하지 못했습니다."); } return result; })
+      .then(async response => { const result = await response.json(); if (!response.ok || result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error || "Couldn't run the code."); } return result; })
       .then(result => { rememberPrepared(code, result.executable); if (!controller.signal.aborted) current.current.onPatch({ executable: result.executable, preparedCode: code }); })
-      .catch(error => { if (!controller.signal.aborted) current.current.onPatch({ runtimeError: error instanceof Error ? error.message : "코드를 실행하지 못했습니다." }); });
+      .catch(error => { if (!controller.signal.aborted) current.current.onPatch({ runtimeError: error instanceof Error ? error.message : "Couldn't run the code." }); });
     return () => controller.abort();
   }, [panel.generated?.code, panel.preparedCode, props.documentRevision]);
   useEffect(() => {

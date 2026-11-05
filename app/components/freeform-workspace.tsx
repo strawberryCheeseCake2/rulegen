@@ -41,7 +41,11 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
     const up = (e: KeyboardEvent) => { if (e.code === "Space") setSpace(false); };
     const blur = () => { setSpace(false); drag.current = null; setDragging(false); setBox(null); };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
-    const wheel = (e: WheelEvent) => { if ((e.target as Element).closest("button")) return; e.preventDefault(); const p = current.current; const bounds = board.current!.getBoundingClientRect(); const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bounds.height : 1;
+    const wheel = (e: WheelEvent) => { if ((e.target as Element).closest("button")) return;
+      // A part of a frame that scrolls (e.g. an Execution frame's bar) scrolls itself while it can.
+      const scroller = !(e.ctrlKey || e.metaKey) ? (e.target as Element).closest(".board-scroll") : null;
+      if (scroller && (e.deltaY > 0 ? scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1 : e.deltaY < 0 && scroller.scrollTop > 0)) return;
+      e.preventDefault(); const p = current.current; const bounds = board.current!.getBoundingClientRect(); const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bounds.height : 1;
       const zooming = e.ctrlKey || e.metaKey, scale = Math.exp(-e.deltaY * .008), anchor = { x: e.clientX - bounds.left, y: e.clientY - bounds.top }, dx = e.deltaX * factor, dy = e.deltaY * factor;
       p.onChange(current => { const c = cameraOf(current); return { ...current, camera: zooming ? zoomAt(c, c.zoom * scale, anchor) : { ...c, x: c.x - dx, y: c.y - dy } }; }); };
     board.current!.addEventListener("wheel", wheel, { passive: false });

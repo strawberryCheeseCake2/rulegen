@@ -1,0 +1,447 @@
+{
+  "intent": "execution-recommendation",
+  "scene": {
+    "nodes": [
+      {
+        "id": "tree",
+        "kind": "collection",
+        "parentId": null,
+        "name": "Tree",
+        "description": "가지가 갈라지는 나무",
+        "primitive": "group",
+        "region": {
+          "x": 0.3,
+          "y": 0.05,
+          "w": 0.4,
+          "h": 0.9
+        },
+        "transformations": [
+          {
+            "id": "branching-growth",
+            "label": "Branching growth",
+            "description": "재귀 분기",
+            "properties": [
+              {
+                "id": "structure",
+                "label": "Branching",
+                "effect": "spatial",
+                "description": "가지 구조",
+                "value": {
+                  "type": "algorithm",
+                  "algorithmId": "recursive-branch",
+                  "args": [
+                    {
+                      "id": "depth",
+                      "value": {
+                        "type": "number",
+                        "value": 5,
+                        "min": 1,
+                        "max": 9,
+                        "step": 1,
+                        "unit": ""
+                      }
+                    },
+                    {
+                      "id": "length",
+                      "value": {
+                        "type": "algorithm",
+                        "algorithmId": "power-decay",
+                        "args": [
+                          {
+                            "id": "base",
+                            "value": {
+                              "type": "number",
+                              "value": 140,
+                              "min": 20,
+                              "max": 300,
+                              "step": 1,
+                              "unit": "px"
+                            }
+                          },
+                          {
+                            "id": "ratio",
+                            "value": {
+                              "type": "number",
+                              "value": 0.7,
+                              "min": 0.3,
+                              "max": 0.95,
+                              "step": 0.01,
+                              "unit": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "ink-wash",
+            "label": "Ink wash",
+            "description": "먹색",
+            "properties": [
+              {
+                "id": "ink",
+                "label": "Ink",
+                "effect": "stylistic",
+                "description": "가지 색",
+                "value": {
+                  "type": "color",
+                  "value": "#75664e"
+                }
+              }
+            ]
+          }
+        ],
+        "visible": true,
+        "machine": null
+      },
+      {
+        "id": "orb",
+        "kind": "object",
+        "parentId": "tree",
+        "name": "Orb",
+        "description": "누르면 움직이는 원",
+        "primitive": "ellipse",
+        "region": {
+          "x": 0.45,
+          "y": 0.2,
+          "w": 0.1,
+          "h": 0.1
+        },
+        "transformations": [
+          {
+            "id": "pulse",
+            "label": "Pulse",
+            "description": "크기와 이동",
+            "properties": [
+              {
+                "id": "radius",
+                "label": "Radius",
+                "effect": "spatial",
+                "description": "",
+                "value": {
+                  "type": "number",
+                  "value": 24,
+                  "min": 10,
+                  "max": 140,
+                  "step": 1,
+                  "unit": "px"
+                }
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "effect": "temporal",
+                "description": "",
+                "value": {
+                  "type": "number",
+                  "value": 0,
+                  "min": 0,
+                  "max": 120,
+                  "step": 1,
+                  "unit": "px/s"
+                }
+              }
+            ]
+          }
+        ],
+        "visible": true,
+        "machine": {
+          "initialState": "idle",
+          "states": [
+            {
+              "id": "idle",
+              "label": "대기",
+              "description": "클릭을 기다립니다",
+              "values": []
+            },
+            {
+              "id": "moving",
+              "label": "이동",
+              "description": "오른쪽으로 이동",
+              "values": [
+                {
+                  "propertyId": "radius",
+                  "value": {
+                    "type": "number",
+                    "value": 80,
+                    "min": 10,
+                    "max": 140,
+                    "step": 1,
+                    "unit": "px"
+                  }
+                },
+                {
+                  "propertyId": "speed",
+                  "value": {
+                    "type": "number",
+                    "value": 40,
+                    "min": 0,
+                    "max": 120,
+                    "step": 1,
+                    "unit": "px/s"
+                  }
+                }
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "id": "press",
+              "from": "idle",
+              "to": "moving",
+              "label": "원 클릭",
+              "trigger": "event",
+              "afterMs": 1000
+            },
+            {
+              "id": "settle",
+              "from": "moving",
+              "to": "idle",
+              "label": "정착 후 대기",
+              "trigger": "after",
+              "afterMs": 1200
+            }
+          ]
+        }
+      }
+    ],
+    "algorithms": [
+      {
+        "id": "power-decay",
+        "name": "Power decay",
+        "description": "값 = base * ratio^depth",
+        "params": [
+          {
+            "id": "base",
+            "label": "Base",
+            "description": "첫 세대 길이",
+            "value": {
+              "type": "number",
+              "value": 140,
+              "min": 20,
+              "max": 300,
+              "step": 1,
+              "unit": "px"
+            }
+          },
+          {
+            "id": "ratio",
+            "label": "Ratio",
+            "description": "감소 비율",
+            "value": {
+              "type": "number",
+              "value": 0.7,
+              "min": 0.3,
+              "max": 0.95,
+              "step": 0.01,
+              "unit": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": "recursive-branch",
+        "name": "Recursive branch",
+        "description": "depth 세대까지 둘로 갈라지고 length로 길이를 정합니다.",
+        "params": [
+          {
+            "id": "depth",
+            "label": "Depth",
+            "description": "세대 수",
+            "value": {
+              "type": "number",
+              "value": 6,
+              "min": 1,
+              "max": 9,
+              "step": 1,
+              "unit": ""
+            }
+          },
+          {
+            "id": "length",
+            "label": "Length",
+            "description": "세대별 길이",
+            "value": {
+              "type": "algorithm",
+              "algorithmId": "power-decay",
+              "args": [
+                {
+                  "id": "base",
+                  "value": {
+                    "type": "number",
+                    "value": 140,
+                    "min": 20,
+                    "max": 300,
+                    "step": 1,
+                    "unit": "px"
+                  }
+                },
+                {
+                  "id": "ratio",
+                  "value": {
+                    "type": "number",
+                    "value": 0.7,
+                    "min": 0.3,
+                    "max": 0.95,
+                    "step": 0.01,
+                    "unit": ""
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "sine-wave",
+        "name": "Sine wave",
+        "description": "amplitude*sin(t*cycles)",
+        "params": [
+          {
+            "id": "amplitude",
+            "label": "Amplitude",
+            "description": "",
+            "value": {
+              "type": "number",
+              "value": 20,
+              "min": 0,
+              "max": 80,
+              "step": 1,
+              "unit": "px"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "targetNodeId": "",
+  "targetTransformationId": "",
+  "targetPropertyId": "",
+  "image": {
+    "file": "image-1.png",
+    "mimeType": "image/png"
+  },
+  "annotations": [],
+  "revisionSummary": "",
+  "alternative": false,
+  "previous": "// @rulegen-scene:start\nconst rulegenParams = {\n  \"tree/@x\": 270,\n  \"tree/@y\": 30,\n  \"tree/@w\": 360,\n  \"tree/@h\": 540,\n  \"tree/@visible\": true,\n  \"orb/@x\": 405,\n  \"orb/@y\": 120,\n  \"orb/@w\": 90,\n  \"orb/@h\": 60,\n  \"orb/@visible\": true,\n  \"tree/structure/depth\": 5,\n  \"tree/structure/length/base\": 140,\n  \"tree/structure/length/ratio\": 0.7,\n  \"tree/ink\": \"#75664e\",\n  \"orb/radius\": 24,\n  \"orb/speed\": 0\n};\nconst rulegenMachines = {\n  \"orb\": {\n    \"initialState\": \"idle\",\n    \"transitions\": [\n      {\n        \"id\": \"press\",\n        \"from\": \"idle\",\n        \"to\": \"moving\",\n        \"label\": \"원 클릭\",\n        \"trigger\": \"event\",\n        \"afterMs\": 1000\n      },\n      {\n        \"id\": \"settle\",\n        \"from\": \"moving\",\n        \"to\": \"idle\",\n        \"label\": \"정착 후 대기\",\n        \"trigger\": \"after\",\n        \"afterMs\": 1200\n      }\n    ],\n    \"states\": [\n      {\n        \"id\": \"idle\",\n        \"label\": \"대기\",\n        \"params\": {\n          \"orb/radius\": 24,\n          \"orb/speed\": 0\n        }\n      },\n      {\n        \"id\": \"moving\",\n        \"label\": \"이동\",\n        \"params\": {\n          \"orb/radius\": 80,\n          \"orb/speed\": 40\n        }\n      }\n    ]\n  }\n};\nconst rulegenInstances = [\n  {\n    \"root\": \"tree\",\n    \"module\": \"tree\",\n    \"map\": {\n      \"tree\": \"tree\",\n      \"orb\": \"orb\"\n    }\n  }\n];\n// @rulegen-scene:end\n\nconst rulegenModules = {};\nfunction rulegenModule(key, factory) { rulegenModules[key] = factory; }\nconst rulegenBase = Object.assign({}, rulegenParams);\nconst rulegenState = {};\nlet rulegenPlaying = true;\nfunction rulegenApply() {\n  Object.assign(rulegenParams, rulegenBase);\n  for (const nodeId of Object.keys(rulegenMachines)) {\n    const state = rulegenMachines[nodeId].states.find(item => item.id === rulegenState[nodeId].id);\n    if (state) Object.assign(rulegenParams, state.params);\n  }\n}\nfunction rulegenJumpState(nodeId, id) {\n  const machine = rulegenMachines[nodeId];\n  if (!machine || !machine.states.some(state => state.id === id)) return false;\n  rulegenState[nodeId] = { id, elapsed: 0 };\n  rulegenApply();\n  if (typeof p.stateEntered === 'function') p.stateEntered(nodeId, id);\n  return true;\n}\nfunction rulegenEmit(nodeId, transitionId) {\n  const machine = rulegenMachines[nodeId], current = rulegenState[nodeId];\n  const transition = machine && current && machine.transitions.find(item => item.id === transitionId && item.from === current.id && item.trigger === 'event');\n  return transition ? rulegenJumpState(nodeId, transition.to) : false;\n}\nfunction rulegenTickState(delta) {\n  if (!rulegenPlaying) return;\n  const step = Math.max(0, Math.min(Number.isFinite(delta) ? delta : 0, 250));\n  for (const nodeId of Object.keys(rulegenMachines)) {\n    const current = rulegenState[nodeId];\n    current.elapsed += step;\n    const next = rulegenMachines[nodeId].transitions.filter(item => item.from === current.id && item.trigger === 'after' && current.elapsed >= item.afterMs).sort((a, b) => a.afterMs - b.afterMs)[0];\n    if (next) rulegenJumpState(nodeId, next.to);\n  }\n}\nfunction rulegenResetStates() { for (const nodeId of Object.keys(rulegenMachines)) rulegenJumpState(nodeId, rulegenMachines[nodeId].initialState); }\nfor (const nodeId of Object.keys(rulegenMachines)) rulegenState[nodeId] = { id: rulegenMachines[nodeId].initialState, elapsed: 0 };\nrulegenApply();\n\n// @rulegen-modules:start\n// @rulegen-module \"tree\"\nrulegenModule(\"tree\", function (m) {\n  function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }\n  return {\n    draw() {\n      const box = m.box(\"tree\"), x = box.x + box.w / 2, bottom = box.y + box.h;\n      const depth = m.v(\"tree/structure/depth\");\n      const base = m.v(\"tree/structure/length/base\"), ratio = m.v(\"tree/structure/length/ratio\");\n      p.stroke(m.v(\"tree/ink\"));\n      for (let i = 0; i < depth; i++) p.line(x, bottom - i * 10, x, bottom - i * 10 - algo_power_decay(base, ratio, i));\n      const speed = m.v(\"orb/speed\");\n      p.circle(m.box(\"orb\").x + speed * m.state(\"orb\").elapsed / 1000, 300, m.v(\"orb/radius\") * 2);\n    },\n    mousePressed() { if (m.state(\"orb\").id === \"idle\") m.emit(\"orb\", \"press\"); },\n  };\n});\n// @rulegen-module-end\n// @rulegen-modules:end\n\n// @rulegen-scene-driver\nlet rulegenLive = [], rulegenStarted = false;\n// What-if values of single drawn items (by item id), set only while an inspection draws a held step.\nlet rulegenItemValues = {};\nconst rulegenItemsActive = () => Object.keys(rulegenItemValues).length > 0;\n// Fields the modules are driven by (m.field), by \"<root>/<field id>\": what-if combs of them, set only while an inspection\n// draws a held step (each stroke pulls the field along its direction within its radius), and their signature (results\n// computed with them are kept apart from the ones without).\nlet rulegenFieldEdits = {}, rulegenFieldSig = '';\nfunction rulegenSetFieldEdits(edits) {\n  const kept = {};\n  for (const key of Object.keys(edits && typeof edits === 'object' ? edits : {})) {\n    const strokes = (Array.isArray(edits[key]) ? edits[key] : []).filter(stroke => stroke && Array.isArray(stroke.points) && stroke.points.length > 1).slice(0, 24).map(stroke => {\n      const points = stroke.points.filter(q => Array.isArray(q) && Number.isFinite(q[0]) && Number.isFinite(q[1])).slice(0, 200), xs = points.map(q => q[0]), ys = points.map(q => q[1]);\n      return { points, radius: Math.max(4, Number(stroke.radius) || 60), strength: Math.max(0, Number(stroke.strength) || 1), box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };\n    }).filter(stroke => stroke.points.length > 1);\n    if (strokes.length) kept[key] = strokes;\n  }\n  rulegenFieldEdits = kept;\n  const text = JSON.stringify(kept);\n  let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;\n  rulegenFieldSig = text === '{}' ? '' : text.length + ':' + hash;\n}\n/** The direction (radians) and strength of a field's value: an angle, [vx, vy] or { x, y }. */\nfunction rulegenFieldVector(value) {\n  if (typeof value === 'number') return { kind: 'angle', angle: value, mag: 1 };\n  if (Array.isArray(value)) return { kind: 'array', angle: Math.atan2(Number(value[1]), Number(value[0])), mag: Math.hypot(Number(value[0]), Number(value[1])) };\n  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return { kind: 'object', angle: Math.atan2(value.y, value.x), mag: Math.hypot(value.x, value.y) };\n  return null;\n}\n/** A field's value at (x, y) in canvas pixels, combed by the what-if strokes on it; in the form the module's function gives. */\nfunction rulegenFieldAt(key, fn, x, y) {\n  const base = fn(x, y), strokes = rulegenFieldEdits[key];\n  if (!strokes) return base;\n  const v = rulegenFieldVector(base); if (!v || !Number.isFinite(v.angle)) return base;\n  let sx = Math.cos(v.angle), sy = Math.sin(v.angle);\n  for (const stroke of strokes) {\n    const r = stroke.radius, b = stroke.box;\n    if (x < b[0] - r || x > b[2] + r || y < b[1] - r || y > b[3] + r) continue;\n    for (let i = 1; i < stroke.points.length; i++) {\n      const a = stroke.points[i - 1], c = stroke.points[i], dx = c[0] - a[0], dy = c[1] - a[1], length = Math.hypot(dx, dy); if (length < 1e-6) continue;\n      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (length * length))), d = Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);\n      if (d >= r) continue;\n      // Each piece of the stroke pulls in proportion to its length, strongest on the stroke.\n      const w = stroke.strength * (1 - d / r) * (1 - d / r) * length / r * 2;\n      sx += w * dx / length; sy += w * dy / length;\n    }\n  }\n  const angle = Math.atan2(sy, sx);\n  if (v.kind === 'angle') { let turn = angle - v.angle; turn -= Math.round(turn / (2 * Math.PI)) * 2 * Math.PI; return v.angle + turn; }\n  const mag = v.mag || 1;\n  return v.kind === 'array' ? [Math.cos(angle) * mag, Math.sin(angle) * mag] : { x: Math.cos(angle) * mag, y: Math.sin(angle) * mag };\n}\n/** Every field the modules drew with, sampled on a grid over the canvas (direction and strength per cell), by \"<root>/<field id>\". */\nfunction rulegenFieldSamples() {\n  const out = {}, w = p.width || 900, h = p.height || 600, cols = 36, rows = 24;\n  for (const inst of rulegenLive) for (const [id, field] of inst.fields) {\n    const cells = [];\n    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {\n      let v = null; try { v = rulegenFieldVector(rulegenFieldAt(field.key, field.fn, (i + .5) * w / cols, (j + .5) * h / rows)); } catch (error) { v = null; }\n      cells.push(v && Number.isFinite(v.angle) ? [Math.round(v.angle * 100) / 100, Math.round((Number.isFinite(v.mag) ? v.mag : 0) * 100) / 100] : [0, 0]);\n    }\n    out[field.key] = { root: inst.entry.root, id, cols, rows, w, h, cells, declared: field.declared || 1 };\n  }\n  return out;\n}\n// One run of the brush's code, recorded as its execution (only while an exploration frame draws a held moment):\n// every checkpoint the code passes (m.trace(label, data): an internal operation and the state it works on) and\n// every drawing call, in the order they run. With a budget, drawing calls after that many events are not drawn,\n// so the picture is what execution has made up to there; checkpoints are still recorded (what comes next).\n// Only the brush explored is recorded (its roots): other brushes in the frame draw as usual.\n// show: the checkpoint (by its number in the run) whose picture of the brush so far is drawn, when the code draws\n// nothing of its own until later; its drawing is not part of the run (not recorded, not counted, never cut).\nlet rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = null, rulegenShowing = false;\nconst RULEGEN_MAX_EVENTS = 3000;\nconst RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];\nconst RULEGEN_VERTICES = { vertex: [0, 1], curveVertex: [0, 1], bezierVertex: [4, 5], quadraticVertex: [2, 3] };\n// options.points: each drawing call also keeps a few points of what it draws (canvas pixels), to compare runs mark by mark.\nfunction rulegenRunStart(budget, roots, show, options) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0, points: Boolean(options && options.points), lastTrace: null, termsNow: null, termNames: new Set() }; rulegenShape = null; rulegenPath = []; rulegenWrapContext(p.drawingContext); }\n/** Whether the code running now is recorded (a run, and the module drawing is one of its roots). */\nconst rulegenRunOwn = () => Boolean(rulegenRun) && !rulegenShowing && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));\nfunction rulegenRunEnd() { rulegenFlushTerms(); const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events, terms: [...run.termNames] }; }\n// Inner terms (m.term): what-if scales by \"<root>/<name>\" (1: as the code makes it; 0: without it), set only while a held step is drawn.\nlet rulegenTermScales = {};\nfunction rulegenSetTermScales(scales) { const kept = {}; for (const key of Object.keys(scales && typeof scales === 'object' ? scales : {})) { const s = Number(scales[key]); if (Number.isFinite(s) && s !== 1) kept[key] = s; } rulegenTermScales = kept; }\n/** A term's value scaled: a number, the numbers of a list, or the x, y of a point; anything else as it is. */\nfunction rulegenScaleTerm(value, s) {\n  if (typeof value === 'number') return value * s;\n  if (Array.isArray(value)) return value.map(item => typeof item === 'number' ? item * s : item);\n  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return Object.assign({}, value, { x: value.x * s, y: value.y * s });\n  return value;\n}\n/** How big a term's value is: |number|, or the length of a vector ([x, y] or { x, y }). */\nfunction rulegenTermSize(value) {\n  if (typeof value === 'number') return Math.abs(value);\n  if (Array.isArray(value) && typeof value[0] === 'number') return Math.hypot(value[0], Number(value[1]) || 0);\n  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return Math.hypot(value.x, value.y);\n  return NaN;\n}\n/** The terms computed during the step just finished go on its checkpoint: each one's last value, mean size and how often it was computed. */\nfunction rulegenFlushTerms() {\n  const run = rulegenRun; if (!run || !run.termsNow) return;\n  if (run.lastTrace) { const out = {}; for (const name of Object.keys(run.termsNow)) { const t = run.termsNow[name]; out[name] = { last: t.last, mean: t.sized ? rulegenRound(t.sum / t.sized) : null, n: t.n }; } run.lastTrace.terms = out; }\n  run.termsNow = null;\n}\n/** A few points (at most 12, the last kept) of what a drawing call draws, rounded. */\nconst rulegenSample = points => { if (!points.length) return []; const step = Math.max(1, Math.ceil(points.length / 11)), kept = points.filter((q, i) => i % step === 0); if (kept[kept.length - 1] !== points[points.length - 1]) kept.push(points[points.length - 1]); return kept.slice(0, 12).map(q => [rulegenRound(q[0]), rulegenRound(q[1])]); };\n/**\n * How a run with one thing changed differs from the run as it is: how far the mark target (an event index of\n * the base run) moved (mean distance of its points; the same event, else the nearest of its kind) and whether it is gone,\n * and the steps (checkpoints, or drawing calls without any) whose data or drawing came out different.\n */\nfunction rulegenCompareRuns(base, other, target) {\n  const centre = e => [(e.x || 0) + (e.w || 0) / 2, (e.y || 0) + (e.h || 0) / 2];\n  const gap = (a, b) => { const pa = a.pts && a.pts.length ? a.pts : [centre(a)], pb = b.pts && b.pts.length ? b.pts : [centre(b)], n = Math.min(pa.length, pb.length); if (!n) return 0;\n    let sum = 0; for (let i = 0; i < n; i++) sum += Math.hypot(pa[Math.floor(i * pa.length / n)][0] - pb[Math.floor(i * pb.length / n)][0], pa[Math.floor(i * pa.length / n)][1] - pb[Math.floor(i * pb.length / n)][1]); return sum / n; };\n  let moved = 0, gone = false;\n  const mark = Number.isInteger(target) ? base.events.find(e => e.index === target) : null;\n  if (mark) {\n    let same = other.events.find(e => e.index === target && e.kind === mark.kind);\n    if (!same) { const [mx, my] = centre(mark); same = other.events.filter(e => e.kind === mark.kind).sort((a, b) => Math.hypot(centre(a)[0] - mx, centre(a)[1] - my) - Math.hypot(centre(b)[0] - mx, centre(b)[1] - my))[0]; }\n    if (same) moved = rulegenRound(gap(mark, same)); else gone = true;\n  }\n  // Steps, each with its checkpoint and the drawing calls until the next one.\n  const split = run => { const traced = run.events.some(e => e.kind === 'trace'), out = []; for (const e of run.events) { if (e.kind === 'trace' || !traced) out.push({ head: e, draws: traced ? [] : [e] }); else if (out.length) out[out.length - 1].draws.push(e); } return out; };\n  const a = split(base), b = split(other), steps = [];\n  for (let i = 0; i < Math.max(a.length, b.length) && steps.length < 400; i++) {\n    const x = a[i], y = b[i];\n    if (!x || !y) { steps.push(i); continue; }\n    const data = x.head.kind === 'trace' && JSON.stringify(x.head.data) !== JSON.stringify(y.head.data);\n    const drawn = x.draws.length !== y.draws.length || x.draws.some((e, k) => gap(e, y.draws[k]) > .5);\n    if (data || drawn) steps.push(i);\n  }\n  return { moved, gone, steps };\n}\nconst rulegenRound = value => Math.round(value * 10) / 10;\n/** Points (in the code's coordinates) as canvas pixels, through the current transform. */\nfunction rulegenCanvas(points) {\n  const ctx = p.drawingContext, matrix = ctx && typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;\n  return points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).map(([x, y]) => matrix ? [(matrix.a * x + matrix.c * y + matrix.e) / density, (matrix.b * x + matrix.d * y + matrix.f) / density] : [x, y]);\n}\n/** The box of points (in the code's coordinates) on the canvas, through the current transform. */\nfunction rulegenBox(points) {\n  const ctx = p.drawingContext, matrix = ctx && typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;\n  const xs = [], ys = [];\n  for (const [x, y] of points) {\n    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;\n    xs.push(matrix ? (matrix.a * x + matrix.c * y + matrix.e) / density : x); ys.push(matrix ? (matrix.b * x + matrix.d * y + matrix.f) / density : y);\n  }\n  if (!xs.length) return null;\n  const x = Math.min(...xs), y = Math.min(...ys);\n  return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) };\n}\nfunction rulegenShapePoints(name, a) {\n  const n = i => Number(a[i]);\n  if (name === 'endShape') return rulegenShape || [];\n  if (name === 'ellipse' || name === 'circle' || name === 'arc') { const w = n(2), h = name === 'circle' ? w : Number.isFinite(n(3)) ? n(3) : w; return [[n(0) - w / 2, n(1) - h / 2], [n(0) + w / 2, n(1) + h / 2]]; }\n  if (name === 'rect' || name === 'square') { const w = n(2), h = name === 'square' ? w : Number.isFinite(n(3)) ? n(3) : w; return [[n(0), n(1)], [n(0) + w, n(1) + h]]; }\n  if (name === 'text') return [[n(1), n(2)]];\n  if (name === 'image') return [[n(1), n(2)], [n(1) + (Number.isFinite(n(3)) ? n(3) : 0), n(2) + (Number.isFinite(n(4)) ? n(4) : 0)]];\n  const points = []; for (let i = 0; i + 1 < a.length; i += 2) points.push([n(i), n(i + 1)]); return points;\n}\n/** Record one event of the run; whether it is still within the budget (to be drawn). */\nfunction rulegenEvent(event) {\n  const run = rulegenRun; run.total++;\n  if (run.events.length < RULEGEN_MAX_EVENTS) run.events.push(Object.assign({ index: run.total - 1, label: run.label }, event));\n  return run.budget === null || run.total <= run.budget;\n}\nfor (const name of RULEGEN_SHAPES) {\n  const base = p[name]; if (typeof base !== 'function') continue;\n  p[name] = function (...args) {\n    // Calls a drawing call makes itself (square → rect) are part of it.\n    if (!rulegenRunOwn() || rulegenInOp) return base.apply(p, args);\n    const points = rulegenShapePoints(name, args), box = rulegenBox(points); if (name === 'endShape') rulegenShape = null;\n    if (!rulegenEvent(Object.assign({ kind: name }, box || {}, rulegenRun.points ? { pts: rulegenSample(rulegenCanvas(points)) } : {}))) return p;\n    rulegenInOp++; try { return base.apply(p, args); } finally { rulegenInOp--; }\n  };\n}\n{ const begin = p.beginShape; if (typeof begin === 'function') p.beginShape = function (...args) { if (rulegenRunOwn()) rulegenShape = []; return begin.apply(p, args); }; }\nfor (const name of Object.keys(RULEGEN_VERTICES)) {\n  const base = p[name]; if (typeof base !== 'function') continue;\n  p[name] = function (...args) { if (rulegenRunOwn() && rulegenShape && rulegenShape.length < 4000) { const [i, j] = RULEGEN_VERTICES[name]; rulegenShape.push([Number(args[i]), Number(args[j])]); } return base.apply(p, args); };\n}\n// Code that paints on the canvas itself (p.drawingContext: beginPath … stroke) is executed the same way: each paint\n// call is an event of the run (the box of the path it paints), not drawn past the budget. Paint calls p5 makes inside\n// its own drawing calls are part of those.\n// The context is wrapped (its own methods) when a run starts, once per context.\nlet rulegenPath = [], rulegenWrapContext = () => {};\n{\n  const wrapped = [];\n  const tracking = () => rulegenRunOwn() && !rulegenInOp;\n  /** Points (in the context's coordinates) as canvas pixels, through its transform now. */\n  const onCanvas = (ctx, points) => {\n    const matrix = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;\n    return points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).map(([x, y]) => matrix ? [(matrix.a * x + matrix.c * y + matrix.e) / density, (matrix.b * x + matrix.d * y + matrix.f) / density] : [x, y]);\n  };\n  const boxOf = points => { if (!points.length) return null; const xs = points.map(q => q[0]), ys = points.map(q => q[1]), x = Math.min(...xs), y = Math.min(...ys);\n    return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) }; };\n  const n = Number;\n  const PATH = {\n    moveTo: a => [[n(a[0]), n(a[1])]], lineTo: a => [[n(a[0]), n(a[1])]],\n    bezierCurveTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])], [n(a[4]), n(a[5])]], quadraticCurveTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])]],\n    arcTo: a => [[n(a[0]), n(a[1])], [n(a[2]), n(a[3])]],\n    arc: a => [[n(a[0]) - n(a[2]), n(a[1]) - n(a[2])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[2])]],\n    ellipse: a => [[n(a[0]) - n(a[2]), n(a[1]) - n(a[3])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],\n    rect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]], roundRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],\n  };\n  const PAINT = {\n    fill: () => null, stroke: () => null,\n    fillRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]], strokeRect: a => [[n(a[0]), n(a[1])], [n(a[0]) + n(a[2]), n(a[1]) + n(a[3])]],\n    fillText: a => [[n(a[1]), n(a[2])]], strokeText: a => [[n(a[1]), n(a[2])]],\n    drawImage: a => a.length >= 9 ? [[n(a[5]), n(a[6])], [n(a[5]) + n(a[7]), n(a[6]) + n(a[8])]] : a.length >= 5 ? [[n(a[1]), n(a[2])], [n(a[1]) + n(a[3]), n(a[2]) + n(a[4])]] : [[n(a[1]), n(a[2])]],\n  };\n  // Painting the whole canvas (a background) is not a step of the brush.\n  for (const name of ['background', 'clear']) { const base = p[name]; if (typeof base === 'function') p[name] = function (...args) { rulegenInOp++; try { return base.apply(p, args); } finally { rulegenInOp--; } }; }\n  rulegenWrapContext = ctx => {\n    if (!ctx || typeof ctx !== 'object' || wrapped.includes(ctx)) return;\n    wrapped.push(ctx);\n    const begin = ctx.beginPath;\n    if (typeof begin === 'function') ctx.beginPath = function (...args) { if (tracking()) rulegenPath = []; return begin.apply(ctx, args); };\n    for (const name of Object.keys(PATH)) {\n      const base = ctx[name]; if (typeof base !== 'function') continue;\n      ctx[name] = function (...args) { if (tracking() && rulegenPath.length < 4000) rulegenPath.push(...onCanvas(ctx, PATH[name](args))); return base.apply(ctx, args); };\n    }\n    for (const name of Object.keys(PAINT)) {\n      const base = ctx[name]; if (typeof base !== 'function') continue;\n      ctx[name] = function (...args) {\n        if (!tracking()) return base.apply(ctx, args);\n        // A Path2D painted is somewhere the run cannot see: no box.\n        const own = PAINT[name](args), points = own ? onCanvas(ctx, own) : args[0] && typeof args[0] === 'object' ? [] : rulegenPath;\n        if (!rulegenEvent(Object.assign({ kind: name }, boxOf(points) || {}, rulegenRun.points ? { pts: rulegenSample(points) } : {}))) return;\n        return base.apply(ctx, args);\n      };\n    }\n  };\n}\n/** Checkpoint data made small: lists of more than 200 items keep every k-th (and the last), numbers keep one decimal. */\nfunction rulegenThin(value, depth) {\n  if (typeof value === 'number') return Math.round(value * 10) / 10;\n  if (!value || typeof value !== 'object' || depth > 6) return value;\n  if (Array.isArray(value)) {\n    const step = Math.ceil(value.length / 200), kept = step > 1 ? value.filter((item, i) => i % step === 0 || i === value.length - 1) : value;\n    return kept.map(item => rulegenThin(item, depth + 1));\n  }\n  const out = {}; for (const key of Object.keys(value)) out[key] = rulegenThin(value[key], depth + 1); return out;\n}\n/** Where a checkpoint is: its data's x, y, or the box of the points in it. */\nfunction rulegenDataBox(data) {\n  if (!data || typeof data !== 'object') return null;\n  if (Number.isFinite(data.x) && Number.isFinite(data.y)) return { x: rulegenRound(data.x), y: rulegenRound(data.y), w: Number.isFinite(data.w) ? rulegenRound(data.w) : 0, h: Number.isFinite(data.h) ? rulegenRound(data.h) : 0 };\n  const points = [];\n  const walk = (value, depth) => { if (points.length > 2000 || depth > 4 || !value || typeof value !== 'object') return; if (Number.isFinite(value.x) && Number.isFinite(value.y)) { points.push([value.x, value.y]); return; } for (const key of Object.keys(value)) walk(value[key], depth + 1); };\n  walk(data, 0);\n  if (!points.length) return null;\n  const xs = points.map(q => q[0]), ys = points.map(q => q[1]), x = Math.min(...xs), y = Math.min(...ys);\n  return { x: rulegenRound(x), y: rulegenRound(y), w: rulegenRound(Math.max(...xs) - x), h: rulegenRound(Math.max(...ys) - y) };\n}\n// Input history: every press-drag-release on the canvas, in canvas pixels with ms since its press,\n// shared by all modules (m.history()). Modules derive what they draw from it with the current values,\n// so changing a value adjusts what is already there instead of only what comes next.\n// Each gesture has a stable id and a rev that changes whenever its points (or done) change,\n// so what a module makes from one gesture is computed once per (id, rev, values) with m.memo.\nconst rulegenGestures = [];\nlet rulegenGesture = null, rulegenGestureStart = 0, rulegenGestureIds = 0;\nconst RULEGEN_MAX_GESTURES = 24, RULEGEN_MAX_POINTS = 4000;\nfunction rulegenRecord(kind) {\n  const touch = p.touches && p.touches[0], x = Math.round((touch ? touch.x : p.mouseX) * 10) / 10, y = Math.round((touch ? touch.y : p.mouseY) * 10) / 10;\n  if (!Number.isFinite(x) || !Number.isFinite(y)) return;\n  const now = typeof performance !== 'undefined' ? performance.now() : 0;\n  if (kind === 'down') {\n    rulegenGesture = { id: ++rulegenGestureIds, rev: 0, points: [{ x, y, t: 0 }], done: false }; rulegenGestureStart = now;\n    rulegenGestures.push(rulegenGesture); if (rulegenGestures.length > RULEGEN_MAX_GESTURES) rulegenGestures.shift();\n  } else if (rulegenGesture) {\n    const last = rulegenGesture.points[rulegenGesture.points.length - 1];\n    if (last.x !== x || last.y !== y) { rulegenGesture.points.push({ x, y, t: Math.round(now - rulegenGestureStart) }); rulegenGesture.rev++; }\n    if (kind === 'up') { rulegenGesture.done = true; rulegenGesture.rev++; rulegenGesture = null; }\n  }\n  // Bounded: the oldest gestures are thinned out first.\n  let total = rulegenGestures.reduce((n, g) => n + g.points.length, 0);\n  for (let i = 0; total > RULEGEN_MAX_POINTS && i < rulegenGestures.length; i++) {\n    const g = rulegenGestures[i]; if (g.points.length < 3) continue;\n    const kept = g.points.filter((point, k) => k % 2 === 0 || k === g.points.length - 1); total -= g.points.length - kept.length; g.points.splice(0, g.points.length, ...kept); g.rev++;\n  }\n}\nfunction rulegenInputReset() { rulegenGestures.length = 0; rulegenGesture = null; }\n/** Whether a value change can only show by giving the input again: a module takes input but keeps what it made from it (not derived from m.history()). */\nfunction rulegenNeedsReplay() {\n  return rulegenLive.some(inst => !inst.usesHistory && ['mousePressed', 'mouseDragged', 'mouseReleased', 'mouseClicked', 'touchStarted', 'touchMoved', 'touchEnded'].some(name => inst.handlers[name]));\n}\nfunction rulegenKey(inst, key) {\n  const cut = key.indexOf('/'), actual = cut > 0 ? inst.entry.map[decodeURIComponent(key.slice(0, cut))] : undefined;\n  if (actual === undefined) throw new Error('Unknown value key: ' + key);\n  return encodeURIComponent(actual) + key.slice(cut);\n}\nfunction rulegenInstance(entry) {\n  // reads: value keys read while setup runs (setup re-runs only when one of them changes).\n  // memo: results a module computes once per key (not part of m.store, so not copied into inspection steps).\n  // memoStack: the m.memo computations running now; each records the values it reads (a value change recomputes it).\n  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [], fields: new Map() };\n  const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };\n  const m = {\n    p,\n    // v(key, item): the value as one drawn item (its id) has it: an inspection what-if may set it for that item only.\n    v(key, item) {\n      const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k);\n      const own = item === undefined || item === null ? undefined : rulegenItemValues[String(item)], value = own && k in own ? own[k] : rulegenParams[k];\n      for (const deps of inst.memoStack) deps.set(k, value); return value;\n    },\n    // opt(fallback, key, item): a value that may not exist yet (a suggested parameter an inspection's records read): the fallback until it does.\n    opt(fallback, key, item) { try { return m.v(key, item); } catch (error) { return fallback; } },\n    box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },\n    state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },\n    emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },\n    history() { inst.usesHistory = true; return rulegenGestures; },\n    // field(id, fn): a field the module is driven by (fn(x, y) in canvas pixels gives an angle, [vx, vy] or { x, y }); sample it only\n    // through the function returned, which an inspection can show and comb.\n    field(id, fn) {\n      if (typeof fn !== 'function') throw new Error('m.field needs a function (x, y) => angle or [vx, vy].');\n      // Declared again in the same frame (per mark): the arrows can show only one of them, so the inspection says so.\n      const key = inst.entry.root + '/' + String(id), was = inst.fields.get(String(id));\n      inst.fields.set(String(id), { key, fn, frame: rulegenFrameNo, declared: was && was.frame === rulegenFrameNo && was.fn !== fn ? was.declared + 1 : 1 });\n      return (x, y) => rulegenFieldAt(key, fn, x, y);\n    },\n    // term(name, value): one inner term of a computation (a pull, an offset, a noise contribution), returned as it is. An\n    // Execution frame records it on the step that computes it and can scale it (0: without it) to show what it does.\n    term(name, value) {\n      const id = String(name), key = inst.entry.root + '/' + id, scale = rulegenTermScales[key];\n      const out = scale === undefined ? value : rulegenScaleTerm(value, scale), run = rulegenRun;\n      if (run && !rulegenShowing && (!run.roots || run.roots.includes(inst.entry.root))) {\n        run.termNames.add(key);\n        const now = run.termsNow || (run.termsNow = {}), entry = now[id] || (now[id] = { n: 0, sum: 0, sized: 0, last: null }), size = rulegenTermSize(out);\n        entry.n++; if (Number.isFinite(size)) { entry.sum += size; entry.sized++; } entry.last = rulegenThin(rulegenPlain(out, 0), 0);\n      }\n      return out;\n    },\n    // trace(label, data, show): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.\n    // show(): draws the brush as it is after this step (in its own look), for code that draws nothing until later; called right here when this is the step reached.\n    trace(label, data, show) {\n      if (!rulegenRun || rulegenShowing || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;\n      const ordinal = rulegenRun.traces++;\n      rulegenFlushTerms();\n      rulegenRun.label = String(label).slice(0, 120);\n      // Long lists are thinned (a point list keeps its shape: every k-th point and the last), never dropped.\n      let plain = rulegenThin(rulegenPlain(data, 0), 0);\n      if (plain !== undefined && JSON.stringify(plain).length > 30000) plain = Object.fromEntries(Object.entries(plain && typeof plain === 'object' ? plain : {}).filter(([, value]) => value === null || typeof value !== 'object'));\n      const last = rulegenRun.events[rulegenRun.events.length - 1], box = rulegenDataBox(plain) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});\n      rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain, shows: typeof show === 'function' }, box));\n      const own = rulegenRun.events[rulegenRun.events.length - 1]; rulegenRun.lastTrace = own && own.index === rulegenRun.total - 1 ? own : null;\n      if (typeof show === 'function' && rulegenRun.show === ordinal) {\n        rulegenShowing = true; p.push();\n        try { show(); } catch (error) { /* a picture that fails is left out; the run goes on */ } finally { p.pop(); rulegenShowing = false; }\n      }\n    },\n    memo(key, compute) {\n      const named = typeof key === 'string' ? key : JSON.stringify(key);\n      if (named.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');\n      // Computed with a combed field: kept apart from what is computed with the field as it is.\n      const k = rulegenFieldSig ? named + '#field:' + rulegenFieldSig : named;\n      // While some item has its own what-if value, results are computed afresh (a cached one may be another item's).\n      // During a recorded run too: the run is the code executing, checkpoints included.\n      const hit = rulegenItemsActive() || rulegenRun ? undefined : inst.memo.get(k);\n      // A value read while computing (m.v) that changed since makes the entry stale, even if the key does not name it.\n      if (hit && hit.deps.every(([dk, dv]) => rulegenParams[dk] === dv)) {\n        hit.used = rulegenFrameNo;\n        for (const outer of inst.memoStack) for (const [dk, dv] of hit.deps) outer.set(dk, dv);\n        return hit.value;\n      }\n      const deps = new Map(); inst.memoStack.push(deps);\n      let value;\n      try { value = compute(); } finally { inst.memoStack.pop(); }\n      for (const outer of inst.memoStack) for (const [dk, dv] of deps) outer.set(dk, dv);\n      inst.memo.set(k, { value, used: rulegenFrameNo, deps: [...deps] });\n      if (inst.memo.size > RULEGEN_MEMO_MAX) inst.memo.delete(inst.memo.keys().next().value);\n      return value;\n    },\n    store: inst.store,\n  };\n  inst.handlers = rulegenModules[entry.module](m) || {};\n  return inst;\n}\n/**\n * A module was replaced in place (its code edited, e.g. a constant exposed as a\n * property): its running instances take the new code and keep their m.store, so\n * nothing drawn or held is lost; cached results (m.memo) start over.\n */\nfunction rulegenRefreshModule(key) {\n  rulegenLive = rulegenLive.map(inst => {\n    if (inst.entry.module !== key) return inst;\n    const fresh = rulegenInstance(inst.entry);\n    Object.assign(fresh.store, inst.store);\n    fresh.usesHistory = inst.usesHistory; fresh.setupReads = inst.setupReads;\n    return fresh;\n  });\n}\n/** Create instances for new root nodes, keep running ones, drop removed ones. */\nfunction rulegenSync() {\n  const next = [];\n  for (const entry of rulegenInstances) {\n    if (!rulegenModules[entry.module]) continue;\n    const found = rulegenLive.find(inst => inst.entry.root === entry.root && inst.entry.module === entry.module);\n    if (found) { found.entry = entry; next.push(found); continue; }\n    const inst = rulegenInstance(entry); next.push(inst);\n    if (rulegenStarted) rulegenSetupOne(inst);\n  }\n  rulegenLive = next;\n}\n/** Plain data (numbers, strings, booleans, arrays, plain objects), deep-copied; anything else is left out. */\nfunction rulegenPlain(value, depth) {\n  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;\n  if (typeof value === 'number') return Number.isFinite(value) ? value : null;\n  if (typeof value !== 'object' || depth > 12) return undefined;\n  if (Array.isArray(value)) return value.map(item => { const copy = rulegenPlain(item, depth + 1); return copy === undefined ? null : copy; });\n  const proto = Object.getPrototypeOf(value);\n  if (proto !== null && proto !== Object.getPrototypeOf({})) return undefined;\n  const out = {};\n  for (const key of Object.keys(value)) { const copy = rulegenPlain(value[key], depth + 1); if (copy !== undefined) out[key] = copy; }\n  return out;\n}\n/** Everything a step needs to come back: each instance's store, the machine states and the random seed. */\nfunction rulegenSnapshot() {\n  const seed = Math.floor(Math.random() * 2147483647);\n  if (typeof p.randomSeed === 'function') p.randomSeed(seed);\n  if (typeof p.noiseSeed === 'function') p.noiseSeed(seed);\n  const states = {}, stores = {};\n  for (const nodeId of Object.keys(rulegenState)) states[nodeId] = { id: rulegenState[nodeId].id, elapsed: rulegenState[nodeId].elapsed };\n  for (const inst of rulegenLive) stores[inst.entry.root] = rulegenPlain(inst.store, 0);\n  return { seed, states, stores, history: rulegenPlain(rulegenGestures, 0) };\n}\n/** Put a snapshot back (with the current values): stores are refilled in place, objects that are not plain data are kept. */\nfunction rulegenRestore(snapshot) {\n  if (!snapshot || typeof snapshot !== 'object') return;\n  for (const nodeId of Object.keys(snapshot.states || {})) {\n    const saved = snapshot.states[nodeId], machine = rulegenMachines[nodeId];\n    if (machine && saved && machine.states.some(state => state.id === saved.id)) rulegenState[nodeId] = { id: saved.id, elapsed: Number(saved.elapsed) || 0 };\n  }\n  rulegenApply();\n  for (const inst of rulegenLive) {\n    const saved = (snapshot.stores || {})[inst.entry.root];\n    if (!saved || typeof saved !== 'object') continue;\n    for (const key of Object.keys(inst.store)) if (rulegenPlain(inst.store[key], 0) !== undefined) delete inst.store[key];\n    Object.assign(inst.store, rulegenPlain(saved, 0));\n  }\n  if (Array.isArray(snapshot.history)) {\n    rulegenInputReset();\n    // Restored gestures keep their id and rev (their memoized results stay valid); new ones get new ids.\n    // One saved while it was still being drawn (done: false) comes back unfinished.\n    for (const g of snapshot.history) if (g && Array.isArray(g.points)) {\n      const id = Number.isInteger(g.id) && g.id > 0 ? g.id : ++rulegenGestureIds;\n      rulegenGestureIds = Math.max(rulegenGestureIds, id);\n      rulegenGestures.push({ id, rev: Number.isInteger(g.rev) ? g.rev : 0, points: g.points.filter(q => q && Number.isFinite(q.x) && Number.isFinite(q.y)).map(q => ({ x: q.x, y: q.y, t: Number(q.t) || 0 })), done: g.done !== false });\n    }\n  }\n  if (typeof p.randomSeed === 'function') p.randomSeed(snapshot.seed);\n  if (typeof p.noiseSeed === 'function') p.noiseSeed(snapshot.seed);\n}\nfunction rulegenSetupOne(inst) {\n  if (!inst.handlers.setup) return;\n  inst.reads = new Set();\n  try { inst.handlers.setup(); } finally { inst.setupReads = inst.reads; inst.reads = null; }\n}\n/**\n * Run the modules' setup. Given the value keys that just changed, only modules\n * whose setup read one of them run it again; the others keep their state\n * (trails, particles, drags) and simply draw with the new values.\n */\nfunction rulegenSetup(changed) {\n  for (const inst of rulegenLive) if (!changed || !inst.setupReads || [...inst.setupReads].some(key => changed.has(key))) rulegenSetupOne(inst);\n}\np.setup = () => { p.createCanvas(900, 600); rulegenResetStates(); rulegenSync(); rulegenSetup(); rulegenStarted = true; };\nlet rulegenFrameNo = 0;\nconst RULEGEN_MEMO_MAX = 4000, RULEGEN_MEMO_IDLE = 240;\np.draw = () => {\n  rulegenTickState(p.deltaTime);\n  p.clear();\n  rulegenFrameNo++;\n  for (const inst of rulegenLive) {\n    if (!inst.handlers.draw || rulegenParams[encodeURIComponent(inst.entry.root) + '/@visible'] === false) continue;\n    rulegenRunRoot = inst.entry.root;\n    p.push(); try { inst.handlers.draw(); } finally { p.pop(); rulegenRunRoot = null; }\n  }\n  // Results not used for a while (old values, gestures that are gone) are dropped.\n  if (rulegenFrameNo % 120 === 0) for (const inst of rulegenLive) for (const [k, entry] of inst.memo) if (rulegenFrameNo - entry.used > RULEGEN_MEMO_IDLE) inst.memo.delete(k);\n};\nconst RULEGEN_INPUT = { mousePressed: 'down', mouseDragged: 'move', mouseReleased: 'up', touchStarted: 'down', touchMoved: 'move', touchEnded: 'up' };\nfunction rulegenDispatch(name, fallback, touch) {\n  return event => {\n    if (RULEGEN_INPUT[name]) rulegenRecord(RULEGEN_INPUT[name]);\n    let handled = false, result;\n    for (const inst of rulegenLive) {\n      const handler = inst.handlers[name] || (fallback && inst.handlers[fallback]);\n      if (!handler) continue;\n      handled = true; if (handler(event) === false) result = false;\n    }\n    return touch && handled ? false : result;\n  };\n}\nfor (const name of ['mousePressed', 'mouseReleased', 'mouseDragged', 'mouseMoved', 'mouseClicked', 'doubleClicked', 'mouseWheel', 'keyPressed', 'keyReleased', 'keyTyped']) p[name] = rulegenDispatch(name);\np.touchStarted = rulegenDispatch('touchStarted', 'mousePressed', true);\np.touchMoved = rulegenDispatch('touchMoved', 'mouseDragged', true);\np.touchEnded = rulegenDispatch('touchEnded', 'mouseReleased', true);\np.stateEntered = (nodeId, stateId) => {\n  for (const inst of rulegenLive) {\n    if (!inst.handlers.stateEntered) continue;\n    const local = Object.keys(inst.entry.map).find(id => inst.entry.map[id] === nodeId);\n    if (local !== undefined) inst.handlers.stateEntered(local, stateId);\n  }\n};\n",
+  "instruction": "",
+  "compositionPens": [],
+  "compositionStrokes": [],
+  "machineTarget": null,
+  "machineMarks": [],
+  "composePrompt": "",
+  "transformMarks": [],
+  "inspection": {
+    "brushName": "Tree",
+    "nodeIds": [
+      "tree",
+      "orb"
+    ],
+    "constraints": [
+      {
+        "key": "tree/structure/depth",
+        "nodeId": "tree",
+        "transformationId": "branching-growth",
+        "transformation": "Branching growth",
+        "propertyId": "structure",
+        "property": "Branching",
+        "path": "depth",
+        "type": "number"
+      },
+      {
+        "key": "tree/structure/length/base",
+        "nodeId": "tree",
+        "transformationId": "branching-growth",
+        "transformation": "Branching growth",
+        "propertyId": "structure",
+        "property": "Branching",
+        "path": "length › base",
+        "type": "number"
+      },
+      {
+        "key": "tree/structure/length/ratio",
+        "nodeId": "tree",
+        "transformationId": "branching-growth",
+        "transformation": "Branching growth",
+        "propertyId": "structure",
+        "property": "Branching",
+        "path": "length › ratio",
+        "type": "number"
+      },
+      {
+        "key": "tree/ink",
+        "nodeId": "tree",
+        "transformationId": "ink-wash",
+        "transformation": "Ink wash",
+        "propertyId": "ink",
+        "property": "Ink",
+        "path": "",
+        "type": "color"
+      },
+      {
+        "key": "orb/radius",
+        "nodeId": "orb",
+        "transformationId": "pulse",
+        "transformation": "Pulse",
+        "propertyId": "radius",
+        "property": "Radius",
+        "path": "",
+        "type": "number"
+      },
+      {
+        "key": "orb/speed",
+        "nodeId": "orb",
+        "transformationId": "pulse",
+        "transformation": "Pulse",
+        "propertyId": "speed",
+        "property": "Speed",
+        "path": "",
+        "type": "number"
+      }
+    ],
+    "steps": [
+      {
+        "id": 1,
+        "nodeId": null,
+        "from": null,
+        "to": null,
+        "transitionId": null,
+        "values": {},
+        "runtime": null
+      }
+    ],
+    "cursor": 0,
+    "marks": [],
+    "markStyles": [],
+    "previews": false,
+    "update": null,
+    "revise": null,
+    "fromExecution": {
+      "concern": "",
+      "summary": "",
+      "execution": {
+        "summary": "가지를 하나씩 그립니다.",
+        "axis": "run",
+        "done": 3,
+        "count": 8,
+        "progress": 0.375,
+        "last": "가지 3 · 가지 뻗기",
+        "next": "가지 4 · 가지 뻗기",
+        "stage": {
+          "name": "가지 뻗기",
+          "explain": "부모 끝에서 각도만큼 돌려 뻗습니다."
+        }
+      },
+      "base": null,
+      "applied": false,
+      "listed": [],
+      "manipulations": []
+    }
+  },
+  "explore": null
+}

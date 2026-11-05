@@ -49,7 +49,7 @@ test("AI clarification compares before/after images with the scene as context an
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(context.instruction, ""); assert.deepEqual(context.annotations, annotations); assert.equal(context.scene.nodes[0].name, "Tree");
     assert.equal(calls[0].input[0].content.filter((part: { type: string }) => part.type === "input_image").length, 2);
-    assert.match(calls[0].instructions, /editable Korean/);
+    assert.match(calls[0].instructions, /editable English/);
     await runAI(requestSchema.parse({ ...input, instruction: "잎을 추가해줘" }), new AbortController().signal);
     assert.equal(JSON.parse(calls[1].input[0].content[0].text).instruction, "잎을 추가해줘");
     await assert.rejects(runAI(requestSchema.parse({ ...input, annotations: [] }), new AbortController().signal));

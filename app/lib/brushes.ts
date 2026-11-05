@@ -75,9 +75,11 @@ export function subBrushFor(scene: Scene, frameId: string, name: string, parent:
 
 /**
  * A root node that only fills the canvas behind everything and does nothing (a still background): not something
- * to stamp. Anything interactive (with a state machine) is a brush, a background too.
+ * to stamp. Anything interactive (with a state machine) is a brush, a background too; so is anything over the whole
+ * canvas that is made by an algorithm (lines traced through a flow field, scattered marks): that is the drawing itself.
  */
-export const isBackdrop = (node: Pick<Scene["nodes"][number], "kind" | "region" | "machine">) => node.kind === "object" && !node.machine && node.region.w >= .95 && node.region.h >= .95;
+export const isBackdrop = (node: Pick<Scene["nodes"][number], "kind" | "region" | "machine" | "transformations">) => node.kind === "object" && !node.machine && node.region.w >= .95 && node.region.h >= .95
+  && !node.transformations.some(transformation => transformation.properties.some(property => property.value.type === "algorithm"));
 /**
  * One brush per root node of an AI-generated scene: a collection (its nested nodes are parts of it), or an object
  * standing alone at the root (a single drawn form is kept as one object); every interactive one, only a still

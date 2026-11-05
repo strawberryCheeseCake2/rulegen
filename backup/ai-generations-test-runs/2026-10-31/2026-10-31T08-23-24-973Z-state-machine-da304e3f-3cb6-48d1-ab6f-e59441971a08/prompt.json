@@ -1,0 +1,600 @@
+{
+  "model": "gpt-6.1-sol",
+  "store": false,
+  "instructions": "# state-machine — plan the state machine of ONE collection or object\n\nPlan the state machine for the node identified by `targetNodeId` in the supplied `scene`, using the sketch image, ordered `compositionStrokes` (including interaction annotations), the node's semantic transformations and the user instruction. Infer meaningful stages of movement, growth, interaction or transformation from the dynamic intent. Never invent motion the sketch/instruction does not suggest; if the node is truly static, return a single state with no transitions.\n\n- States change only THIS node's property values (`values[].propertyId` must be a property id of the target node). Keep each value's structure identical to the base property value: same scalar type and range shape, or the same algorithm with the same argument ids — change only the scalar numbers/colors/options/toggles.\n- If the existing properties cannot express a needed phase difference, still keep the structure; describe the difference in the state description so the code step can branch on the state id.\n- If `scene` already contains a machine for the node, refine it into finer meaningful phases while preserving its intent and stable ids where they still apply.\n- `algorithms` must be `[]` unless you truly need a new definition (then list only new ones).\n\n## PER-NODE STATE MACHINE\n\nA state machine belongs to **one node** (a collection or an object), not to the whole frame. It changes that node's own property values over time or in response to user input. Other nodes keep their own machines.\n\n- `machine = { initialState, states[], transitions[] }`.\n- Each state: `{ id, label, description, values[] }`. `values` lists `{ propertyId, value }` for properties of THIS node whose value differs in that state. Omitted properties keep the node's base value. A state value MUST keep the same structure as the base property value: a number stays a number with the same range shape, an algorithm call stays a call of the same algorithm with the same argument ids — only scalar values change between states. If a phase needs a new controllable quantity, add it as a property of the node first (in `transformation`).\n- The description explains the entry appearance, the behavior while active, the eligible user inputs and the exit/completion condition.\n- Transitions: `{ id, from, to, label, trigger, afterMs }`. `trigger: \"after\"` for genuinely timed phases (afterMs = integer milliseconds 100..60000, long enough to see the motion); `trigger: \"event\"` for real user input or a code-detected completion (afterMs = 1000, ignored). Waiting/hover/pressed states must not advance just because time passed.\n\nFINE-GRAINED STATE PLANNING: Decompose the node's behavior as finely as its actual behavior supports, up to 32 states and 128 transitions. Do not summarize a multi-step dynamic or interactive behavior as only Idle/Active/Done. For a rich interaction normally use 8–20 meaningful states. Separate every change in user intent, input availability, movement direction, speed regime, contact, selection, appearance, growth, completion, cancellation, recovery and return. A drag example can distinguish available, hover feedback, pressed/armed, drag beginning, dragging, valid drop preview, released, snapping/settling, committed and returning; a motion example can distinguish anticipation, acceleration, cruising, approach, contact, response, deceleration, settling and recovery. These are examples, not a template. Do not add duplicate sampled frames of unchanged behavior. A truly static node has no machine.\n\nSEMANTIC TRANSITION LABELS: Every `label` concisely describes WHY the node changes, naming the user action, target or completion condition, e.g. `\"원 위에 포인터 진입\"`, `\"드래그 시작\"`, `\"유효한 영역에 놓기\"`, `\"성장 완료\"`, `\"정착 후 대기\"`. Never use bare IDs, `A→B`, `Next`, `Transition 1` or only a duration. Use stable descriptive ids. Include relevant cancellation, re-entry and return paths. Prefer Korean labels and descriptions. Never render this planning text in the artwork.\n\n## Output JSON\n\nReturn exactly one object matching `prompts/schemas/state-machine.json`:\n\n```json\n{\n  \"algorithms\": [],\n  \"machine\": {\n    \"initialState\": \"idle\",\n    \"states\": [\n      { \"id\": \"idle\", \"label\": \"대기\", \"description\": \"원이 작게 숨 쉬며 클릭을 기다립니다.\", \"values\": [ { \"propertyId\": \"radius\", \"value\": { \"type\": \"number\", \"value\": 24, \"min\": 10, \"max\": 140, \"step\": 1, \"unit\": \"px\" } } ] },\n      { \"id\": \"growing\", \"label\": \"성장\", \"description\": \"클릭 후 1.2초 동안 커집니다.\", \"values\": [ { \"propertyId\": \"radius\", \"value\": { \"type\": \"number\", \"value\": 90, \"min\": 10, \"max\": 140, \"step\": 1, \"unit\": \"px\" } } ] },\n      { \"id\": \"settled\", \"label\": \"정착\", \"description\": \"커진 상태로 머무르고 다시 클릭하면 대기로 돌아갑니다.\", \"values\": [] }\n    ],\n    \"transitions\": [\n      { \"id\": \"press-circle\", \"from\": \"idle\", \"to\": \"growing\", \"label\": \"원 클릭\", \"trigger\": \"event\", \"afterMs\": 1000 },\n      { \"id\": \"growth-done\", \"from\": \"growing\", \"to\": \"settled\", \"label\": \"성장 완료\", \"trigger\": \"after\", \"afterMs\": 1200 },\n      { \"id\": \"press-reset\", \"from\": \"settled\", \"to\": \"idle\", \"label\": \"다시 클릭해 되돌리기\", \"trigger\": \"event\", \"afterMs\": 1000 }\n    ]\n  }\n}\n```",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "{\"scene\":{\"nodes\":[{\"id\":\"tree\",\"kind\":\"collection\",\"parentId\":null,\"name\":\"Tree\",\"description\":\"가지가 갈라지는 나무\",\"primitive\":\"group\",\"region\":{\"x\":0.3,\"y\":0.05,\"w\":0.4,\"h\":0.9},\"transformations\":[{\"id\":\"branching-growth\",\"label\":\"Branching growth\",\"description\":\"재귀 분기\",\"properties\":[{\"id\":\"structure\",\"label\":\"Branching\",\"effect\":\"spatial\",\"description\":\"가지 구조\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"recursive-branch\",\"args\":[{\"id\":\"depth\",\"value\":{\"type\":\"number\",\"value\":5,\"min\":1,\"max\":9,\"step\":1,\"unit\":\"\"}},{\"id\":\"length\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"power-decay\",\"args\":[{\"id\":\"base\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]}}]}}]},{\"id\":\"ink-wash\",\"label\":\"Ink wash\",\"description\":\"먹색\",\"properties\":[{\"id\":\"ink\",\"label\":\"Ink\",\"effect\":\"stylistic\",\"description\":\"가지 색\",\"value\":{\"type\":\"color\",\"value\":\"#75664e\"}}]}],\"visible\":true,\"machine\":null},{\"id\":\"orb\",\"kind\":\"object\",\"parentId\":\"tree\",\"name\":\"Orb\",\"description\":\"누르면 움직이는 원\",\"primitive\":\"ellipse\",\"region\":{\"x\":0.45,\"y\":0.2,\"w\":0.1,\"h\":0.1},\"transformations\":[{\"id\":\"pulse\",\"label\":\"Pulse\",\"description\":\"크기와 이동\",\"properties\":[{\"id\":\"radius\",\"label\":\"Radius\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":24,\"min\":10,\"max\":140,\"step\":1,\"unit\":\"px\"}},{\"id\":\"speed\",\"label\":\"Speed\",\"effect\":\"temporal\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":0,\"min\":0,\"max\":120,\"step\":1,\"unit\":\"px/s\"}}]}],\"visible\":true,\"machine\":{\"initialState\":\"idle\",\"states\":[{\"id\":\"idle\",\"label\":\"대기\",\"description\":\"클릭을 기다립니다\",\"values\":[]},{\"id\":\"moving\",\"label\":\"이동\",\"description\":\"오른쪽으로 이동\",\"values\":[{\"propertyId\":\"radius\",\"value\":{\"type\":\"number\",\"value\":80,\"min\":10,\"max\":140,\"step\":1,\"unit\":\"px\"}},{\"propertyId\":\"speed\",\"value\":{\"type\":\"number\",\"value\":40,\"min\":0,\"max\":120,\"step\":1,\"unit\":\"px/s\"}}]}],\"transitions\":[{\"id\":\"press\",\"from\":\"idle\",\"to\":\"moving\",\"label\":\"원 클릭\",\"trigger\":\"event\",\"afterMs\":1000},{\"id\":\"settle\",\"from\":\"moving\",\"to\":\"idle\",\"label\":\"정착 후 대기\",\"trigger\":\"after\",\"afterMs\":1200}]}}],\"algorithms\":[{\"id\":\"power-decay\",\"name\":\"Power decay\",\"description\":\"값 = base * ratio^depth\",\"params\":[{\"id\":\"base\",\"label\":\"Base\",\"description\":\"첫 세대 길이\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"label\":\"Ratio\",\"description\":\"감소 비율\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]},{\"id\":\"recursive-branch\",\"name\":\"Recursive branch\",\"description\":\"depth 세대까지 둘로 갈라지고 length로 길이를 정합니다.\",\"params\":[{\"id\":\"depth\",\"label\":\"Depth\",\"description\":\"세대 수\",\"value\":{\"type\":\"number\",\"value\":6,\"min\":1,\"max\":9,\"step\":1,\"unit\":\"\"}},{\"id\":\"length\",\"label\":\"Length\",\"description\":\"세대별 길이\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"power-decay\",\"args\":[{\"id\":\"base\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]}}]},{\"id\":\"sine-wave\",\"name\":\"Sine wave\",\"description\":\"amplitude*sin(t*cycles)\",\"params\":[{\"id\":\"amplitude\",\"label\":\"Amplitude\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":20,\"min\":0,\"max\":80,\"step\":1,\"unit\":\"px\"}}]}]},\"targetNodeId\":\"tree\",\"instruction\":\"\",\"previous\":\"\"}"
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 32000,
+  "reasoning": {
+    "effort": "medium"
+  },
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "rulegen_state-machine",
+      "strict": true,
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "algorithms": {
+            "maxItems": 24,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 1500
+                },
+                "params": {
+                  "maxItems": 8,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 600
+                      },
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "number"
+                              },
+                              "value": {
+                                "type": "number"
+                              },
+                              "min": {
+                                "type": "number"
+                              },
+                              "max": {
+                                "type": "number"
+                              },
+                              "step": {
+                                "type": "number",
+                                "minimum": 1e-8
+                              },
+                              "unit": {
+                                "type": "string",
+                                "maxLength": 20
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value",
+                              "min",
+                              "max",
+                              "step",
+                              "unit"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "color"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^#[0-9a-fA-F]{6}$"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "select"
+                              },
+                              "value": {
+                                "type": "string",
+                                "maxLength": 80
+                              },
+                              "options": {
+                                "minItems": 2,
+                                "maxItems": 8,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 80
+                                }
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value",
+                              "options"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "toggle"
+                              },
+                              "value": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "const": "algorithm-ref"
+                              },
+                              "algorithmId": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 80
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "algorithmId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "label",
+                      "description",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "description",
+                "params"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "machine": {
+            "type": "object",
+            "properties": {
+              "initialState": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              "states": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 1000
+                    },
+                    "values": {
+                      "maxItems": 8,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "propertyId": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
+                          },
+                          "value": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "number"
+                                  },
+                                  "value": {
+                                    "type": "number"
+                                  },
+                                  "min": {
+                                    "type": "number"
+                                  },
+                                  "max": {
+                                    "type": "number"
+                                  },
+                                  "step": {
+                                    "type": "number",
+                                    "minimum": 1e-8
+                                  },
+                                  "unit": {
+                                    "type": "string",
+                                    "maxLength": 20
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value",
+                                  "min",
+                                  "max",
+                                  "step",
+                                  "unit"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "color"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "pattern": "^#[0-9a-fA-F]{6}$"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "select"
+                                  },
+                                  "value": {
+                                    "type": "string",
+                                    "maxLength": 80
+                                  },
+                                  "options": {
+                                    "minItems": 2,
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "string",
+                                      "minLength": 1,
+                                      "maxLength": 80
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value",
+                                  "options"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "toggle"
+                                  },
+                                  "value": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "value"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "const": "algorithm"
+                                  },
+                                  "algorithmId": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  },
+                                  "args": {
+                                    "maxItems": 8,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "id": {
+                                          "type": "string",
+                                          "minLength": 1,
+                                          "maxLength": 80
+                                        },
+                                        "value": {
+                                          "anyOf": [
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "const": "number"
+                                                },
+                                                "value": {
+                                                  "type": "number"
+                                                },
+                                                "min": {
+                                                  "type": "number"
+                                                },
+                                                "max": {
+                                                  "type": "number"
+                                                },
+                                                "step": {
+                                                  "type": "number",
+                                                  "minimum": 1e-8
+                                                },
+                                                "unit": {
+                                                  "type": "string",
+                                                  "maxLength": 20
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "value",
+                                                "min",
+                                                "max",
+                                                "step",
+                                                "unit"
+                                              ],
+                                              "additionalProperties": false
+                                            },
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "const": "color"
+                                                },
+                                                "value": {
+                                                  "type": "string",
+                                                  "pattern": "^#[0-9a-fA-F]{6}$"
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "value"
+                                              ],
+                                              "additionalProperties": false
+                                            },
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "const": "select"
+                                                },
+                                                "value": {
+                                                  "type": "string",
+                                                  "maxLength": 80
+                                                },
+                                                "options": {
+                                                  "minItems": 2,
+                                                  "maxItems": 8,
+                                                  "type": "array",
+                                                  "items": {
+                                                    "type": "string",
+                                                    "minLength": 1,
+                                                    "maxLength": 80
+                                                  }
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "value",
+                                                "options"
+                                              ],
+                                              "additionalProperties": false
+                                            },
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "const": "toggle"
+                                                },
+                                                "value": {
+                                                  "type": "boolean"
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "value"
+                                              ],
+                                              "additionalProperties": false
+                                            },
+                                            {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "const": "algorithm-ref"
+                                                },
+                                                "algorithmId": {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 80
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "algorithmId"
+                                              ],
+                                              "additionalProperties": false
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "value"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "algorithmId",
+                                  "args"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "propertyId",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "label",
+                    "description",
+                    "values"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "transitions": {
+                "maxItems": 128,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "from": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "to": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 80
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "trigger": {
+                      "type": "string",
+                      "enum": [
+                        "after",
+                        "event"
+                      ]
+                    },
+                    "afterMs": {
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 60000
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "from",
+                    "to",
+                    "label",
+                    "trigger",
+                    "afterMs"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "initialState",
+              "states",
+              "transitions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "algorithms",
+          "machine"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

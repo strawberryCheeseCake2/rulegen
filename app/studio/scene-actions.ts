@@ -1,3 +1,4 @@
+import { reviseTag, tagRevisionSchema } from "../lib/compose-tags";
 import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, splitResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
 import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
 import { compositionContext } from "../lib/algorithm-pens";
@@ -9,7 +10,7 @@ import { sceneSchema } from "../lib/scene/validate";
 import { findNode, groupNodes, moveNodes, removeNodes, reorderNode, sceneDepth, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
 import * as ops from "../lib/scene/panel-ops";
 import { importAlgorithmCall, makeAlgorithmPen } from "../lib/scene/pens";
-import { addBlockProperty, copyAlgorithm, moveNodeTo, pasteAlgorithm, transplantNodes, type AlgorithmClip } from "../lib/scene/transfer";
+import { addBlockProperty, copyAlgorithm, moveNodeTo, pasteAlgorithm, pasteTransformation, transplantNodes, type AlgorithmClip, type TransformationClip } from "../lib/scene/transfer";
 import { instantiate } from "../lib/scene/algorithms";
 import { isAlgorithm, valueAt } from "../lib/scene/values";
 import { liveSceneSource } from "../lib/scene/live";
@@ -17,21 +18,22 @@ import { hasModules, ownCodeIds, programModules } from "../lib/scene/machines";
 import { stampModule } from "../lib/scene/stamp";
 import { minimalExampleInstruction, minimalExampleScene } from "../lib/scene/minimal-example";
 import { findTransformation } from "../lib/scene/transformations";
-import { applyHandles, handleSuggestionsSchema, setHandle, type HandleTarget } from "../lib/scene/handles";
+import { applyHandles, handleLeaves, handleSuggestionsSchema, handleTransformations, proxyGroups, setHandle, type HandleTarget } from "../lib/scene/handles";
 import { MAX_SKETCH_FRAMES, type FrameId } from "../lib/workspace";
 import type { StudioDeps } from "./deps";
 
-export const compositionPromptLabel = "AI가 스케치와 펜의 의미를 읽어 Compose prompt를 만들고 있습니다…";
+export const tagRevisionLabel = "AI is changing the tag's transformation…";
+export const compositionPromptLabel = "AI is reading the sketch and pen meanings to write the Compose prompt…";
 
 /** How example frames wait when the server is busy with other AI requests (tests shorten it). */
 export const exampleRetry = { ms: 2500, attempts: 6 };
-const BUSY = /요청이 진행 중/;
+const BUSY = /request is in progress/i;
 
 /** Local scene edits (no AI) for one sketch panel. */
 export function sceneEdits(deps: StudioDeps, owner: string) {
   const apply = (op: (panel: SketchPanel) => Partial<SketchPanel>) => deps.updatePanel(owner, panel => panel.loading ? {} : op(panel));
   /** Layer edits that would nest deeper than MAX_NESTING_DEPTH are refused. */
-  const tooDeep = (scene: Scene) => sceneDepth(scene) > MAX_NESTING_DEPTH ? { error: `Brush stamp는 ${MAX_NESTING_DEPTH}단계까지만 중첩할 수 있습니다.` } : null;
+  const tooDeep = (scene: Scene) => sceneDepth(scene) > MAX_NESTING_DEPTH ? { error: `Brush stamps can be nested at most ${MAX_NESTING_DEPTH} levels deep.` } : null;
   const structural = (edit: (scene: Scene, panel: SketchPanel) => Scene, dirty?: (panel: SketchPanel) => string[]) => apply(panel => { const next = edit(panel.scene, panel); return tooDeep(next) || ops.commitScene(panel, next, dirty?.(panel)); });
   return {
     select: (id: string | null, additive = false) => deps.updatePanel(owner, panel => ops.selectNodes(panel, id, additive)),
@@ -83,10 +85,16 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
     editTransformation: (nodeId: string, transformationId: string, patch: Parameters<typeof ops.editTransformation>[3]) => apply(panel => ops.editTransformation(panel, nodeId, transformationId, patch)),
     removeTransformation: (nodeId: string, transformationId: string) => apply(panel => ops.removeTransformation(panel, nodeId, transformationId)),
     moveTransformation: (nodeId: string, transformationId: string, offset: number) => apply(panel => ops.moveTransformation(panel, nodeId, transformationId, offset)),
+    relocateTransformation: (fromNodeId: string, transformationId: string, toNodeId: string, beforeId: string | null) => apply(panel => ops.relocateTransformation(panel, fromNodeId, transformationId, toNodeId, beforeId)),
+    /** A copied transformation (from this sketch or another) pasted into a node, after `afterId` (none: at its end). */
+    pasteTransformation: (nodeId: string, clip: TransformationClip, afterId?: string | null) => apply(panel => {
+      try { return ops.commitScene(panel, pasteTransformation(panel.scene, nodeId, clip, afterId), [nodeId]); }
+      catch (error) { return { error: (error as Error).message }; }
+    }),
     editAlgorithm: (algorithmId: string, patch: { name?: string; description?: string }) => apply(panel => ops.editAlgorithm(panel, algorithmId, patch)),
     importAlgorithm: (source: { call: AlgorithmCall; library: Algorithm[] }) => apply(panel => {
       const { scene } = importAlgorithmCall(panel.scene, source);
-      return scene.algorithms.length > 96 ? { error: "알고리즘 라이브러리가 가득 찼습니다." } : ops.commitScene(panel, scene);
+      return scene.algorithms.length > 96 ? { error: "The algorithm library is full." } : ops.commitScene(panel, scene);
     }),
     chooseState: (nodeId: string, stateId: string | null) => { deps.updatePanel(owner, panel => ops.chooseState(panel, nodeId, stateId)); deps.focus(owner as FrameId); },
     editState: (nodeId: string, stateId: string, patch: Parameters<typeof ops.editMachineState>[3]) => apply(panel => ops.editMachineState(panel, nodeId, stateId, patch)),
@@ -97,17 +105,17 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
       const panel = deps.panel(owner), node = findNode(panel.scene, nodeId);
       const value = node && valueAt(ops.inspectedProperties(panel, node).find(p => p.id === propertyId)?.value ?? { type: "toggle", value: false }, path);
       if (!value || !isAlgorithm(value)) return;
-      const clip = copyAlgorithm(panel.scene, value); deps.setClip(clip); deps.toast(`${clip.label}을 복사했습니다. 다른 property에서 우클릭해 붙여넣으세요.`);
+      const clip = copyAlgorithm(panel.scene, value); deps.setClip(clip); deps.toast(`Copied ${clip.label}. Right-click another property to paste it.`);
     },
     copyDefinition: (algorithmId: string) => {
       const scene = deps.panel(owner).scene, clip = copyAlgorithm(scene, instantiate(scene.algorithms, algorithmId));
-      deps.setClip(clip); deps.toast(`${clip.label}을 복사했습니다. 다른 property에서 우클릭해 붙여넣으세요.`);
+      deps.setClip(clip); deps.toast(`Copied ${clip.label}. Right-click another property to paste it.`);
     },
     /** Paste replaces the slot's value in the base property; a state cannot change structure. */
     pasteSlot: (nodeId: string, propertyId: string, path: string[], dropped?: AlgorithmClip) => {
       const panel = deps.panel(owner), clip = dropped || deps.clip();
       if (!clip) return;
-      if (panel.editingStates[nodeId]) { deps.updatePanel(owner, { error: "알고리즘 블록은 Base에서만 끼울 수 있습니다. 상태에서는 값만 바꿀 수 있어요." }); return; }
+      if (panel.editingStates[nodeId]) { deps.updatePanel(owner, { error: "Algorithm blocks can only be inserted in Base. In a state, you can only change values." }); return; }
       try { deps.updatePanel(owner, ops.commitScene(panel, pasteAlgorithm(panel.scene, nodeId, propertyId, path, clip), [nodeId])); }
       catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
     },
@@ -149,7 +157,7 @@ export async function dropNode(deps: StudioDeps, from: string, nodeId: string, t
       deps.activate(to);
       deps.updatePanel(to, panel => ({ ...ops.commitScene(panel, result.scene, []), generated: result.generated, codeDraft: result.generated.code, selectedNodeIds: result.roots, runtimeError: "" }));
       deps.focus(to as FrameId);
-      deps.toast(`${node!.name}을 이 스케치로 복사했습니다.`);
+      deps.toast(`Copied ${node!.name} into this sketch.`);
     } catch (error) { deps.updatePanel(to, { error: (error as Error).message }); }
     return;
   }
@@ -161,7 +169,7 @@ export async function dropNode(deps: StudioDeps, from: string, nodeId: string, t
     // The result frame appears immediately and shows progress until the code arrives.
     deps.updatePanel(to, panel => ({ ...ops.commitScene(panel, result.scene, [result.rootId]), selectedNodeIds: [result.rootId], pendingResult: true }));
     deps.focus(to as FrameId);
-    deps.toast(`${findNode(result.scene, rootId)?.name}을 이 스케치로 복사하고 결과를 만들고 있습니다.`);
+    deps.toast(`Copied ${findNode(result.scene, rootId)?.name} into this sketch and generating the result.`);
   } catch (error) { deps.updatePanel(to, { error: (error as Error).message }); return; }
   try { await sceneAI(deps, to).generateCode(); }
   finally { deps.updatePanel(to, { pendingResult: false }); }
@@ -169,7 +177,7 @@ export async function dropNode(deps: StudioDeps, from: string, nodeId: string, t
 
 async function sketchContext(deps: StudioDeps, owner: string) {
   const artwork = deps.artwork(owner);
-  if (!artwork) throw new Error("스케치를 찾지 못했습니다.");
+  if (!artwork) throw new Error("Could not find the sketch.");
   return { artwork, image: (await deps.capture(owner, true)).image, ...compositionContext(artwork) };
 }
 
@@ -192,9 +200,9 @@ export function sceneAI(deps: StudioDeps, owner: string) {
   const fresh = (document: number, revision: number | undefined) => document === deps.documentId() && revision === deps.artwork(owner)?.revision;
   async function generateCode(repair = false, instructionOverride?: string) {
     const panel = deps.panel(owner);
-    if (!panel.scene.nodes.length) { deps.updatePanel(owner, { error: "먼저 brush stamp와 object를 추출해주세요." }); return; }
+    if (!panel.scene.nodes.length) { deps.updatePanel(owner, { error: "Extract brush stamps and objects first." }); return; }
     const snapshot = JSON.stringify(panel.scene), document = deps.documentId();
-    await deps.task(repair ? "실행 오류를 수정하고 있습니다…" : "Brush stamp와 object를 p5.js 코드로 번역하고 있습니다…", async () => {
+    await deps.task(repair ? "Fixing the runtime error…" : "Translating brush stamps and objects into p5.js code…", async () => {
       // Derived frames are coded against the sketch they were extracted from.
       const context = await sketchContext(deps, panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : owner);
       // A minimal example frame keeps its hint for every generation (also Update and fixes later on).
@@ -203,7 +211,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       const scene = ownCodeIds(panel.scene);
       const result = generatedSchema.parse(await deps.request("code", { scene, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
         previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: (repair ? `${base}\nFix this runtime error: ${panel.runtimeError}` : base).slice(0, 6000) }, owner));
-      if (document !== deps.documentId() || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 brush stamp 또는 property 구조가 변경되었습니다. 다시 생성해주세요.");
+      if (document !== deps.documentId() || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The brush stamp or property structure changed during generation. Please generate again.");
       deps.updatePanel(owner, { scene, generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [] });
       // Brushes made from this frame keep a copy of their module for when the frame is gone.
       deps.refreshBrushCode?.(owner, result.code);
@@ -216,15 +224,17 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       const number = deps.requestId(owner), context = await sketchContext(deps, owner);
       const result = compositionPromptSchema.parse(await deps.request("compose-prompt", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: previous }, owner));
       if (number !== deps.requestId(owner) || document !== deps.documentId()) return;
-      if (!fresh(document, revision) || previous !== deps.panel(owner).composePrompt) throw new Error("스케치 또는 prompt가 변경되었습니다. AI prompt를 다시 만들어주세요.");
-      deps.updatePanel(owner, { composePrompt: result.prompt });
-      deps.toast("AI가 Compose prompt를 작성했습니다. 설명을 확인하거나 수정한 뒤 Compose sketch를 눌러주세요.");
+      if (!fresh(document, revision) || previous !== deps.panel(owner).composePrompt) throw new Error("The sketch or prompt changed. Please create the AI prompt again.");
+      deps.updatePanel(owner, { composePrompt: result.prompt, composeTags: result.tags, composeTagsRevision: revision ?? -1 });
+      const tagged = `tagged ${result.tags.length} part${result.tags.length === 1 ? "" : "s"} of the sketch (click a tag to see what goes into it)`;
+      deps.toast(deps.panel(owner).composeWithText ? `AI wrote the Compose prompt${result.tags.length ? ` and ${tagged}` : ""}. Review or edit the description, then press Compose sketch.`
+        : result.tags.length ? `AI ${tagged}. Check the tags, then press Compose sketch.` : "AI found no part of the sketch to tag. Turn the text prompt on to describe it.");
     }, owner);
   }
   /** A new sketch frame holding a scene derived from this one. */
   function derive(scene: Scene, name: string, revision: number, extra: Partial<SketchPanel>, brushes = false, quiet = false) {
     const id = deps.createFrame(owner, name);
-    if (!id) { deps.updatePanel(owner, { error: `스케치 프레임은 최대 ${MAX_SKETCH_FRAMES}개까지 만들 수 있습니다.` }); return null; }
+    if (!id) { deps.updatePanel(owner, { error: `You can create at most ${MAX_SKETCH_FRAMES} sketch frames.` }); return null; }
     // Collections AI made become reusable brushes in the toolbar.
     if (brushes) scene = markBrushes(scene, deps.addBrushes(id, scene));
     deps.updatePanel(id, panel => ({ ...ops.commitScene(panel, scene), sourceFrameId: owner, analysisRevision: revision, instruction: deps.panel(owner).instruction, pendingResult: true, ...extra }));
@@ -244,7 +254,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
   function exampleFrame(nodeId: string, transformationId: string, quiet = false, from?: Scene) {
     // `from`: the scene the transformation is in (a part of a decomposed transformation is in this frame's scene only as the child's).
     const source = from ?? deps.panel(owner).scene, node = findNode(source, nodeId), transformation = node && findTransformation(node, transformationId);
-    if (!node || !transformation) throw new Error("Transformation을 찾지 못했습니다.");
+    if (!node || !transformation) throw new Error("Could not find the Transformation.");
     const scene = sceneSchema.parse(minimalExampleScene(source, nodeId, transformationId));
     const label = transformation.label || "Transformation";
     // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
@@ -277,11 +287,11 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       try { const frame = exampleFrame(target.nodeId, target.transformationId, true, target.from); if (!frame) break; made.push(frame); }
       catch { failed.push(target.transformationId); }
     }
-    if (!made.length) { if (failed.length) deps.updatePanel(owner, { error: "최소 예제를 만들지 못했습니다." }); return; }
+    if (!made.length) { if (failed.length) deps.updatePanel(owner, { error: "Could not create the minimal example." }); return; }
     const left = targets.length - made.length - failed.length;
     const subs = made.filter(frame => frame.sub).length;
-    deps.toast([`${what} ${made.length}개를 최소 예제 프레임으로 분해했습니다${subs ? ` (${subs}개를 원래 brush의 tool group에 sub brush로 추가)` : ""}. 결과를 생성하는 중입니다…`,
-      left ? `${left}개는 프레임이 가득 차(최대 ${MAX_SKETCH_FRAMES}개) 만들지 못했습니다.` : "", failed.length ? `${failed.length}개는 예제를 만들 수 없었습니다.` : ""].filter(Boolean).join(" "));
+    deps.toast([`Decomposed ${made.length} ${what}(s) into minimal example frames${subs ? ` (${subs} added as sub brushes to the original brush's tool group)` : ""}. Generating the results…`,
+      left ? `${left} could not be created because the frames are full (max ${MAX_SKETCH_FRAMES}).` : "", failed.length ? `${failed.length} could not be made into examples.` : ""].filter(Boolean).join(" "));
     // Two at a time (what the server takes at once): each frame's code is its own AI request.
     const queue = [...made];
     await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => { for (let next = queue.shift(); next; next = queue.shift()) await renderExample(next.id); }));
@@ -293,28 +303,28 @@ export function sceneAI(deps: StudioDeps, owner: string) {
    */
   async function splitExample(nodeId: string, transformationId: string) {
     const out: { parts?: SemanticTransformation[]; algorithms?: Algorithm[]; reason?: string; scene?: Scene } = {};
-    await deps.task("AI가 이 transformation을 안의 알고리즘 단위로 나누고 있습니다…", async () => {
+    await deps.task("AI is dividing this transformation into the algorithms inside it…", async () => {
       const panel = deps.panel(owner);
       const result = splitResultSchema.parse(await deps.request("split", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: transformationId,
         previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: "" }, owner));
       Object.assign(out, { parts: result.divisible ? result.parts : [], algorithms: result.algorithms, reason: result.reason, scene: panel.scene });
     }, owner);
     if (!out.scene) return;
-    if (!out.parts?.length) { deps.toast(`더 쪼갤 수 없습니다: ${out.reason}`); return; }
+    if (!out.parts?.length) { deps.toast(`Cannot be divided further: ${out.reason}`); return; }
     // Each part as the node's only transformation, in a copy of this frame's scene (the frame itself keeps its own).
     const withPart = (part: SemanticTransformation): Scene => ({ algorithms: out.algorithms!, nodes: out.scene!.nodes.map(node => node.id === nodeId ? { ...node, transformations: [part] } : node) });
-    await makeExamples(out.parts.map(part => ({ nodeId, transformationId: part.id, from: withPart(part) })), "내부 알고리즘");
+    await makeExamples(out.parts.map(part => ({ nodeId, transformationId: part.id, from: withPart(part) })), "inner algorithm");
   }
   /** Regenerate one property/transformation (or add one); returns what changed, or null. */
   async function regenerateOne(nodeId: string, target: { transformationId?: string; propertyId?: string }, instruction?: string, marks: Marks = []) {
     const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
     const done: { changed?: { scene: Scene; label: string } } = {};
-    const message = target.propertyId ? "이 property의 구현만 다시 만들고 있습니다…" : target.transformationId ? "이 semantic transformation을 다시 만들고 있습니다…" : "새 semantic transformation을 만들고 있습니다…";
+    const message = target.propertyId ? "Regenerating only this property's implementation…" : target.transformationId ? "Regenerating this semantic transformation…" : "Creating a new semantic transformation…";
     await deps.task(message, async () => {
       const scene = sceneSchema.parse(await deps.request("transform", { scene: panel.scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
         alternative: Boolean(target.transformationId && !target.propertyId), instruction: instruction?.trim() || panel.instruction, transformMarks: compactMarks(marks),
         image: await annotatedImage((await deps.capture(owner, true)).image, marks) }, owner));
-      if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
+      if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The scene changed during generation. Please try again.");
       deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), transformDraft: null }));
       done.changed = { scene: deps.panel(owner).scene, label: describeTarget(scene, nodeId, target) };
     }, owner);
@@ -331,25 +341,36 @@ export function sceneAI(deps: StudioDeps, owner: string) {
   return {
     generateCode,
     draftComposePrompt,
+    /** One transformation of a Compose tag changed by AI as the user asks (the card shows the result). */
+    async reviseComposeTag(tagId: string, index: number, request: string) {
+      const tags = deps.panel(owner).composeTags, document = deps.documentId();
+      await deps.task(tagRevisionLabel, async () => {
+        const context = await sketchContext(deps, owner);
+        const result = tagRevisionSchema.parse(await deps.request("tag-revise", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, composeTags: tags, tagTarget: { tagId, index }, instruction: request.slice(0, 2000) }, owner));
+        if (document !== deps.documentId()) return;
+        deps.updatePanel(owner, current => ({ composeTags: reviseTag(current.composeTags, result) }));
+        deps.toast(result.note || `Changed “${result.transformation.label}”.`);
+      }, owner);
+    },
     /** Extract from this sketch into a NEW sketch frame beside it, then render that frame's result. */
     async extract() {
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision, name = deps.artwork(owner)?.name || "Sketch";
       const out: { frame?: string } = {};
-      await deps.task("스케치에서 brush stamp와 object를 추출하고 있습니다…", async () => {
+      await deps.task("Extracting brush stamps and objects from the sketch…", async () => {
         const capture = await deps.capture(owner), context = compositionContext(deps.artwork(owner)!);
         const scene = sceneSchema.parse(await deps.request("extract", { image: capture.image, recoveryRegion: capture.region, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: deps.panel(owner).instruction }, owner));
-        if (!fresh(document, revision)) throw new Error("추출 중 스케치가 변경되었습니다. 다시 추출해주세요.");
+        if (!fresh(document, revision)) throw new Error("The sketch changed during extraction. Please extract again.");
         const r = capture.region;
         const mapped = { ...scene, nodes: scene.nodes.map(node => ({ ...node, region: { x: r.x + node.region.x * r.w, y: r.y + node.region.y * r.h, w: Math.max(.01, node.region.w * r.w), h: Math.max(.01, node.region.h * r.h) } })) };
         out.frame = derive(mapped, `${name} · extracted`, revision!, {}, true) || undefined;
-        deps.toast(`${scene.nodes.filter(node => node.kind === "collection").length}개의 brush stamp와 ${scene.nodes.filter(node => node.kind === "object").length}개의 object를 새 프레임으로 추출했습니다.`);
+        deps.toast(`Extracted ${scene.nodes.filter(node => node.kind === "collection").length} brush stamp(s) and ${scene.nodes.filter(node => node.kind === "object").length} object(s) into a new frame.`);
       }, owner);
       if (out.frame) await renderDerived(out.frame);
     },
     /** AI makes a direct manipulation interface for one property, a transformation's properties, or every property of the node; they run in its proxy frame. */
     async suggestHandles(nodeId: string, target: HandleTarget, instruction = "") {
       const out: { count?: number; skipped?: number } = {};
-      await deps.task(target.propertyId ? "AI가 이 property에 맞는 direct manipulation 인터페이스를 만들고 있습니다…" : "AI가 property마다 맞는 direct manipulation 인터페이스를 만들고 있습니다…", async () => {
+      await deps.task(target.propertyId ? "AI is creating a direct manipulation interface for this property…" : "AI is creating a direct manipulation interface for each property…", async () => {
         const result = handleSuggestionsSchema.parse(await deps.request("handles", { scene: deps.panel(owner).scene, targetNodeId: nodeId, targetTransformationId: target.transformationId || "", targetPropertyId: target.propertyId || "",
           instruction: instruction.trim(), image: (await deps.capture(owner, true)).image }, owner));
         // Handles are UI: they go onto the scene as it is now, even if it changed meanwhile.
@@ -358,14 +379,59 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       }, owner);
       if (!out.count) return;
       deps.openProxy?.(owner, nodeId);
-      deps.toast(`direct manipulation handle ${out.count}개를 만들었습니다${out.skipped ? ` (${out.skipped}개는 코드 오류로 빠짐)` : ""}. proxy frame에서 조작하면 결과가 바로 바뀝니다.`);
+      deps.toast(`Created ${out.count} direct manipulation handle(s)${out.skipped ? ` (${out.skipped} left out due to code errors)` : ""}. Manipulating them in the proxy frame changes the result immediately.`);
+    },
+    /**
+     * Handles for every semantic transformation (as in the base state) of these nodes — every node of the frame but a
+     * backdrop by default — that has a property without one: one request per transformation, two at a time, each
+     * put on the scene as it arrives; then each node's proxy frame opens. One that fails does not stop the others.
+     */
+    async suggestAllHandles(nodeIds?: string[], redesign = false) {
+      const panel = deps.panel(owner), chosen = panel.scene.nodes.filter(node => nodeIds ? nodeIds.includes(node.id) : node.parentId || !isBackdrop(node));
+      // Redesign: every transformation that has a handle now, made again (the AI sees each current widget); undo takes each back.
+      const targets = chosen.flatMap(node => handleTransformations(node).filter(item => redesign ? item.properties.some(property => property.handle)
+        : item.properties.some(property => handleLeaves(property).length > 0 && !property.handle))
+        .map(item => ({ nodeId: node.id, transformationId: item.id, label: item.label })));
+      // Every node that has handles (or gets them) shows its proxy frames, one per transformation, in its group.
+      const openAll = () => { for (const node of chosen) { const now = findNode(deps.panel(owner).scene, node.id); if (now && proxyGroups(now.transformations).length) deps.openProxy?.(owner, node.id); } };
+      if (!targets.length && redesign) { deps.toast("There is no handle to redesign yet. Make them with Handles for all."); return; }
+      if (!targets.length) {
+        openAll();
+        const shown = chosen.filter(node => proxyGroups(node.transformations).length).length;
+        deps.toast(shown ? `Every transformation already has its handles: opened the proxy frames of ${shown} node(s), one per transformation, grouped by node. To make one again, use Redesign on it.` : "There is no property a direct manipulation handle can control.");
+        return;
+      }
+      const nodes = new Set<string>(), failed: string[] = [];
+      let count = 0, skipped = 0, done = 0;
+      const label = (n: number) => `AI is ${redesign ? "redesigning" : "creating"} direct manipulation handles for each transformation (${n}/${targets.length})…`;
+      await deps.task(label(0), async () => {
+        const image = (await deps.capture(owner, true)).image, queue = [...targets];
+        // Cancelling the frame's work ends the task: what is still running is dropped.
+        const live = () => Boolean(deps.panel(owner).loading);
+        await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
+          for (let next = queue.shift(); next && live(); next = queue.shift()) {
+            try {
+              const result = handleSuggestionsSchema.parse(await deps.request("handles", { scene: deps.panel(owner).scene, targetNodeId: next.nodeId, targetTransformationId: next.transformationId, targetPropertyId: "", instruction: "", image }, owner));
+              if (!live()) return;
+              const target = next;
+              deps.updatePanel(owner, current => findNode(current.scene, target.nodeId) ? ops.commitScene(current, applyHandles(current.scene, target.nodeId, result.handles)) : {});
+              if (result.handles.length) nodes.add(next.nodeId);
+              count += result.handles.length; skipped += result.skipped.length;
+            } catch (error) { if (error instanceof DOMException && error.name === "AbortError") return; failed.push(next.label); }
+            if (live()) deps.updatePanel(owner, { loading: label(++done) });
+          }
+        }));
+      }, owner);
+      if (nodes.size) openAll();
+      if (count || failed.length) deps.toast([count ? `${redesign ? "Redesigned" : "Created"} ${count} direct manipulation handle(s) for ${targets.length - failed.length} transformation(s), each transformation in its own proxy frame, grouped by node.` : "",
+        skipped ? `${skipped} left out due to code errors.` : "", failed.length ? `Could not make: ${failed.join(", ")}.` : ""].filter(Boolean).join(" "));
     },
     async minimalExample(nodeId: string, transformationId: string) {
       let made: ReturnType<typeof exampleFrame>;
       try { made = exampleFrame(nodeId, transformationId); }
-      catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "최소 예제를 만들지 못했습니다." }); return; }
+      catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "Could not create the minimal example." }); return; }
       if (!made) return;
-      deps.toast(`「${made.label}」만 담은 최소 예제 프레임을 만들었습니다${made.sub ? " (원래 brush의 tool group에 sub brush로 추가)" : ""}. 결과를 생성하는 중입니다…`);
+      deps.toast(`Created a minimal example frame with only “${made.label}”${made.sub ? " (added as a sub brush to the original brush's tool group)" : ""}. Generating the result…`);
       await renderExample(made.id);
     },
     /**
@@ -377,7 +443,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       // A still background filling the canvas is no brush and not part of one: nothing to try out on its own.
       const targets = panel.scene.nodes.filter(node => node.parentId || !isBackdrop(node))
         .flatMap(node => node.transformations.filter(item => item.properties.length).map(item => ({ nodeId: node.id, transformationId: item.id })));
-      if (!targets.length) { deps.updatePanel(owner, { error: "분해할 semantic transformation이 없습니다." }); return; }
+      if (!targets.length) { deps.updatePanel(owner, { error: "There is no semantic transformation to decompose." }); return; }
       // A minimal example already holds one transformation: decomposing it again divides that transformation into the algorithms inside it.
       if (panel.exampleOf && targets.length === 1) { await splitExample(targets[0].nodeId, targets[0].transformationId); return; }
       await makeExamples(targets.map(target => ({ ...target, from: undefined })), "transformation");
@@ -405,14 +471,14 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     },
     async generateMachine(nodeId: string) {
       const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
-      await deps.task("AI가 이 노드의 상태와 전이를 계획하고 있습니다…", async () => {
+      await deps.task("AI is planning the states and transitions of this node…", async () => {
         const context = await sketchContext(deps, owner);
         const scene = sceneSchema.parse(await deps.request("state-machine", { scene: panel.scene, targetNodeId: nodeId, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
           instruction: panel.generationMode === "compose" ? panel.composePrompt || panel.instruction : panel.instruction, previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "" }, owner));
-        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
+        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The scene changed during generation. Please try again.");
         const machine = findNode(scene, nodeId)?.machine;
         deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [nodeId]), selectedNodeIds: [nodeId], ...(machine ? ops.chooseState({ ...current, scene }, nodeId, machine.initialState) : {}) }));
-        deps.toast("상태 머신을 만들었습니다. 코드에 연결하려면 Generate code를 눌러주세요.");
+        deps.toast("Created the state machine. Press Generate code to connect it to the code.");
       }, owner);
     },
     /**
@@ -423,13 +489,13 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       const panel = deps.panel(owner), snapshot = JSON.stringify(panel.scene);
       const sourceId = panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : null;
       const prompt = panel.composePrompt.trim() || (sourceId ? deps.panel(sourceId).composePrompt.trim() : "");
-      const label = request.target ? `AI가 첨부한 ${request.target.kind === "state" ? "state" : "transition"}를 다듬고 있습니다…` : "AI가 상태 머신을 다듬고 있습니다…";
+      const label = request.target ? `AI is refining the attached ${request.target.kind === "state" ? "state" : "transition"}…` : "AI is refining the state machine…";
       await deps.task(label, async () => {
         const context = await sketchContext(deps, owner);
         const result = machineRefineResultSchema.parse(await deps.request("machine-refine", { scene: panel.scene, targetNodeId: nodeId, machineTarget: request.target, instruction: request.instruction,
           machineImage: request.image, machineMarks: request.marks, composePrompt: prompt, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
           previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "" }, owner));
-        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("생성 중 장면이 변경되었습니다. 다시 시도해주세요.");
+        if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The scene changed during generation. Please try again.");
         const machine = findNode(result.scene, nodeId)?.machine;
         deps.updatePanel(owner, current => {
           const kept = (id: string | null | undefined) => id && machine?.states.some(state => state.id === id) ? id : null;
@@ -440,20 +506,27 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         });
         // The sketch this frame was composed from keeps the same prompt, so it follows too.
         if (sourceId && prompt && deps.panel(sourceId).composePrompt.trim() === prompt) deps.updatePanel(sourceId, { composePrompt: result.composePrompt });
-        deps.toast("상태 머신을 다듬고 Compose prompt에도 반영했습니다. 코드에 연결하려면 Update를 눌러주세요.");
+        deps.toast("Refined the state machine and updated the Compose prompt too. Press Update to connect it to the code.");
       }, owner);
     },
     async compose(repair = false) {
-      const panel = deps.panel(owner), prompt = panel.composePrompt.trim();
+      // Without the text prompt, Compose reads the tags on the sketch alone; with it, the tags go along.
+      // The tags go as they are now, edited by hand or not and even when the sketch changed since: only a frame with
+      // nothing to compose from yet is read first, and reading the sketch again is the user's Regenerate.
+      const panel = deps.panel(owner), text = panel.composeWithText, prompt = text ? panel.composePrompt.trim() : "", tags = panel.composeTags;
       if (repair) { await generateCode(true, prompt); return; }
-      if (!prompt) { await draftComposePrompt(); return; }
+      if (text ? !prompt : !tags.length) { await draftComposePrompt(); return; }
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision;
       const out: { frame?: string } = {};
-      await deps.task("펜의 알고리즘과 스케치를 brush stamp로 조합하고 있습니다…", async () => {
+      await deps.task("Composing the pen algorithms and sketch into brush stamps…", async () => {
         const context = await sketchContext(deps, owner);
-        const scene = sceneSchema.parse(await deps.request("compose", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: prompt }, owner));
-        if (!fresh(document, revision) || prompt !== deps.panel(owner).composePrompt.trim()) throw new Error("스케치 또는 prompt가 변경되었습니다. 다시 Compose해주세요.");
-        out.frame = derive(scene, `${context.artwork.name} · composed`, revision!, { generationMode: "compose", composePrompt: prompt }, true) || undefined;
+        // Marks erased since the tags were made are no longer there to point at.
+        const drawn = new Set(context.compositionStrokes.map(stroke => stroke.id));
+        const composeTags = tags.map(tag => ({ ...tag, strokeIds: tag.strokeIds.filter(id => drawn.has(id)) }));
+        const scene = sceneSchema.parse(await deps.request("compose", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: prompt, composeTags }, owner));
+        const now = deps.panel(owner);
+        if (!fresh(document, revision) || (text && prompt !== now.composePrompt.trim()) || (tags.length > 0 && tags !== now.composeTags)) throw new Error("The sketch, prompt or tags changed. Please Compose again.");
+        out.frame = derive(scene, `${context.artwork.name} · composed`, revision!, { generationMode: "compose", composePrompt: prompt, composeWithText: text }, true) || undefined;
       }, owner);
       if (out.frame) await renderDerived(out.frame, prompt);
     },

@@ -136,6 +136,6 @@ export class AIGenerationLog {
 
   private async io(operation: () => Promise<void>) {
     try { await operation(); }
-    catch (cause) { throw new Error("AI 생성 로그를 저장하지 못했습니다. 로그 폴더의 경로와 쓰기 권한을 확인해주세요.", { cause }); }
+    catch (cause) { throw new Error("Could not save the AI generation log. Check the log folder path and write permissions.", { cause }); }
   }
 }

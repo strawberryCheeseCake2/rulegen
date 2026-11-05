@@ -20,14 +20,14 @@ Return exactly one object matching `prompts/schemas/transform.json`:
 ```json
 {
   "algorithms": [
-    { "id": "perlin-wobble", "name": "Perlin wobble", "description": "noise(t*frequency)*amplitude 만큼 경로를 수직으로 흔듭니다.",
+    { "id": "perlin-wobble", "name": "Perlin wobble", "description": "Shakes the path perpendicularly by noise(t*frequency)*amplitude.",
       "params": [
-        { "id": "amplitude", "label": "Amplitude", "description": "흔들림 크기(px)", "value": { "type": "number", "value": 12, "min": 0, "max": 60, "step": 1, "unit": "px" } },
-        { "id": "frequency", "label": "Frequency", "description": "노이즈 주파수", "value": { "type": "number", "value": 0.02, "min": 0.001, "max": 0.2, "step": 0.001, "unit": "" } }
+        { "id": "amplitude", "label": "Amplitude", "description": "Wobble size (px)", "value": { "type": "number", "value": 12, "min": 0, "max": 60, "step": 1, "unit": "px" } },
+        { "id": "frequency", "label": "Frequency", "description": "Noise frequency", "value": { "type": "number", "value": 0.02, "min": 0.001, "max": 0.2, "step": 0.001, "unit": "" } }
       ] }
   ],
-  "transformation": { "id": "wobbling-path", "label": "Wobbling path", "description": "경로가 노이즈로 흔들립니다.", "properties": [
-    { "id": "path", "label": "Path", "effect": "spatial", "description": "경로 변형", "value": { "type": "algorithm", "algorithmId": "perlin-wobble", "args": [] } }
+  "transformation": { "id": "wobbling-path", "label": "Wobbling path", "description": "The path wobbles with noise.", "properties": [
+    { "id": "path", "label": "Path", "effect": "spatial", "description": "Path deformation", "value": { "type": "algorithm", "algorithmId": "perlin-wobble", "args": [] } }
   ] }
 }
 ```

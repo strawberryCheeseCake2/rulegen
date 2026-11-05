@@ -12,10 +12,13 @@ import { FrameAnnotations, FrameRender } from "../components/frame-render";
 import { GenerationHistory } from "../components/generation-history";
 import { RawCodePanel } from "../components/raw-code-panel";
 import { SketchComposition } from "../components/sketch-composition";
+import { ComposeTags, type ExampleThumb } from "../components/compose-tags";
+import { addTag, canMoveTag, deleteTag, MAX_TAG_TRANSFORMATIONS, moveTag, moveTransformation, penExamples, placedPen, setTagKind, type ComposeTag, type ComposeTagPen, type TagTransformationAt } from "../lib/compose-tags";
 import { LayerPanel } from "../components/scene/layer-panel";
 import { SceneOverlay } from "../components/scene/scene-overlay";
-import { ProxyFrame } from "../components/proxy-frame";
-import { ADJUST_IN_PLACE_INSTRUCTION, bakesInput, isProxyFrame, MAX_PROXY_FRAMES, proxyFor, type ProxyFrame as ProxyFrameData } from "../lib/proxy-frames";
+import { ProxyFrame, ProxyFrameBar, proxyNumber } from "../components/proxy-frame";
+import { handleLeaves, handleTransformations, proxyGroups } from "../lib/scene/handles";
+import { ADJUST_IN_PLACE_INSTRUCTION, bakesInput, isProxyFrame, MAX_PROXY_FRAMES, placeProxyGroup, planProxyFrames, proxiesOf, type ProxyFrame as ProxyFrameData } from "../lib/proxy-frames";
 import { PropertyInspector } from "../components/scene/property-inspector";
 import { PanelResizer } from "../components/panel-resizer";
 import { AlgorithmLibrary, type AlgorithmSource } from "../components/scene/algorithm-library";
@@ -23,9 +26,11 @@ import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
 import { ExploreFrameView } from "../components/explore-frame";
+import { FieldLayer } from "../components/field-layer";
+import { fieldsIn } from "../lib/fields";
 import { emptyExploreEdit, EXEC_KEY, isExploreFrame, MAX_EXPLORE_FRAMES, previewKey, previewKeys, restoredExplore, sameExplore, savedExplore, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame, type ExploreMode, type ExploreResult, type ExploreSource } from "../lib/explore";
 import { exploreExecutable, requestExplore } from "../studio/explore-actions";
-import { brushesFor, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
+import { brushesFor, isBackdrop, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
 import { addMark, addStep, constraintRows, currentRecommendation, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_LISTED_RECOMMENDATIONS, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
 import { descendantIds, subScene } from "../lib/scene/graph";
@@ -40,14 +45,14 @@ import { acceptParameter, applyChanges, applyRecording, applyRecommendation, app
 import type { TraceStep } from "../components/code-preview";
 import { besideFramePosition, groupRow, liveGroups, MAX_SKETCH_FRAMES, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { previewFork } from "../lib/preview-fork";
-import { editRuntime } from "../lib/runtime-edits";
+import { backfillStores, editRuntime, isRuntimeKey } from "../lib/runtime-edits";
 import type { MachineChange } from "../lib/machine-change";
 import { emptySlotEdit, ForkSlot, isSlotFrame, type ForkSlotFrame, type ForkSlotStatus, type SlotEdit } from "../components/fork-slot";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, GeneratedCode, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
-import { createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
+import { compositionContext, createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
 import { createSketchPanel, clearedResultAnnotations, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
 import { emptyScene, type Scene } from "../lib/scene/schema";
 import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
@@ -60,13 +65,16 @@ import { markLogged, reportError } from "../lib/error-report";
 import { sceneChanges } from "../lib/scene/revisions";
 import type { StudioDeps, PanelPatch } from "../studio/deps";
 import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
-import { NODE_DRAG_TYPE, readNodeDrag, type AlgorithmClip } from "../lib/scene/transfer";
+import { copyTransformation, NODE_DRAG_TYPE, readNodeDrag, type AlgorithmClip, type TransformationClip } from "../lib/scene/transfer";
 import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
 
 export function meta({}: Route.MetaArgs) { return [{ title: "Rulegen — From a mark to a system" }, { name: "description", content: "Draw, extract collections and objects, and create p5.js systems with AI." }]; }
 const blank = (): Artwork => ({ strokes: [], photo: null, name: "Untitled exploration", revision: 0 });
 const storageKey = "rulegen.project.v1";
 const drawingViewport: Viewport = { zoom: 1, x: 0, y: 0 };
+
+/** How long a held step plays on (what a change there sets off). */
+const PLAY_ON_MS = 3000;
 
 export default function Home() {
   // ── Sketch frames ──────────────────────────────────────────────────────────
@@ -161,6 +169,28 @@ export default function Home() {
   const [pendingFrameFocus, setPendingFrameFocus] = useState<FrameId | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const resultPreviews = useRef(new Map<string, CodePreviewHandle>());
+  // Playing on from the held step of an inspection (what a change there sets off): asked per frame, for the step it
+  // was asked at; and whether it happens by itself after every handle drag (kept in this browser).
+  const [playOns, setPlayOns] = useState<Record<string, { id: number; ms: number; restore: string }>>({});
+  const [autoPlayOn, setAutoPlayOnState] = useState(true), autoPlayOnRef = useRef(true); autoPlayOnRef.current = autoPlayOn;
+  useEffect(() => { try { setAutoPlayOnState(localStorage.getItem("rulegen:play-on") !== "0"); } catch { /* storage unavailable */ } }, []);
+  const setAutoPlayOn = (on: boolean) => { setAutoPlayOnState(on); try { localStorage.setItem("rulegen:play-on", on ? "1" : "0"); } catch { /* storage unavailable */ } };
+  // The Compose prompt's tags on the sketch (what the AI read: objects, collections and what goes into them).
+  const [showComposeTags, setShowComposeTagsState] = useState(true);
+  useEffect(() => { try { setShowComposeTagsState(localStorage.getItem("rulegen:compose-tags") !== "0"); } catch { /* storage unavailable */ } }, []);
+  // Pictures of minimal example frames shown in compose tag cards (taken from their running result when a card opens).
+  const [exampleThumbs, setExampleThumbs] = useState<Record<string, string>>({});
+  // The tag whose card is open in each frame, and the tag pointed at in the Compose panel's tag tree.
+  const [openTags, setOpenTags] = useState<Record<string, string | null>>({}), [pointedTag, setPointedTag] = useState<{ frameId: string; id: string } | null>(null);
+  // Transformations moved between a frame's tags (from the card or the tag tree): its tag cards start over, as what they keep goes by place.
+  const [tagMoves, setTagMoves] = useState<Record<string, number>>({});
+  // The transformation picked in Layers, shown in the inspector.
+  const [layerTransformation, setLayerTransformation] = useState<{ frameId: string; nodeId: string; transformationId: string } | null>(null);
+  // Studio-wide clipboard for a transformation copied in Layers (paste into any layer of any sketch).
+  const [transformationClip, setTransformationClip] = useState<TransformationClip | null>(null);
+  /** The Layers pick in this frame, while its layer is still the selected one. */
+  const layerPick = (frameId: string) => layerTransformation?.frameId === frameId && panelsRef.current[frameId]?.selectedNodeIds[0] === layerTransformation.nodeId ? layerTransformation : null;
+  const setShowComposeTags = (on: boolean) => { setShowComposeTagsState(on); try { localStorage.setItem("rulegen:compose-tags", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   // Studio-wide clipboard for algorithm blocks (copy in one sketch, paste in any).
   const [clip, setClip] = useState<AlgorithmClip | null>(null);
   const clipRef = useRef(clip); clipRef.current = clip;
@@ -228,14 +258,14 @@ export default function Home() {
     const result = await response.json();
     if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
     if (aborts.current.get(owner) === controller) aborts.current.delete(owner);
-    if (!response.ok || result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error || "요청을 처리하지 못했습니다."); }
+    if (!response.ok || result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error || "Could not process the request."); }
     return result;
   }
   async function task(label: string, work: () => Promise<void>, owner = activeSketch) {
     if (panelsRef.current[owner]?.loading) return;
     const number = (requestNumbers.current.get(owner) ?? 0) + 1; requestNumbers.current.set(owner, number); updatePanel(owner, { loading: label, error: "" });
     const current = () => number === requestNumbers.current.get(owner);
-    try { await work(); } catch (e) { if (current() && !(e instanceof DOMException && e.name === "AbortError")) updatePanel(owner, { error: e instanceof Error ? e.message : "처리 중 오류가 발생했습니다." }); }
+    try { await work(); } catch (e) { if (current() && !(e instanceof DOMException && e.name === "AbortError")) updatePanel(owner, { error: e instanceof Error ? e.message : "Something went wrong while processing." }); }
     finally { if (current() && panelsRef.current[owner]) updatePanel(owner, { loading: "" }); }
   }
   /** Stop one frame's AI work (the active frame's by default). */
@@ -248,13 +278,13 @@ export default function Home() {
   function cancelAll() { for (const owner of new Set([...aborts.current.keys(), ...Object.keys(panelsRef.current)])) cancel(owner); }
   const canvasFor = (id: string) => id === "source" ? canvas.current : sketchCanvases.current.get(id);
   function addPen(make: (id: string, color: string) => SemanticPen) {
-    if (semanticPens.length >= 32) { patchActive({ error: "툴바에 펜이 가득 찼습니다. 사용하지 않는 펜을 제거해주세요." }); return; }
+    if (semanticPens.length >= 32) { patchActive({ error: "The toolbar is full of pens. Remove pens you are not using." }); return; }
     const pen = make(crypto.randomUUID(), semanticPenColors.find(c => !semanticPens.some(p => p.color === c)) || semanticPenColors[semanticPens.length % semanticPenColors.length]);
     const baseName = pen.name.slice(0, 90); let name = baseName, suffix = 2;
     while (semanticPens.some(item => item.name === name)) name = `${baseName} ${suffix++}`;
     const next = { ...pen, name };
     setSemanticPens(current => [...current, next]); selectAlgorithmPen(next);
-    setToast(`${name}을 툴바에 추가했습니다. 자유롭게 그린 뒤 Compose prompt로 조합하세요.`);
+    setToast(`Added ${name} to the toolbar. Draw freely, then combine with Compose prompt.`);
   }
   /** A new sketch frame placed beside `fromId` (used for extracted/composed scenes). */
   function createFrame(fromId: string, name: string, marks?: Pick<Artwork, "strokes" | "photo">): string | null {
@@ -270,12 +300,12 @@ export default function Home() {
   /** What a frame shows: its rendered result (if any) under its strokes, as one image. */
   /** A frame created a moment ago mounts and loads p5 first, so wait (up to ~8s) until its canvas can be captured. */
   async function readyCanvas(owner: string, full: boolean) {
-    const notReady = /캔버스가 준비될 때까지|사진을 불러오는 중/;
+    const notReady = /canvas to be ready|photo is still loading/;
     for (let attempt = 0; ; attempt++) {
       const handle = canvasFor(owner);
       try { if (handle) return { handle, plain: handle.capture(full) }; }
       catch (error) { if (!(error instanceof Error && notReady.test(error.message)) || attempt >= 80) throw error; }
-      if (!handle && attempt >= 80) throw new Error("캔버스가 준비될 때까지 잠시 기다려주세요.");
+      if (!handle && attempt >= 80) throw new Error("Wait a moment for the canvas to be ready.");
       await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
@@ -297,7 +327,7 @@ export default function Home() {
     capture: captureFrame, createFrame,
     addBrushes: (frameId, scene) => {
       const made = brushesFor(scene, frameId, brushesRef.current, () => crypto.randomUUID());
-      if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`${made.map(brush => brush.name).join(", ")} brush를 툴바에 추가했습니다.`); }
+      if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`Added brushes to the toolbar: ${made.map(brush => brush.name).join(", ")}.`); }
       return made;
     },
     openProxy: (owner, nodeId) => openProxy(owner, nodeId),
@@ -332,8 +362,8 @@ export default function Home() {
   // ── Persistence and effects ────────────────────────────────────────────────
   useEffect(() => {
     try {
-      const raw = localStorage.getItem(storageKey); if (raw) { const result = projectSchema.safeParse(JSON.parse(raw)); if (result.success) restore(result.data); else setToast("저장된 프로젝트 형식이 변경되어 새 작업실을 열었습니다."); }
-    } catch { setToast("로컬 프로젝트를 불러오지 못했습니다. JSON 파일이 있다면 가져올 수 있습니다."); }
+      const raw = localStorage.getItem(storageKey); if (raw) { const result = projectSchema.safeParse(JSON.parse(raw)); if (result.success) restore(result.data); else setToast("The saved project format has changed, so a new workspace was opened."); }
+    } catch { setToast("Could not load the local project. If you have a JSON file, you can import it."); }
     setRestoreReady(true);
     fetch("/api/generate").then(r => r.json()).then(data => { setConfigured(data.configured); setModel(data.model); }).catch(() => setConfigured(false));
     return () => { for (const controller of aborts.current.values()) controller.abort(); };
@@ -384,9 +414,9 @@ export default function Home() {
       const now = inspectionFor(panelsRef.current[frame] || panel, brush.id);
       if (id !== run.id) return;
       // The marks changed meanwhile: these suggestions read the old ones.
-      setConcernSuggest(concernMarksKey(now.marks) === asked.marks ? { key: scope, items, loading: false, error: "" } : { key: scope, items: [], loading: false, error: "표시가 바뀌었습니다. 다시 눌러주세요." });
+      setConcernSuggest(concernMarksKey(now.marks) === asked.marks ? { key: scope, items, loading: false, error: "" } : { key: scope, items: [], loading: false, error: "The marks changed. Press again." });
     } catch {
-      if (id === run.id && !controller.signal.aborted) setConcernSuggest(current => ({ ...current, loading: false, error: "concern을 제안하지 못했습니다." }));
+      if (id === run.id && !controller.signal.aborted) setConcernSuggest(current => ({ ...current, loading: false, error: "Could not suggest concerns." }));
     }
   }
   useEffect(() => {
@@ -398,6 +428,7 @@ export default function Home() {
       if (e.key === "Escape") { setPickedFrames([]); setOpenGroup(null); setPencilOpen(false); setPenSettingsOpen(false); canvas.current?.clearSelection(); setModal(false); setExportOpen(false); setHistoryOpen(false); setFrameJson(null); if (tool === "select") edits.select(null); }
       if (command && key === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
       else if (command && key === "y") { e.preventDefault(); redo(); }
+      else if (command && key === "c" && layerPick(activeSketch) && !window.getSelection()?.toString()) { e.preventDefault(); copyLayerTransformation(layerPick(activeSketch)!.nodeId, layerPick(activeSketch)!.transformationId); }
       else if (command && key === "g" && tool === "select") { e.preventDefault(); if (e.shiftKey) { if (node?.kind === "collection") edits.ungroup(node.id); } else edits.group(); }
       else if (tool === "select" && pickedFrames.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); deleteFrames(pickedFrames); }
       else if (tool === "select" && panel.selectedNodeIds.length && (e.key === "Delete" || e.key === "Backspace")) { e.preventDefault(); edits.remove(); }
@@ -438,7 +469,7 @@ export default function Home() {
       clarificationContext: revisionSnapshot(restored, ""), revisionProposal: data.proposal ? { proposal: data.proposal, snapshot: revisionSnapshot(restored) } : null });
     // The board comes back as it was then: frame positions and the view (camera). Only a log without a view focuses the frame.
     setHistoryOpen(false); if (!data.project.workspace.camera) setPendingFrameFocus(data.owner as FrameId);
-    setToast("AI 생성 기록을 복원했습니다.");
+    setToast("Restored the AI generation history.");
   }
 
   // ── Frames and drawing history ─────────────────────────────────────────────
@@ -464,15 +495,25 @@ export default function Home() {
     setSketchHistories(current => ({ ...current, [id]: { past: [], future: [] } }));
     activateSketch(id); setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); setPendingFrameFocus(id);
   }
-  /** Show the proxy frame of a node, adding it beside its frame when there is none. */
-  function openProxy(targetFrameId: string, nodeId: string) {
-    const existing = proxyFor(proxyFramesRef.current, targetFrameId, nodeId);
-    if (existing) { setPendingFrameFocus(existing.id as FrameId); return; }
-    if (proxyFramesRef.current.length >= MAX_PROXY_FRAMES) { setToast(`proxy frame은 ${MAX_PROXY_FRAMES}개까지 둘 수 있습니다. 쓰지 않는 것을 지워주세요.`); return; }
-    const id = `proxy-${crypto.randomUUID()}` as const, frames = [...proxyFramesRef.current, { id, targetFrameId, nodeId }];
+  /**
+   * Show a node's proxy frames: one per transformation with handles (each the whole frame), kept together in one
+   * frame group beside its frame; new ones are added, hidden ones shown again. A node with no handles yet gets one
+   * frame to design them from (it goes once there are transformation frames, which take its spot).
+   */
+  function openProxy(targetFrameId: string, nodeId: string, focus = true) {
+    const node = panelsRef.current[targetFrameId] && findNode(panelsRef.current[targetFrameId].scene, nodeId);
+    const withWidgets = node ? proxyGroups(node.transformations).map(group => group.transformation.id) : [];
+    const plan = planProxyFrames(proxyFramesRef.current, targetFrameId, nodeId, withWidgets, () => `proxy-${crypto.randomUUID()}`);
+    if (plan.left) setToast(`You can have up to ${MAX_PROXY_FRAMES} proxy frames; ${plan.left} could not be opened. Delete the ones you are not using.`);
+    proxyFramesRef.current = plan.frames; setProxyFrames(plan.frames);
+    const members = plan.mine.map(frame => frame.id);
+    setWorkspace(current => placeProxyGroup(current, plan, targetFrameId, `◎ ${node?.name || nodeId} · proxy`, () => `group-${crypto.randomUUID()}`));
+    if (focus && members[0]) setPendingFrameFocus(members[0] as FrameId);
+  }
+  /** Take proxy frames off the board (or put them back); their handles and spots are kept. */
+  function hideProxies(ids: string[], hide: boolean) {
+    const frames = proxyFramesRef.current.map(frame => ids.includes(frame.id) ? { ...frame, hidden: hide } : frame);
     proxyFramesRef.current = frames; setProxyFrames(frames);
-    setWorkspace(current => ({ ...current, frames: { ...current.frames, [id]: besideFramePosition(current.frames, targetFrameId) } }));
-    setPendingFrameFocus(id);
   }
   /** Clicking a proxy frame works on its node: its frame becomes active with the node selected. */
   function activateFrame(id: string) {
@@ -491,15 +532,15 @@ export default function Home() {
     for (const id of ids) if (!kept.includes(id)) deleteFrame(id);
     setPickedFrames(kept);
     const gone = ids.length - kept.length;
-    setToast(`프레임 ${gone}개를 삭제했습니다.${kept.length ? ` AI 작업 중인 ${kept.length}개는 남겨두었습니다.` : ""}`);
+    setToast(`Deleted ${gone} frame(s).${kept.length ? ` Kept ${kept.length} that AI is working on.` : ""}`);
   }
   function deleteFrame(id: FrameId) {
     if (isSlotFrame(id)) { closeForkSlots(slot => slot.id === id); return; }
-    if (isExploreFrame(id)) { closeExploreFrames(frame => frame.id === id); setToast("탐색 프레임을 닫았습니다. 원래 프레임은 그대로입니다."); return; }
+    if (isExploreFrame(id)) { closeExploreFrames(frame => frame.id === id); setToast("Closed the exploration frame. The original frame is unchanged."); return; }
     if (isProxyFrame(id)) {
       const remaining = proxyFramesRef.current.filter(frame => frame.id !== id);
       proxyFramesRef.current = remaining; setProxyFrames(remaining); setWorkspace(current => removeWorkspaceFrame(current, id));
-      setToast("proxy frame을 지웠습니다. handle은 property에 남아 있어 다시 열 수 있습니다.");
+      setToast("Deleted the proxy frame. The handle stays on the property, so you can open it again.");
       return;
     }
     if (panelsRef.current[id]?.loading) return;
@@ -524,7 +565,7 @@ export default function Home() {
         if (fallback !== "source" || (id !== "source" && !workspace.hiddenFrames.includes("source"))) setPendingFrameFocus(fallback as FrameId);
       }
     }
-    setToast("프레임을 삭제했습니다.");
+    setToast("Deleted the frame.");
   }
   function commit(next: Artwork) { setWorkspace(current => showWorkspaceFrame(current, "source")); const previous = artworkRef.current; const updated = { ...next, revision: previous.revision + 1 }; setHistory(h => [...h.slice(-39), previous]); setFuture([]); artworkRef.current = updated; setArtwork(updated); }
   function commitSketchFrame(id: string, next: Artwork) {
@@ -651,16 +692,16 @@ export default function Home() {
       updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], markStyles: [], concern: "", focus: null }));
       chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
     }
-    const unstepped = stepped ? "" : " 기록된 단계가 없어 원인 Execution 프레임과 recommendation 프레임 그룹은 만들지 못했습니다. Brush 도구로 이 프레임의 brush를 한 번 움직인 뒤 다시 inspect해주세요.";
-    setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}) · targeted inspection 도구를 ${brush.name} 그룹에 ${tool ? "다시 만들었습니다" : "만들었습니다"}.${unstepped}`);
+    const unstepped = stepped ? "" : " No steps were recorded, so the Cause Execution frame and recommendation frame groups could not be made. Move this frame's brush once with the Brush tool, then inspect again.";
+    setToast(`“${made.name}” inspection ${(timing.ms / 1000).toFixed(1)}s (recommendation preview ${timing.previews ? "on" : "off"}) · ${tool ? "Remade" : "Made"} the targeted inspection tool in the ${brush.name} group.${unstepped}`);
     if (!stepped) return;
     // The cause frame now knows the cause found (asked again with it on retry).
     const owner = panelsRef.current[frame];
     if (cause && owner) patchExplore(cause.id, current => ({ request: { ...current.request, inspection: toolIn(frame, owner, brush, made).result } }));
     // Each recommendation: a frame group with its fork's slot, Execution and key parameter frames side by side (no lines to this frame).
-    // Only placed: what is in them is made when "마저 생성" is pressed (or a frame's own Generate).
+    // Only placed: what is in them is made when "Continue generating" is pressed (or a frame's own Generate).
     const pairs = made.result.recommendations.map((listed, i) => placeRecommendationGroup(brush, made, frame, i, listed));
-    if (pairs.some(pair => pair.length)) setToast(`「${made.name}」 inspection ${(timing.ms / 1000).toFixed(1)}초 (recommendation preview ${timing.previews ? "켬" : "끔"}). recommendation ${pairs.length}개마다 fork·Execution·핵심 파라미터 프레임 그룹을 만들었습니다. 각 fork 프레임 아래의 「마저 생성」으로 내용을 만듭니다.`);
+    if (pairs.some(pair => pair.length)) setToast(`“${made.name}” inspection ${(timing.ms / 1000).toFixed(1)}s (recommendation preview ${timing.previews ? "on" : "off"}). Made a fork·Execution·Key parameters frame group for each of the ${pairs.length} recommendations. Use “Continue generating” under each fork frame to make their content.`);
   }
   /**
    * Make sure the brush has a step recorded in `frame`: when it has none, the running result reports the moment it shows
@@ -696,7 +737,7 @@ export default function Home() {
     const made = makeFork(frame, brush, tool, index);
     if (!made) return;
     const { id, fork, forkTool, listed: shown, recommendation } = made;
-    setToast(`「${shown.title}」을(를) ${brush.name}의 fork에 AI로 적용하고 있습니다. 원래 brush와 프레임은 그대로입니다.`);
+    setToast(`Applying “${shown.title}” to a fork of ${brush.name} with AI. The original brush and frame are unchanged.`);
     const key = recommendationKey(shown), added = await applyRecommendation(deps, id, recommendation, key);
     if (!panelsRef.current[id]?.applied.past.some(entry => entry.key === key)) return;
     if (!added) return;
@@ -716,13 +757,13 @@ export default function Home() {
     const listed = toolIn(frame, owner, brush, tool).result.recommendations[index];
     if (!listed) return null;
     const recommendation = currentRecommendation(listed, owner.scene);
-    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `Brush는 최대 ${MAX_BRUSHES}개까지 만들 수 있습니다. 쓰지 않는 brush를 지워주세요.` }); return null; }
+    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `You can make up to ${MAX_BRUSHES} brushes. Delete the brushes you are not using.` }); return null; }
     const base = { scene: content?.scene ?? owner.scene, generated: content?.generated ?? owner.generated };
     // The stamp the recommendation changes (master or instance), else the first.
     const roots = brushRoots(base.scene, brush, frame), rootId = roots.find(id => id === recommendation.nodeId || descendantIds(base.scene, id).includes(recommendation.nodeId)) ?? roots[0];
     if (!rootId) return null;
     const id = createFrame(frame, `${art.name} · fork: ${listed.title}`, art);
-    if (!id) { updatePanel(frame, { error: `스케치 프레임은 최대 ${MAX_SKETCH_FRAMES}개까지 만들 수 있습니다. fork를 만들 자리가 없습니다.` }); return null; }
+    if (!id) { updatePanel(frame, { error: `You can make up to ${MAX_SKETCH_FRAMES} sketch frames. There is no room to make the fork.` }); return null; }
     if (slot) {
       // The slot's place on the board and in its group.
       setWorkspace(current => { const at = current.frames[slot.id], frames = { ...current.frames, ...(at ? { [id]: at } : {}) }; delete frames[slot.id];
@@ -734,7 +775,7 @@ export default function Home() {
     const shown = overlays.map(item => item.link.kind === "parameter" ? { ...item, link: { ...item.link, kind: "constraint" as const } } : item);
     const shared = shown.length ? remapResult({ summary: "", overlays: shown as TargetedTool["result"]["overlays"], valueFixes: [], recommendations: [], parameters: [], records: null }, sharedIds(base.scene, [rootId])).overlays : [];
     const forkTool: TargetedTool = { ...tool, id: crypto.randomUUID(), overlayUpdates: [], ...(shared.length ? { name: `${tool.name} · fork`.slice(0, 100),
-      result: { ...tool.result, summary: (summary ? `「${listed.title}」 fork: ${summary}` : tool.result.summary).slice(0, 1500), overlays: [...shared, ...tool.result.overlays.filter(item => !shared.some(other => other.id === item.id))].slice(0, 12) } } : {}) };
+      result: { ...tool.result, summary: (summary ? `“${listed.title}” fork: ${summary}` : tool.result.summary).slice(0, 1500), overlays: [...shared, ...tool.result.overlays.filter(item => !shared.some(other => other.id === item.id))].slice(0, 12) } } : {}) };
     const fork: Brush = { id: crypto.randomUUID(), name: `${brush.name} · ${listed.title}`.slice(0, 100), color: brush.color, sourceFrameId: id, nodeId: rootId, scene: subScene(base.scene, [rootId]),
       code: instanceCode({ ...owner, ...base }, rootId) || brush.code, targeted: [forkTool], parentId: "", thumbnail: brush.thumbnail,
       fork: { brushId: brush.id, frameId: frame, key: recommendationKey(listed), title: listed.title } };
@@ -764,7 +805,7 @@ export default function Home() {
     return { members, source: ran?.result ? { edits: ran.result.edits, values: ran.result.values, machine: ran.result.machine ?? null, from: ran.mode } : listed?.preview ? { ...listed.preview, from: "inspection" as const } : null };
   }
   /** What a version adds to the state machine, said in the slot. */
-  const machineNote = (change: MachineChange | null | undefined) => change ? ` 상태 머신에 ${[...change.states.map(state => `상태 「${state.label}」`), ...change.transitions.map(item => `전이 「${item.label}」`)].join(", ")}도 추가됩니다.` : "";
+  const machineNote = (change: MachineChange | null | undefined) => change ? ` Also adds ${[...change.states.map(state => `state “${state.label}”`), ...change.transitions.map(item => `transition “${item.label}”`)].join(", ")} to the state machine.` : "";
   /** A slot as it is now: its recommendation, the version it would make, and whether it can be accepted. */
   function slotInfo(slot: ForkSlotFrame) {
     const owner = panelsRef.current[slot.targetFrameId], brush = brushesRef.current.find(item => item.id === slot.brushId), tool = brush?.targeted.find(item => item.id === slot.toolId);
@@ -773,15 +814,15 @@ export default function Home() {
     if (!listed) return null;
     const recommendation = currentRecommendation(listed, owner.scene), { members, source } = slotSource(slot, listed);
     const waiting = members.some(item => item.status === "queued" || item.status === "loading"), paused = members.some(item => item.status === "idle");
-    const [status, message]: [ForkSlotStatus, string] = slot.making ? ["making", "fork를 만들고 있습니다…"] : slot.error ? ["error", slot.error]
-      : waiting ? ["waiting", "Execution·핵심 파라미터 프레임이 만들어지면 Accept할 수 있습니다…"]
-      : paused && recommendation.kind !== "value" && !source ? ["paused", "「마저 생성」으로 Execution·핵심 파라미터 프레임을 만들면 그 코드로 Accept할 수 있습니다."]
-      : recommendation.kind === "value" ? ["ready", "값만 바꾼 fork를 AI 없이 만듭니다."]
-      : source ? ["ready", `${source.from === "parameters" ? "핵심 파라미터" : source.from === "execution" ? "Execution" : "inspection preview"} 프레임이 돌리는 바뀐 코드로 AI 없이 fork를 만듭니다.${machineNote(source.machine)}`]
-      : ["error", "바뀐 버전의 코드를 만들지 못했습니다. 패널의 Fork & apply with AI로 만들 수 있습니다."];
+    const [status, message]: [ForkSlotStatus, string] = slot.making ? ["making", "Making the fork…"] : slot.error ? ["error", slot.error]
+      : waiting ? ["waiting", "You can Accept once the Execution·Key parameters frames are made…"]
+      : paused && recommendation.kind !== "value" && !source ? ["paused", "Make the Execution·Key parameters frames with “Continue generating” to Accept with their code."]
+      : recommendation.kind === "value" ? ["ready", "Makes a fork with only the values changed, without AI."]
+      : source ? ["ready", `Makes the fork without AI from the changed code the ${source.from === "parameters" ? "Key parameters" : source.from === "execution" ? "Execution" : "inspection preview"} frame runs.${machineNote(source.machine)}`]
+      : ["error", "Could not make the changed version of the code. You can make it with Fork & apply with AI in the panel."];
     return { owner, brush, tool, listed, recommendation, source, status, message, members, paused };
   }
-  /** "마저 생성": make the slot's Execution and key parameter frames that were only placed. */
+  /** "Continue generating": make the slot's Execution and key parameter frames that were only placed. */
   async function continueSlot(slot: ForkSlotFrame) {
     const idle = slotSource(slot, undefined).members.filter(item => item.status === "idle" || item.status === "error");
     if (!idle.length) return;
@@ -808,7 +849,7 @@ export default function Home() {
    */
   async function reviseSlot(slot: ForkSlotFrame, image: string) {
     const info = slotInfo(slot);
-    if (!info || !image) { patchSlotEdit(slot.id, { error: !image ? "미리보기가 그려진 뒤 다시 눌러주세요." : "원래 프레임이나 targeted 도구가 없습니다." }); return; }
+    if (!info || !image) { patchSlotEdit(slot.id, { error: !image ? "Press again after the preview is drawn." : "The original frame or targeted tool is missing." }); return; }
     const { owner, brush, tool, listed } = info, edit = slot.edit, frame = slot.targetFrameId;
     reviseAborts.current.get(slot.id)?.abort();
     const controller = new AbortController(); reviseAborts.current.set(slot.id, controller);
@@ -819,13 +860,13 @@ export default function Home() {
       if (controller.signal.aborted) return;
       const { reply, ...item } = revised, now = panelsRef.current[frame] ?? owner, latest = brushesRef.current.find(entry => entry.id === brush.id);
       const current = latest?.targeted.find(entry => entry.id === tool.id);
-      if (!latest || !current || !current.result.recommendations[slot.index]) throw new Error("targeted 도구가 바뀌어 고친 recommendation을 넣지 못했습니다.");
+      if (!latest || !current || !current.result.recommendations[slot.index]) throw new Error("The targeted tool changed, so the revised recommendation could not be added.");
       // Kept in the brush's shared ids, like the rest of the tool.
       const shared = remapResult({ ...current.result, overlays: [], recommendations: [item] }, sharedIds(now.scene, brushRoots(now.scene, latest, frame))).recommendations[0];
       patchTargeted(brush.id, tool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: entry.result.recommendations.map((old, i) => i === slot.index ? shared : old) } }));
       const key = recommendationKey(item), oldKey = slot.key;
-      setForkSlots(forkSlotsRef.current.map(entry => entry.id === slot.id ? { ...entry, key, title: item.title, detail: item.detail, error: "", edit: { ...emptySlotEdit(), reply: reply || "recommendation을 고쳤습니다." } } : entry));
-      // Its frames start over from the revised recommendation (placed only, made with "마저 생성").
+      setForkSlots(forkSlotsRef.current.map(entry => entry.id === slot.id ? { ...entry, key, title: item.title, detail: item.detail, error: "", edit: { ...emptySlotEdit(), reply: reply || "Revised the recommendation." } } : entry));
+      // Its frames start over from the revised recommendation (placed only, made with "Continue generating").
       const tooled = brushesRef.current.find(entry => entry.id === brush.id)?.targeted.find(entry => entry.id === tool.id) ?? tool;
       const stale = exploreRef.current.filter(entry => entry.targetFrameId === frame && entry.toolId === tool.id && entry.source.kind === "recommendation" && entry.source.key === oldKey);
       for (const entry of stale) {
@@ -834,9 +875,9 @@ export default function Home() {
         if (typeof fresh !== "string") patchExplore(entry.id, { ...fresh, id: entry.id });
       }
       setWorkspace(current => ({ ...current, groups: current.groups.map(group => group.frames.includes(slot.id) ? { ...group, title: `Recommendation · ${item.title}`.slice(0, 200) } : group) }));
-      setToast(`「${item.title}」(으)로 recommendation을 고쳤습니다.${stale.length ? " Execution·핵심 파라미터 프레임은 「마저 생성」으로 다시 만듭니다." : ""}`);
+      setToast(`Revised the recommendation to “${item.title}”.${stale.length ? " Remake the Execution·Key parameters frames with “Continue generating”." : ""}`);
     } catch (error) {
-      if (!controller.signal.aborted) patchSlotEdit(slot.id, { revising: false, error: error instanceof Error ? error.message : "recommendation을 고치지 못했습니다." });
+      if (!controller.signal.aborted) patchSlotEdit(slot.id, { revising: false, error: error instanceof Error ? error.message : "Could not revise the recommendation." });
     } finally {
       if (reviseAborts.current.get(slot.id) === controller) reviseAborts.current.delete(slot.id);
       if (controller.signal.aborted) patchSlotEdit(slot.id, { revising: false });
@@ -852,8 +893,8 @@ export default function Home() {
     const brushChanges = Object.entries(adjusted).filter(([name]) => !source?.values.some(item => previewKey(item) === name)).map(([name, value]) => ({ key: name, stateId: "", value }));
     let content: { scene: Scene; generated: GeneratedCode } | undefined;
     if (recommendation.kind !== "value") {
-      const built = source ? previewFork(owner.scene, owner.generated!, recommendation, source) : { error: "바뀐 버전의 코드가 없습니다" };
-      if ("error" in built) { setForkSlots(forkSlotsRef.current.map(item => item.id === slot.id ? { ...item, error: `fork를 만들지 못했습니다: ${built.error}. 패널의 Fork & apply with AI로 만들 수 있습니다.` } : item)); return; }
+      const built = source ? previewFork(owner.scene, owner.generated!, recommendation, source) : { error: "There is no changed version of the code" };
+      if ("error" in built) { setForkSlots(forkSlotsRef.current.map(item => item.id === slot.id ? { ...item, error: `Could not make the fork: ${built.error}. You can make it with Fork & apply with AI in the panel.` } : item)); return; }
       content = built;
     }
     // The key parameter frame's overlays (its handles on the values the recommendation changes) become the fork's inspection.
@@ -863,7 +904,7 @@ export default function Home() {
     if (content) deps.refreshBrushCode?.(made.id, content.generated.code);
     else await applyRecommendation(deps, made.id, recommendation, key);
     if (brushChanges.length) applyChanges(deps, made.id, brushChanges);
-    setToast(`「${listed.title}」 fork를 AI 없이 만들었습니다 (${content ? "탐색 프레임이 돌리던 바뀐 코드" : "값 변경"}). 원래 brush와 프레임은 그대로이고, fork에서 Undo apply로 되돌릴 수 있습니다.`);
+    setToast(`Made the “${listed.title}” fork without AI (${content ? "changed code the exploration frame was running" : "value change"}). The original brush and frame are unchanged; you can revert it in the fork with Undo apply.`);
   }
   /** Go to a fork made from a recommendation: its frame, with its targeted tool. */
   function openFork(forkId: string) {
@@ -881,7 +922,7 @@ export default function Home() {
   async function updateTargetedOverlays(brush: Brush, listed: Recommendation, tool = activeTargeted, frame = activeSketchRef.current) {
     const applied = [...(panelsRef.current[frame]?.applied.past ?? [])].reverse().find(item => item.key === recommendationKey(listed));
     if (!tool) return;
-    if (!applied) { setToast("이 recommendation을 먼저 적용해주세요."); return; }
+    if (!applied) { setToast("Apply this recommendation first."); return; }
     await settledResult(frame);
     const owner = panelsRef.current[frame], latest = brushesRef.current.find(item => item.id === brush.id), current = latest?.targeted.find(entry => entry.id === tool.id);
     if (!owner || !latest || !current) return;
@@ -902,7 +943,7 @@ export default function Home() {
       return { ...entry, result: next, overlayUpdates: [...entry.overlayUpdates.filter(item => item !== earlier),
         { appliedIds: [applied.id, ...recorded].slice(0, 4), before: earlier?.before ?? overlayPart(entry.result), after: overlayPart(next) }].slice(-MAX_OVERLAY_UPDATES) };
     });
-    setToast(`「${tool.name}」 overlay를 「${applied.title}」 적용에 맞게 고쳤습니다. Undo apply로 함께 되돌아갑니다.`);
+    setToast(`Updated the “${tool.name}” overlay to match applying “${applied.title}”. Undo apply reverts it too.`);
   }
   /** Undo / redo of an applied entry: targeted tools whose overlays were updated for it follow. */
   function followApplied(appliedId: string, direction: "undo" | "redo") {
@@ -917,17 +958,17 @@ export default function Home() {
    */
   function newExplore(mode: ExploreFrame["mode"], index: number | null, brush: Brush, tool: TargetedTool, frame: string, status: ExploreFrame["status"] = "loading"): ExploreFrame | string {
     const owner = panelsRef.current[frame];
-    if (!owner) return "원래 프레임이 없습니다.";
+    if (!owner) return "The original frame is missing.";
     const shown = toolIn(frame, owner, brush, tool), listed = index === null ? null : shown.result.recommendations[index];
-    if (index !== null && !listed) return "recommendation을 찾지 못했습니다.";
+    if (index !== null && !listed) return "Could not find the recommendation.";
     const key = listed ? recommendationKey(listed) : "", applied = Boolean(listed && owner.applied.past.some(entry => entry.key === key));
     const source: ExploreSource = listed ? { kind: "recommendation", index: index!, title: listed.title, key, applied } : { kind: "cause" };
     const state = inspectionFor(owner, brush.id), at = heldIndex(state);
-    if (at === null) return "먼저 Brush 도구로 이 프레임의 brush를 움직여 단계를 기록해주세요. 탐색 프레임은 그 brush 자국으로 만들어집니다.";
-    if (!owner.generated || !owner.executable) return "이 프레임의 결과가 실행된 뒤 다시 눌러주세요.";
+    if (at === null) return "First move this frame's brush with the Brush tool to record steps. Exploration frames are made from those brush marks.";
+    if (!owner.generated || !owner.executable) return "Press again after this frame's result has run.";
     const item = listed ? currentRecommendation(listed, owner.scene) : null;
     return { id: `explore-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, mode, source,
-      name: `${brush.name} · ${mode === "execution" ? "Execution" : mode === "parameters" ? "핵심 파라미터" : "Recommendation"} · ${listed ? listed.title : "원인"}`.slice(0, 120), nodeIds: brushNodeIds(owner.scene, brush, frame),
+      name: `${brush.name} · ${mode === "execution" ? "Execution" : mode === "parameters" ? "Key parameters" : "Recommendation"} · ${listed ? listed.title : "Cause"}`.slice(0, 120), nodeIds: brushNodeIds(owner.scene, brush, frame),
       // The brush marks as the inspection holds them; a value recommendation not applied yet is drawn with its values.
       base: { runtime: state.steps[at].runtime, values: stepValues(state.steps[at])!, steps: state.steps.map(step => ({ runtime: step.runtime, values: stepValues(step)! })),
         params: item?.kind === "value" && !applied ? Object.fromEntries(item.changes.map(change => [change.key, change.value])) : {} },
@@ -948,7 +989,7 @@ export default function Home() {
     const existing = typeof made === "string" ? undefined : exploreRef.current.find(item => sameExplore(item, made));
     if (existing && existing.status !== "error" && (existing.source.kind === "cause" || (existing.source.kind === "recommendation" && typeof made !== "string" && made.source.kind === "recommendation" && existing.source.applied === made.source.applied))) { setPendingFrameFocus(existing.id); return; }
     if (typeof made === "string") { setToast(made); return; }
-    if (!existing && exploreRef.current.length >= MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫아주세요.`); return; }
+    if (!existing && exploreRef.current.length >= MAX_EXPLORE_FRAMES) { setToast(`You can open up to ${MAX_EXPLORE_FRAMES} exploration frames. Close the ones you are done with.`); return; }
     const frameMade = existing ? { ...made, id: existing.id } : made;
     setExploreFrames([...exploreRef.current.filter(item => item.id !== frameMade.id), frameMade]);
     if (!existing) setWorkspace(current => ({ ...current, frames: { ...current.frames, [frameMade.id]: besideFramePosition(current.frames, frame) } }));
@@ -960,10 +1001,10 @@ export default function Home() {
    * right of `frame` under the recommendation's title. Returns the exploration frames (waiting for their turn).
    */
   function placeRecommendationGroup(brush: Brush, tool: TargetedTool, frame: string, index: number, listed: Recommendation) {
-    if (exploreRef.current.length + 2 > MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); return []; }
+    if (exploreRef.current.length + 2 > MAX_EXPLORE_FRAMES) { setToast(`You can open up to ${MAX_EXPLORE_FRAMES} exploration frames. Close the ones you are done with to open more with the buttons.`); return []; }
     const made = (["execution", "parameters"] as const).map(mode => newExplore(mode, index, brush, tool, frame, "idle"));
     const problem = made.find((item): item is string => typeof item === "string");
-    if (problem) { setToast(`탐색 프레임은 만들지 않았습니다: ${problem}`); return []; }
+    if (problem) { setToast(`Did not make exploration frames: ${problem}`); return []; }
     const explores = made as ExploreFrame[];
     const slot: ForkSlotFrame = { id: `slot-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, index, key: recommendationKey(listed), title: listed.title, detail: listed.detail, making: false, error: "", edit: emptySlotEdit() };
     setExploreFrames([...exploreRef.current, ...explores]); setForkSlots([...forkSlotsRef.current, slot]);
@@ -985,15 +1026,15 @@ export default function Home() {
     const group = workspace.groups.find(item => item.id === groupId); if (!group) return;
     for (const id of group.frames) if (frames.some(frame => frame.id === id)) deleteFrame(id as FrameId);
     setWorkspace(current => ({ ...current, groups: current.groups.filter(item => item.id !== groupId) }));
-    setToast(`「${group.title}」 그룹과 그 안의 프레임을 지웠습니다.`);
+    setToast(`Deleted the “${group.title}” group and its frames.`);
   }
   /** Exploration frames of a tool in `frame`, placed beside it and waiting for their turn (none past the limit). */
   function placeExploreFrames(brush: Brush, tool: TargetedTool, frame: string, wanted: [ExploreMode, number | null][]) {
     const made: ExploreFrame[] = [];
     for (const [mode, index] of wanted) {
-      if (exploreRef.current.length + made.length >= MAX_EXPLORE_FRAMES) { setToast(`탐색 프레임은 ${MAX_EXPLORE_FRAMES}개까지 열 수 있습니다. 다 본 것을 닫으면 버튼으로 열 수 있습니다.`); break; }
+      if (exploreRef.current.length + made.length >= MAX_EXPLORE_FRAMES) { setToast(`You can open up to ${MAX_EXPLORE_FRAMES} exploration frames. Close the ones you are done with to open more with the buttons.`); break; }
       const item = newExplore(mode, index, brush, tool, frame, mode === "execution" && deferExecution ? "idle" : "queued");
-      if (typeof item === "string") { setToast(`탐색 프레임은 만들지 않았습니다: ${item}`); break; }
+      if (typeof item === "string") { setToast(`Did not make exploration frames: ${item}`); break; }
       made.push(item);
     }
     if (!made.length) return made;
@@ -1008,26 +1049,28 @@ export default function Home() {
       for (let attempt = 1; exploreRef.current.some(open => open.id === item.id); attempt++) {
         await runExplore(exploreRef.current.find(open => open.id === item.id)!);
         const now = exploreRef.current.find(open => open.id === item.id);
-        if (!now || now.status !== "error" || !/요청이 진행 중/.test(now.error) || attempt >= 6) break;
+        if (!now || now.status !== "error" || !/request is in progress/i.test(now.error) || attempt >= 6) break;
         await new Promise(resolve => setTimeout(resolve, 2500 * attempt));
       }
     }));
   }
   /** Ask AI for an exploration frame's handles (and a recommendation's preview program). */
-  async function runExplore(frame: ExploreFrame) {
+  /** Make an exploration frame again (with `note`: what to change, said to the AI with the concern). */
+  async function runExplore(frame: ExploreFrame, note = "") {
     const mode = frame.mode, brush = brushesRef.current.find(item => item.id === frame.brushId);
-    if (!brush || !panelsRef.current[frame.targetFrameId]) { patchExplore(frame.id, { status: "error", error: "원래 프레임이나 brush가 없어 다시 만들 수 없습니다." }); return; }
+    if (!brush || !panelsRef.current[frame.targetFrameId]) { patchExplore(frame.id, { status: "error", error: "Cannot regenerate because the original frame or brush is missing." }); return; }
     exploreAborts.current.get(frame.id)?.abort();
     const controller = new AbortController(); exploreAborts.current.set(frame.id, controller);
     patchExplore(frame.id, { status: "loading", error: "" });
     try {
-      const found = await requestExplore(deps, frame.targetFrameId, brush, { mode, ...frame.request }, controller.signal);
+      const concern = note.trim() ? `${frame.request.concern}\n\nMake this frame again. What to change: ${note.trim()}` : frame.request.concern;
+      const found = await requestExplore(deps, frame.targetFrameId, brush, { mode, ...frame.request, concern }, controller.signal);
       const executable = await exploreExecutable(deps, frame.targetFrameId, found);
       if (controller.signal.aborted) return;
       // A run is executed step by step from its first step (the finished marks show faintly); input or steps start where the process ends.
       patchExplore(frame.id, current => ({ result: found, status: "ready", executable: executable ?? current.executable, progress: found.axis === "run" ? 0 : found.to, values: {}, edit: undefined }));
     } catch (error) {
-      if (!controller.signal.aborted) patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "탐색 프레임을 만들지 못했습니다." });
+      if (!controller.signal.aborted) patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "Could not make the exploration frame." });
     } finally { if (exploreAborts.current.get(frame.id) === controller) exploreAborts.current.delete(frame.id); }
   }
   function patchExplore(id: string, patch: Partial<ExploreFrame> | ((frame: ExploreFrame) => Partial<ExploreFrame>)) {
@@ -1045,10 +1088,10 @@ export default function Home() {
    */
   async function recommendFromFrame(explore: ExploreFrame, image: string, moment: ExecutionMoment) {
     const owner = panelsRef.current[explore.targetFrameId], brush = brushesRef.current.find(item => item.id === explore.brushId), tool = brush?.targeted.find(item => item.id === explore.toolId);
-    if (!owner || !brush || !tool) { patchExploreEdit(explore.id, { error: "원래 프레임이나 targeted 도구가 없습니다." }); return; }
-    if (!image) { patchExploreEdit(explore.id, { error: "그림이 그려진 뒤 다시 눌러주세요." }); return; }
+    if (!owner || !brush || !tool) { patchExploreEdit(explore.id, { error: "The original frame or targeted tool is missing." }); return; }
+    if (!image) { patchExploreEdit(explore.id, { error: "Press again after the drawing is rendered." }); return; }
     const frame = explore.targetFrameId, edit = explore.edit ?? emptyExploreEdit(), shown = toolIn(frame, owner, brush, tool).result;
-    if (shown.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) { patchExploreEdit(explore.id, { error: `recommendation은 ${MAX_LISTED_RECOMMENDATIONS}개까지 둘 수 있습니다.` }); return; }
+    if (shown.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) { patchExploreEdit(explore.id, { error: `You can have up to ${MAX_LISTED_RECOMMENDATIONS} recommendations.` }); return; }
     recommendAborts.current.get(explore.id)?.abort();
     const controller = new AbortController(); recommendAborts.current.set(explore.id, controller);
     patchExploreEdit(explore.id, { making: true, error: "", reply: "", mode: "run" });
@@ -1061,20 +1104,20 @@ export default function Home() {
       if (controller.signal.aborted) return;
       const { reply, ...item } = made, now = panelsRef.current[frame] ?? owner, latest = brushesRef.current.find(entry => entry.id === brush.id);
       const current = latest?.targeted.find(entry => entry.id === tool.id);
-      if (!latest || !current) throw new Error("targeted 도구가 없어 만든 recommendation을 넣지 못했습니다.");
-      if (current.result.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) throw new Error(`recommendation은 ${MAX_LISTED_RECOMMENDATIONS}개까지 둘 수 있습니다.`);
+      if (!latest || !current) throw new Error("The targeted tool is missing, so the new recommendation could not be added.");
+      if (current.result.recommendations.length >= MAX_LISTED_RECOMMENDATIONS) throw new Error(`You can have up to ${MAX_LISTED_RECOMMENDATIONS} recommendations.`);
       // Kept in the brush's shared ids, like the rest of the tool; listed after the others.
       const shared = remapResult({ ...current.result, overlays: [], recommendations: [item] }, sharedIds(now.scene, brushRoots(now.scene, latest, frame))).recommendations[0];
       const index = current.result.recommendations.length;
       patchTargeted(brush.id, tool.id, entry => ({ ...entry, result: { ...entry.result, recommendations: [...entry.result.recommendations, shared] } }));
-      patchExploreEdit(explore.id, { ...emptyExploreEdit(), reply: reply || `「${item.title}」 recommendation을 만들었습니다.` });
+      patchExploreEdit(explore.id, { ...emptyExploreEdit(), reply: reply || `Made the “${item.title}” recommendation.` });
       const tooled = brushesRef.current.find(entry => entry.id === brush.id), grown = tooled?.targeted.find(entry => entry.id === tool.id);
       const placed = tooled && grown ? placeRecommendationGroup(tooled, grown, frame, index, shared) : [];
-      setToast(`「${item.title}」 recommendation을 만들었습니다.${placed.length ? " 옆에 fork·Execution·핵심 파라미터 프레임 그룹을 만들었습니다 (fork 프레임의 「마저 생성」으로 내용을 만듭니다)." : ""}`);
+      setToast(`Made the “${item.title}” recommendation.${placed.length ? " Made a fork·Execution·Key parameters frame group next to it (use “Continue generating” in the fork frame to make their content)." : ""}`);
       const slot = forkSlotsRef.current.find(entry => entry.targetFrameId === frame && entry.toolId === tool.id && entry.index === index);
       if (slot) setPendingFrameFocus(slot.id as FrameId);
     } catch (error) {
-      if (!controller.signal.aborted) patchExploreEdit(explore.id, { making: false, error: error instanceof Error ? error.message : "recommendation을 만들지 못했습니다." });
+      if (!controller.signal.aborted) patchExploreEdit(explore.id, { making: false, error: error instanceof Error ? error.message : "Could not make the recommendation." });
     } finally {
       if (recommendAborts.current.get(explore.id) === controller) recommendAborts.current.delete(explore.id);
       if (controller.signal.aborted) patchExploreEdit(explore.id, { making: false });
@@ -1089,9 +1132,9 @@ export default function Home() {
       if (frame.executable || preparingExplore.current.has(frame.id) || !owner?.generated || !owner.executable) continue;
       preparingExplore.current.add(frame.id);
       const prepared = frame.result?.edits.length ? exploreExecutable(deps, frame.targetFrameId, frame.result) : Promise.resolve(null);
-      // One that cannot be prepared says so and is not tried again (its 다시 만들기 makes it anew).
+      // One that cannot be prepared says so and is not tried again (its Regenerate makes it anew).
       prepared.then(executable => { preparingExplore.current.delete(frame.id); patchExplore(frame.id, current => current.executable ? {} : { executable: executable ?? syncScene(owner.executable, owner.scene) }); },
-        error => patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "탐색 프레임의 코드를 준비하지 못했습니다." }));
+        error => patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "Could not prepare the exploration frame's code." }));
     }
   }, [exploreFrames, panels]);
   /** Stop every AI request of exploration frames and fork slots (their frames stay). */
@@ -1214,19 +1257,31 @@ export default function Home() {
     updatePanel(frameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brushId), focus }),
       ...(focus ? { selectedNodeIds: [focus.nodeId], machineTarget: focus.kind === "state" || focus.kind === "transition" ? { nodeId: focus.nodeId, kind: focus.kind, id: focus.id } : null } : {}) }));
   }
+  /** Make a root node of a frame a brush in the toolbar (one AI did not make: e.g. it was taken for a background). */
+  function makeBrush(frameId: string, nodeId: string) {
+    const owner = panelsRef.current[frameId], node = owner && findNode(owner.scene, nodeId);
+    if (!owner || !node || node.parentId || node.brushId) return;
+    if (brushesRef.current.length >= MAX_BRUSHES) { setToast(`There can be at most ${MAX_BRUSHES} brushes.`); return; }
+    const [brush] = brushesFor({ ...owner.scene, nodes: owner.scene.nodes.filter(item => item.id === nodeId) }, frameId, brushesRef.current, () => crypto.randomUUID());
+    if (!brush) return;
+    setBrushes([...brushesRef.current, brush]);
+    updatePanel(frameId, panel => ({ scene: markBrushes(panel.scene, [brush]) }));
+    if (owner.generated) deps.refreshBrushCode?.(frameId, owner.generated.code);
+    setToast(`Added the ${node.name} brush to the toolbar.`);
+  }
   /**
-   * Show a part of the brush an Execution frame runs (a semantic transformation, state or transition) where it is
-   * edited: its frame and targeted tool become the current ones, its node is selected, and it is highlighted (and
-   * scrolled to) in the properties panel or the state machine panel.
+   * Show a part of the brush an Execution frame runs (a semantic transformation, state or transition, or one of its
+   * values) where it is edited: its frame and targeted tool become the current ones, its node is selected, and it is
+   * highlighted (and scrolled to) in the properties panel or the state machine panel.
    */
-  function showPart(explore: ExploreFrame, part: ExecutionPart) {
+  function showPart(explore: ExploreFrame, part: ExecutionPart | { kind: "constraint"; nodeId: string; id: string }) {
     const brush = brushesRef.current.find(item => item.id === explore.brushId), owner = panelsRef.current[explore.targetFrameId];
-    if (!brush || !owner || !findNode(owner.scene, part.nodeId)) { setToast("이 부분이 있던 프레임이나 brush, 노드가 없습니다."); return; }
+    if (!brush || !owner || !findNode(owner.scene, part.nodeId)) { setToast("The frame, brush, or node this part belonged to is missing."); return; }
     activateSketch(explore.targetFrameId);
     if (brush.targeted.some(item => item.id === explore.toolId)) chooseBrushTool(brush.id, brushTool("targeted", brush.id, explore.toolId));
     const focus: InspectionFocus = { kind: part.kind, nodeId: part.nodeId, id: part.id };
     updatePanel(explore.targetFrameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brush.id), focus }), selectedNodeIds: [part.nodeId],
-      machineTarget: part.kind === "transformation" ? null : { nodeId: part.nodeId, kind: part.kind, id: part.id } }));
+      machineTarget: part.kind === "state" || part.kind === "transition" ? { nodeId: part.nodeId, kind: part.kind, id: part.id } : null }));
   }
   /**
    * The selected targeted tool as it reads in one frame: its overlays on every
@@ -1267,7 +1322,7 @@ export default function Home() {
   const guardEach = (nodeIds: string[], what: string, apply: () => void) => { const id = nodeIds.find(item => { const role = brushRole(scene, activeSketch, item, brushes); return role && !role.master; }); if (id) guard(id, what, apply); else apply(); };
   /** Expose a hidden parameter the selected targeted tool suggests (on an instance it asks first, like other structural changes). */
   function acceptSuggested(item: ParameterSuggestion) {
-    guardEach([item.nodeId], "semantic transformation", () => { void acceptParameter(deps, activeSketch, item).then(added => { if (added) setToast(`「${item.label}」을(를) property로 추가했습니다. 바로 조절할 수 있습니다.`); }); });
+    guardEach([item.nodeId], "semantic transformation", () => { void acceptParameter(deps, activeSketch, item).then(added => { if (added) setToast(`Added “${item.label}” as a property. You can adjust it right away.`); }); });
   }
   /**
    * A drag of a targeted overlay's handle: a what-if value of the step looked at
@@ -1287,11 +1342,13 @@ export default function Home() {
       const single = drag.each && drag.item !== null && readsPerItem(panelsRef.current[drag.frameId]?.generated?.code ?? "", drag.key);
       if (drag.each && !single) {
         handleDrag.current = null;
-        setToast(drag.item === null ? "이 항목에는 id가 없어 이 항목만 바꿀 수 없습니다. Inspect again으로 코드가 항목마다 id를 기록하게 해주세요."
-          : "이 brush 코드는 이 값을 항목마다 따로 읽지 않아 이 항목만 바꿀 수 없습니다. Inspect again으로 코드가 항목별로 읽게 해주세요.");
+        setToast(drag.item === null ? "This item has no id, so it cannot be changed on its own. Use Inspect again so the code records an id for each item."
+          : "This brush code does not read this value per item, so this item cannot be changed on its own. Use Inspect again so the code reads it per item.");
         return;
       }
       if (drag.last !== null) editHeldStep(drag.frameId, brush.id, drag.key, drag.last, single ? drag.item! : undefined);
+      // Let go: the held step plays on with the new value, so what it sets off (other behaviors, state changes) shows.
+      if (drag.ended && drag.last !== null && autoPlayOnRef.current) requestPlayOn(drag.frameId, brush.id);
       if (drag.ended) handleDrag.current = null;
     };
     if (phase === "start") {
@@ -1303,7 +1360,7 @@ export default function Home() {
       if (suggestion) void acceptParameter(deps, frameId, suggestion).then(added => {
         drag.accepting = false;
         if (!added) { if (handleDrag.current === drag) handleDrag.current = null; return; }
-        setToast(`「${suggestion.label}」을(를) property로 추가했습니다. 이 단계에서 끌어 보세요.`); flush(drag);
+        setToast(`Added “${suggestion.label}” as a property. Try dragging it at this step.`); flush(drag);
       });
       return;
     }
@@ -1311,6 +1368,13 @@ export default function Home() {
     if (value !== null) drag.last = value;
     if (phase === "end") drag.ended = true;
     flush(drag);
+  }
+  /** Play on from the step a brush's inspection holds in a frame, with its what-if values, for a few seconds. */
+  function requestPlayOn(frameId: string, brushId: string) {
+    const panel = panelsRef.current[frameId]; if (!panel) return;
+    const state = inspectionFor(panel, brushId), at = heldIndex(state); if (at === null) return;
+    const restore = `${brushId}:${state.steps[at].id}`;
+    setPlayOns(current => ({ ...current, [frameId]: { id: (current[frameId]?.id ?? 0) + 1, ms: PLAY_ON_MS, restore } }));
   }
   /** Set (or with null, take back) a what-if value of the step a brush's inspection holds in a frame. */
   function editHeldStep(frameId: string, brushId: string, key: string, value: Scalar | null, item?: string) {
@@ -1326,21 +1390,21 @@ export default function Home() {
   function detachInstance(frameId: string, rootId: string, brushId: string) {
     const owner = panelsRef.current[frameId], from = brushesRef.current.find(item => item.id === brushId);
     if (!owner || !from || !findNode(owner.scene, rootId)) return null;
-    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frameId, { error: `Brush는 최대 ${MAX_BRUSHES}개까지 만들 수 있습니다. 쓰지 않는 brush를 지워주세요.` }); return null; }
+    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frameId, { error: `You can make up to ${MAX_BRUSHES} brushes. Delete the brushes you are not using.` }); return null; }
     const made = detachedBrush(owner.scene, frameId, rootId, from, brushesRef.current, crypto.randomUUID(), instanceCode(owner, rootId));
     setBrushes([...brushesRef.current, made]);
     updatePanel(frameId, previous => ({ scene: { ...previous.scene, nodes: previous.scene.nodes.map(item => item.id === rootId ? { ...item, brushId: made.id } : item) },
       inspections: previous.inspections[from.id] ? { ...previous.inspections, [made.id]: { ...previous.inspections[from.id], brushId: made.id } } : previous.inspections }));
     // A tool of the old brush in use moves to the same tool of the new one.
     if (brushPick?.brushId === from.id) chooseBrushTool(made.id, brushPick.kind === "targeted" ? brushTool("targeted", made.id, brushPick.targetedId) : brushTool(brushPick.kind, made.id));
-    setToast(`${from.name}에서 detach해 「${made.name}」 brush를 만들었습니다. 이 노드가 새 brush의 master입니다.`);
+    setToast(`Detached from ${from.name} and made the “${made.name}” brush. This node is the new brush's master.`);
     return made;
   }
   /** The master's frame is gone: this instance becomes the brush's master. */
   function adoptMaster(frameId: string, rootId: string, brushId: string) {
     const owner = panelsRef.current[frameId]; if (!owner || !findNode(owner.scene, rootId)) return false;
     setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, sourceFrameId: frameId, nodeId: rootId, scene: subScene(owner.scene, [rootId]), code: instanceCode(owner, rootId) || item.code } : item));
-    setToast("이 instance를 brush의 master로 지정했습니다.");
+    setToast("Set this instance as the brush's master.");
     return true;
   }
   function goToMaster(brush: Brush) {
@@ -1377,30 +1441,50 @@ export default function Home() {
       return true;
     } catch (e) { if (document === activeDocument.current) patchActive({ error: (e as Error).message }); return false; }
   }
+  /**
+   * Copy a transformation from Layers. The system clipboard gets a line of text for it too, so an image copied
+   * before does not take the next paste; an image copied after it still does.
+   */
+  function copyLayerTransformation(nodeId: string, transformationId: string) {
+    try {
+      const clip = copyTransformation((panelsRef.current[activeSketch] || panel).scene, nodeId, transformationId);
+      setTransformationClip(clip); void navigator.clipboard?.writeText(`Transformation: ${clip.label}`).catch(() => {});
+      setToast(`Copied “${clip.label}”. Select a layer (or a transformation, to paste after it) and press ⌘V, or press Paste on a layer.`);
+    } catch (error) { patchActive({ error: (error as Error).message }); }
+  }
+  /** Paste the copied transformation: after the transformation picked in Layers, else at the end of the selected layer. False when there is nowhere to paste. */
+  function pasteLayerTransformation(target?: { nodeId: string; afterId: string | null }) {
+    const clip = transformationClip, owner = panelsRef.current[activeSketch] || panel;
+    const picked = layerPick(activeSketch);
+    const at = target ?? (picked ? { nodeId: picked.nodeId, afterId: picked.transformationId } : owner.selectedNodeIds[0] ? { nodeId: owner.selectedNodeIds[0], afterId: null } : null);
+    if (!clip || !at) return false;
+    guard(at.nodeId, "semantic transformation", () => { edits.pasteTransformation(at.nodeId, clip, at.afterId); setToast(`Pasted “${clip.label}” into ${findNode(owner.scene, at.nodeId)?.name || "the layer"}. Press Update code to connect it.`); });
+    return true;
+  }
   /** Paste an image into the selected frame. Listens on window: clicking a frame does not focus anything inside the studio. */
   function pastePhoto(event: ClipboardEvent) {
     const target = event.target instanceof Element ? event.target : null;
     if (!event.clipboardData || target?.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']") || modal || exportOpen || historyOpen || busy || interactingIn(activeSketch, panelsRef.current[activeSketch] || panel)) return;
     const item = Array.from(event.clipboardData.items).find(item => item.kind === "file" && item.type.startsWith("image/"));
     const image = item?.getAsFile() || Array.from(event.clipboardData.files).find(file => file.type.startsWith("image/"));
-    if (!image) return;
+    if (!image) { if (pasteLayerTransformation()) event.preventDefault(); return; }
     event.preventDefault();
     const extension = image.type === "image/jpeg" ? "jpg" : image.type === "image/webp" ? "webp" : "png";
-    void attach(new File([image], `Clipboard image.${extension}`, { type: image.type })).then(attached => { if (attached) setToast("클립보드 이미지를 첨부했습니다."); });
+    void attach(new File([image], `Clipboard image.${extension}`, { type: image.type })).then(attached => { if (attached) setToast("Attached the clipboard image."); });
   }
 
   // ── Results and state preview ─────────────────────────────────────
   async function prepare(code: string) {
     const number = ++prepareNumber.current; patchActive({ runtimeError: "" });
     try { const result = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "prepare", code }) }).then(r => r.json()); if (number !== prepareNumber.current) return; if (result.error) { if (result.logged) markLogged(result.error); throw new Error(result.error); } patchActive({ executable: result.executable, preparedCode: code }); }
-    catch (e) { if (number === prepareNumber.current) patchActive({ runtimeError: e instanceof Error ? e.message : "코드를 실행하지 못했습니다." }); }
+    catch (e) { if (number === prepareNumber.current) patchActive({ runtimeError: e instanceof Error ? e.message : "Could not run the code." }); }
   }
   function beginAnnotations(owner = activeSketch) {
     activateSketch(owner);
     const resultPanel = panelsRef.current[owner]; if (!resultPanel) return;
     if (resultPanel.annotating) { updatePanel(owner, { annotating: false }); return; }
     const image = resultPanel.annotationImage || resultPreviews.current.get(owner)?.capture();
-    if (!image || !resultPanel.generated) { updatePanel(owner, { error: "결과 렌더링이 완료된 뒤 Annotate를 눌러주세요." }); return; }
+    if (!image || !resultPanel.generated) { updatePanel(owner, { error: "Press Annotate after the result finishes rendering." }); return; }
     updatePanel(owner, { annotationImage: image, annotationSource: liveSceneSource(resultPanel.generated, resultPanel.scene), annotationRenderRevision: resultPanel.renderRevision, annotating: true, machinePlaying: false });
     setTool("pen"); setPencilOpen(false); setPenSettingsOpen(false); workspaceCanvas.current?.focus(owner as FrameId);
   }
@@ -1455,12 +1539,15 @@ export default function Home() {
       onPointerDown={e => { if (!interacting && !transformDrawing && tool === "select" && !(e.target as Element).closest(".scene-node, .property-handles")) frameEdits.select(null); }}
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: editRuntime(inspected!.steps[heldAt!].runtime, inspected!.steps[heldAt!].edits), params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits } : null} onDrawn={(restore, stores) => setDrawnStores(current => ({ ...current, [id]: { restore, stores } }))} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: editRuntime(inspected!.steps[heldAt!].runtime, inspected!.steps[heldAt!].edits), params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits, fields: inspected!.fieldEdits, playOn: playOns[id]?.restore === restoreId ? playOns[id] : null } : null} onDrawn={(restore, stores) => { setDrawnStores(current => ({ ...current, [id]: { restore, stores } }));
+          // Values the code keeps that the held step was recorded without (patched in later, e.g. a field's attractors): taken once from the step as drawn (unedited), so handles can move them there.
+          const held = restore === restoreId && heldAt !== null ? inspected!.steps[heldAt] : null, filled = held && !Object.keys(held.edits ?? {}).some(isRuntimeKey) ? backfillStores(held.runtime, stores) : null;
+          if (filled) patchInspection(id, { steps: inspected!.steps.map((step, i) => i === heldAt ? { ...step, runtime: filled } : step) }); }} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
       <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush" && !(inspectionEraser && parseBrushTool(name)?.kind === "inspect-annotate")}
         gestureStyle={name => parseBrushTool(name)?.kind === "inspect-annotate" && !transformDrawing ? inspectionPen : undefined} gestureTool={name => { if (transformDrawing) return true; const kind = parseBrushTool(name)?.kind; return kind === "brush" || kind === "inspect-annotate"; }}
         onGesture={(name, points) => transformDrawing ? addTransformMark(id, points) : brushGesture(id, name, points)} onGestureStep={(name, point, phase) => { if (!transformDrawing) brushGestureStep(id, name, point, phase); }} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
-        onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "한 프레임에는 최대 500개의 획을 저장할 수 있습니다. 새 스케치 프레임을 추가해주세요." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
+        onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "A frame can store up to 500 strokes. Add a new sketch frame." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
         onViewport={() => {}} onSelection={value => id === "source" ? setHasSelection(value) : setSketchSelections(current => current[id] === value ? current : { ...current, [id]: value })} onError={message => updatePanel(id, { error: message })}>
         {/* The brush tool draws nothing of its own on the frame: no layer boxes, no gesture path. */}
         {!interacting && !playingBrush && <SceneOverlay scene={owner.scene} selected={owner.selectedNodeIds} hovered={owner.hovered} zoom={boardZoom} interactive={tool === "select" && !transformDrawing}
@@ -1468,11 +1555,28 @@ export default function Home() {
           onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />}
       </SketchCanvas>
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
+      {showComposeTags && owner.composeTags.length > 0 && !interacting && !playingBrush && !inspected && !transformDrawing && !owner.annotating
+        && <ComposeTags key={tagMoves[id] ?? 0} tags={owner.composeTags} zoom={boardZoom} stale={frameArtwork.revision !== owner.composeTagsRevision} examples={pen => exampleThumbsFor(id, pen)}
+          onCard={tag => { void captureExampleThumbs(tag.transformations.flatMap(item => penExamples(placedPen(item.pen, framePens(id)), panelsRef.current))); }} onExample={openExample} onEdit={composeTags => updatePanel(id, { composeTags })}
+          onRevise={(tagId, index, request) => { activateSketch(id); void sceneAI(deps, id).reviseComposeTag(tagId, index, request); }} busy={Boolean(owner.loading)}
+          open={openTags[id] ?? null} onOpen={tagId => setOpenTags(current => ({ ...current, [id]: tagId }))} highlight={pointedTag?.frameId === id ? pointedTag.id : null}
+          {...(({ onAdd: _add, ...structure }) => structure)(tagStructure(id))} />}
       {owner.transformDraft && owner.transformDraft.marks.length > 0 && <svg className="transform-marks" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Regeneration annotation">
         {owner.transformDraft.marks.map((mark, i) => <polyline key={i} vectorEffect="non-scaling-stroke" points={mark.map(point => `${point.x * 900},${point.y * 600}`).join(" ")} />)}</svg>}
       {inspected && <InspectionOverlay state={inspected} marks={inspectionKind === "inspect-annotate" ? inspected.marks : []} markStyles={inspected.markStyles} result={targetedResult} drawn={drawn}
         specs={targetedResult ? valueSpecs(owner.scene, brushNodeIds(owner.scene, activeBrush!, id), targetedResult.parameters) : undefined} onHandle={(phase, key, value, item, each) => overlayHandle(id, phase, key, value, item, each)} liveValues={filterValues(sceneValues(owner.scene), brushNodeIds(owner.scene, activeBrush!, id))} clickable={inspectionKind !== "inspect-annotate"} zoom={boardZoom} onFocus={focus => focusInspection(id, focus)}
         onStep={index => patchInspection(id, { cursor: index })} stepName={index => stepName(owner.scene, inspected.steps[index])} />}
+      {/* Play on from the held step: the change made there (a handle, a comb) runs on, and what it sets off shows. */}
+      {inspected && heldAt !== null && activeBrush && <div className="play-on-bar" onPointerDown={e => e.stopPropagation()}>
+        <button title={`Run on from this step for ${PLAY_ON_MS / 1000}s with the values changed here: other behaviors and states react to the change (the step itself stays as recorded)`}
+          onClick={() => requestPlayOn(id, activeBrush.id)}><Icon name="play" size={12} />Play on from here</button>
+        <label title="Play on by itself after every handle drag"><input type="checkbox" checked={autoPlayOn} onChange={e => setAutoPlayOn(e.currentTarget.checked)} />after each drag</label>
+      </div>}
+      {/* The fields a targeted inspection found the concern to be about (only those), shown and combed on the held step. */}
+      {inspected && heldAt !== null && inspectionKind === "targeted" && (targetedResult?.fields?.length ?? 0) > 0 && (() => {
+        const about = (key: string) => targetedResult!.fields!.find(item => item.id === key.slice(key.indexOf("/") + 1));
+        return <FieldLayer fields={fieldsIn(drawn, brushRoots(owner.scene, activeBrush!, id)).filter(([key]) => about(key))} edits={inspected.fieldEdits ?? {}} onEdits={fieldEdits => patchInspection(id, { fieldEdits })}
+          nameOf={key => about(key)?.name ?? key} whyOf={key => about(key)?.reason ?? ""} />; })()}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
   // ── Minimal example frames ──────────────────────────────────────────────────
@@ -1491,14 +1595,14 @@ export default function Home() {
     setWorkspace(current => ({ ...current, hiddenExamples: [...new Set([...current.hiddenExamples, ...ids])].slice(-MAX_SKETCH_FRAMES) }));
     setPickedFrames(current => current.filter(id => !ids.includes(id)));
     if (ids.includes(activeSketchRef.current)) { activateSketch(frameId); setPendingFrameFocus(frameId as FrameId); }
-    setToast(`example ${ids.length}개를 숨겼습니다. Examples 보이기로 다시 꺼낼 수 있습니다.`);
+    setToast(`Hid ${ids.length} example(s). Bring them back with Show examples.`);
   }
   function hideExample(frameId: string) {
     const of = panelsRef.current[frameId]?.exampleOf; if (!of) return;
     setWorkspace(current => ({ ...current, hiddenExamples: [...new Set([...current.hiddenExamples, frameId])].slice(-MAX_SKETCH_FRAMES) }));
     setPickedFrames(current => current.filter(id => id !== frameId));
     if (activeSketchRef.current === frameId) { activateSketch(of.frameId); setPendingFrameFocus(of.frameId as FrameId); }
-    setToast(`「${artworkOf(frameId)?.name ?? "example"}」을 숨겼습니다. ${artworkOf(of.frameId)?.name ?? "원래 프레임"}의 Examples 보이기로 다시 꺼낼 수 있습니다.`);
+    setToast(`Hid “${artworkOf(frameId)?.name ?? "example"}”. Bring it back with Show examples on ${artworkOf(of.frameId)?.name ?? "the original frame"}.`);
   }
   function showExamples(frameId: string) {
     const shown = new Set(hiddenExamplesOf(frameId));
@@ -1510,7 +1614,7 @@ export default function Home() {
     const stray = brushes.filter(brush => !brush.parentId && !brush.fork && panels[brush.sourceFrameId]?.exampleOf && brush.name.endsWith(" · example"));
     if (!stray.length) return;
     for (const brush of stray) removeBrush(brush);
-    setToast(`brush가 아닌 노드의 예제로 잘못 생긴 brush ${stray.length}개(${stray.map(brush => `「${brush.name}」`).join(", ")})를 지웠습니다.`);
+    setToast(`Deleted ${stray.length} brush(es) (${stray.map(brush => `“${brush.name}”`).join(", ")}) mistakenly made from examples of non-brush nodes.`);
   }, [brushes, panels]);
   /** Whether an example can have a sub brush: its node belongs to a brush of the frame it came from. */
   const exampleCanBrush = (frameId: string) => { const of = panels[frameId]?.exampleOf, owner = of && panels[of.frameId];
@@ -1529,18 +1633,64 @@ export default function Home() {
     let sub = exampleSubBrush(frameId);
     if (!sub) {
       const shown = exampleTransformation(frameId), made = deps.addSubBrush?.(of.frameId, of.nodeId, frameId, frame.scene, `${shown?.transformation.label || "Example"} · example`);
-      if (!made) { updatePanel(frameId, { error: "sub brush를 만들지 못했습니다 (원래 brush가 없거나 brush가 가득 찼습니다)." }); return; }
+      if (!made) { updatePanel(frameId, { error: "Could not make the sub brush (the original brush is missing or the brushes are full)." }); return; }
       updatePanel(frameId, current => ({ scene: markBrushes(current.scene, [made]) }));
       sub = made;
     }
     chooseBrushTool(sub.id, brushTool("brush", sub.id));
-    setToast(`「${sub.name}」 sub brush로 그립니다. 이 example이 속한 brush의 tool group에 있습니다.`);
+    setToast(`Drawing with the “${sub.name}” sub brush. It is in the tool group of the brush this example belongs to.`);
+  }
+  /** Changes a frame's compose tags (their structure): boxes are fitted again over the sketch's marks while the tags still fit the sketch. */
+  function editComposeTags(frameId: string, change: (tags: ComposeTag[], strokes: { id: string; tool: string; points: { x: number; y: number }[] }[]) => ComposeTag[] | null) {
+    const owner = panelsRef.current[frameId], art = artworkOf(frameId); if (!owner || !art) return;
+    const next = change(owner.composeTags, owner.composeTagsRevision === art.revision ? compositionContext(art).compositionStrokes : []);
+    if (next) updatePanel(frameId, { composeTags: next });
+  }
+  const tagStructure = (frameId: string) => ({
+    canMove: (tagId: string, parentId: string) => canMoveTag(panels[frameId]?.composeTags ?? [], tagId, parentId),
+    onMove: (tagId: string, parentId: string) => editComposeTags(frameId, (tags, strokes) => moveTag(tags, tagId, parentId, strokes)),
+    onKind: (tagId: string, kind: ComposeTag["kind"]) => editComposeTags(frameId, (tags, strokes) => setTagKind(tags, tagId, kind, strokes)),
+    onDelete: (tagId: string) => { editComposeTags(frameId, (tags, strokes) => deleteTag(tags, tagId, strokes)); setOpenTags(current => current[frameId] === tagId ? { ...current, [frameId]: null } : current); },
+    onAdd: (kind: ComposeTag["kind"]) => {
+      const owner = panelsRef.current[frameId], open = owner && openTags[frameId], made = owner && addTag(owner.composeTags, kind, open ?? "");
+      if (!made) { setToast("A sketch can have at most 16 tags."); return; }
+      // A tag made by hand fits the sketch as it is now.
+      updatePanel(frameId, { composeTags: made.tags, ...(owner.composeTags.length ? {} : { composeTagsRevision: artworkOf(frameId)?.revision ?? -1 }) });
+      setShowComposeTags(true); setOpenTags(current => ({ ...current, [frameId]: made.id }));
+    },
+    onMoveTransformation: (from: TagTransformationAt, to: string, before?: number) => {
+      const owner = panelsRef.current[frameId]; if (!owner) return;
+      const next = moveTransformation(owner.composeTags, from, to, before);
+      if (!next) { if (to !== from.tagId) setToast(`A tag can have at most ${MAX_TAG_TRANSFORMATIONS} transformations.`); return; }
+      updatePanel(frameId, { composeTags: next }); setTagMoves(current => ({ ...current, [frameId]: (current[frameId] ?? 0) + 1 }));
+    },
+  });
+  /** The minimal examples of the transformation a compose tag's pen carries, with their pictures. */
+  /** The pens a frame's strokes keep (with the toolbar's), to place a tag's pen. */
+  const framePens = (frameId: string) => [...(artworkOf(frameId)?.strokes ?? []).flatMap(stroke => stroke.semanticPen ? [stroke.semanticPen] : []), ...semanticPens];
+  const exampleThumbsFor = (frameId: string, pen: ComposeTagPen | null): ExampleThumb[] => penExamples(placedPen(pen, framePens(frameId)), panels).filter(id => artworkOf(id))
+    .map(id => ({ id, name: artworkOf(id)!.name, thumbnail: exampleThumbs[id] ?? null, hidden: hiddenExamples.has(id) }));
+  /** Takes the pictures of these example frames from their running results (one hidden or not run yet keeps its last). */
+  async function captureExampleThumbs(ids: string[]) {
+    const made: Record<string, string> = {};
+    for (const id of new Set(ids)) {
+      const frame = panelsRef.current[id], node = frame?.exampleOf && findNode(frame.scene, frame.exampleOf.nodeId);
+      const image = node && frame.generated ? resultPreviews.current.get(id)?.capture() : "";
+      const thumbnail = image ? await captureThumbnail(image, node!.region, { w: 132, h: 88 }).catch(() => null) : null;
+      if (thumbnail) made[id] = thumbnail;
+    }
+    if (Object.keys(made).length) setExampleThumbs(current => ({ ...current, ...made }));
+  }
+  /** Goes to an example frame (shown again first when it is hidden). */
+  function openExample(id: string) {
+    if (hiddenExamples.has(id)) setWorkspace(current => ({ ...current, hiddenExamples: current.hiddenExamples.filter(item => item !== id) }));
+    activateSketch(id); setPendingFrameFocus(id as FrameId);
   }
   /** A pen carrying the example's transformation. */
   function makeExamplePen(frameId: string) {
     const frame = panelsRef.current[frameId], shown = exampleTransformation(frameId); if (!frame || !shown) return;
     try { addPen((penId, color) => makeTransformationPen(frame.scene, shown.node.id, shown.transformation.id, frameId, penId, color)); }
-    catch (error) { updatePanel(frameId, { error: error instanceof Error ? error.message : "펜을 만들지 못했습니다." }); }
+    catch (error) { updatePanel(frameId, { error: error instanceof Error ? error.message : "Could not make the pen." }); }
   }
   // Header controls for a frame: run/pause and re-render its result, (re)generate code, annotate, extract.
   const frameActions = (id: string, selection: boolean, present: boolean) => {
@@ -1548,12 +1698,13 @@ export default function Home() {
     const status = sceneLiveStatus(frame.generated, frame.scene);
     const proxies = proxyFrames.filter(proxy => proxy.targetFrameId === id);
     return <>
-      {/* Proxy frames that control nodes of this frame: hover shows the link, click goes there. */}
-      {proxies.map(proxy => <button key={proxy.id} className="proxy-link-chip back" aria-label={`Proxy frame of ${findNode(frame.scene, proxy.nodeId)?.name || proxy.nodeId}`} title="이 프레임의 노드를 조작하는 proxy frame으로 이동"
-        onMouseEnter={() => setLinkHover(proxy.id as FrameId)} onMouseLeave={() => setLinkHover(null)} onClick={e => { e.stopPropagation(); setLinkHover(null); setPendingFrameFocus(proxy.id as FrameId); }}>
-        ◎<b>{findNode(frame.scene, proxy.nodeId)?.name || proxy.nodeId}</b><i>proxy</i></button>)}
+      {/* Each node of this frame with proxy frames: hover shows the link, click shows them (hidden ones too) and goes there. */}
+      {[...new Set(proxies.map(proxy => proxy.nodeId))].map(nodeId => { const mine = proxies.filter(proxy => proxy.nodeId === nodeId), name = findNode(frame.scene, nodeId)?.name || nodeId, off = mine.every(proxy => proxy.hidden);
+        return <button key={nodeId} className={`proxy-link-chip back${off ? " off" : ""}`} aria-label={`Proxy frames of ${name}`} title={off ? "Show the hidden proxy frames of this node" : "Go to the proxy frames that control this node"}
+          onMouseEnter={() => setLinkHover((mine.find(proxy => !proxy.hidden) ?? mine[0]).id as FrameId)} onMouseLeave={() => setLinkHover(null)} onClick={e => { e.stopPropagation(); setLinkHover(null); openProxy(id, nodeId); }}>
+          ◎<b>{name}</b><i>{mine.length > 1 ? `${mine.length} proxies` : "proxy"}{off ? " · hidden" : ""}</i></button>; })}
       {/* Each frame shows (and can stop) its own AI work, also while another frame is active. */}
-      {frameBusy && <span className="frame-working" role="status" title={frame.loading}><span className="loading-spinner" />AI 작업 중
+      {frameBusy && <span className="frame-working" role="status" title={frame.loading}><span className="loading-spinner" />AI working
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
       {frame.scene.nodes.length > 0 && <button aria-label={`Copy ${artworkOf(id)?.name || id} as JSON`} title="Copy this frame's state machines, constraints and code as one JSON" onClick={e => { e.stopPropagation(); setFrameJson(id); }}><Icon name="copy" size={13} />JSON</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
@@ -1562,8 +1713,21 @@ export default function Home() {
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
       {frame.scene.nodes.some(node => node.transformations.some(item => item.properties.length)) && <button disabled={frameBusy} title="Make a minimal example frame for every semantic transformation (base state), linked to this frame"
         onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).decompose(); }}><Icon name="layers" size={13} />Decompose</button>}
+      {(() => { // Handles for every transformation of every node; when all have them, the button opens every node's proxy group.
+        const nodes = frame.scene.nodes.filter(node => (node.parentId || !isBackdrop(node)) && handleTransformations(node).length > 0); if (!nodes.length) return null;
+        const missing = nodes.some(node => handleTransformations(node).some(item => item.properties.some(property => handleLeaves(property).length > 0 && !property.handle)));
+        return <button disabled={frameBusy} title={missing ? "AI makes a direct manipulation proxy (handles) for every semantic transformation (base state) of every node still without them, one request per transformation; each transformation gets its own proxy frame, grouped by node"
+          : "Every transformation has its handles: open each node's proxy frames (one per transformation, grouped by node), hidden ones too"}
+          onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).suggestAllHandles(); }}><Icon name="target" size={13} />{missing ? "Handles for all" : "Open all handles"}</button>; })()}
+      {frame.scene.nodes.some(node => (node.parentId || !isBackdrop(node)) && proxyGroups(node.transformations).length > 0) && <button disabled={frameBusy}
+        title="AI makes again every handle of every node (base state), one request per transformation, each seeing its current widget; undo takes each back"
+        onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).suggestAllHandles(undefined, true); }}><Icon name="spark" size={13} />Redesign all handles</button>}
+      {proxies.length > 0 && (() => { // Every proxy frame of this frame: take them all off the board, or (all hidden) put them back. The handles stay on the nodes.
+        const shown = proxies.some(proxy => !proxy.hidden);
+        return <button aria-pressed={!shown} title={shown ? "Hide every proxy frame (handles) of this frame; they are kept" : "Show this frame's proxy frames (handles) again"}
+          onClick={e => { e.stopPropagation(); hideProxies(proxies.map(proxy => proxy.id), shown); }}><Icon name={shown ? "eye-off" : "eye"} size={13} />{shown ? "Hide all handles" : `Show all handles (${proxies.length})`}</button>; })()}
       {examplesOf(id).some(child => !hiddenExamples.has(child)) && <button title="Hide every minimal example made from this frame (and their parts); their results stop running" onClick={e => { e.stopPropagation(); hideExamplesOf(id); }}><Icon name="eye-off" size={13} />Hide all examples</button>}
-      {hiddenExamplesOf(id).length > 0 && <button title="Show the minimal example frames hidden from this frame" onClick={e => { e.stopPropagation(); showExamples(id); }}><Icon name="eye" size={13} />Examples {hiddenExamplesOf(id).length}개 보이기</button>}
+      {hiddenExamplesOf(id).length > 0 && <button title="Show the minimal example frames hidden from this frame" onClick={e => { e.stopPropagation(); showExamples(id); }}><Icon name="eye" size={13} />Show {hiddenExamplesOf(id).length} examples</button>}
       {frame.exampleOf && <button title="Hide this minimal example (its result stops running); show it again from the frame it came from" onClick={e => { e.stopPropagation(); hideExample(id); }}><Icon name="eye-off" size={13} />Hide</button>}
       {/* A minimal example: brush with it (its sub brush), or carry its transformation in a pen. */}
       {frame.exampleOf && (() => { const sub = exampleSubBrush(id), using = Boolean(sub && brushPick?.kind === "brush" && brushPick.brushId === sub.id);
@@ -1593,42 +1757,53 @@ export default function Home() {
     ...sketchFrames.map(frame => ({ id: frame.id as FrameId, title: frame.artwork.name, subtitle: frameSubtitle(frame.id, frame.artwork, Boolean(sketchSelections[frame.id])),
       actions: frameActions(frame.id, Boolean(sketchSelections[frame.id]), Boolean(frame.artwork.photo || frame.artwork.strokes.length)),
       content: sketchFrameContent(frame.id, frame.artwork, handle => { if (handle) sketchCanvases.current.set(frame.id, handle); else sketchCanvases.current.delete(frame.id); }, <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start a new sketch.</strong><span>Draw here, then extract its collections.</span></div>) })),
-    ...proxyFrames.map(proxy => {
+    ...proxyFrames.filter(proxy => !proxy.hidden).map(proxy => {
       const target = panels[proxy.targetFrameId], targetNode = target && findNode(target.scene, proxy.nodeId), targetName = artworkOf(proxy.targetFrameId)?.name || "frame";
-      const transformations = target && targetNode ? inspectedTransformations(target, targetNode) : [], count = transformations.flatMap(item => item.properties).filter(property => property.handle).length;
+      const transformations = target && targetNode ? inspectedTransformations(target, targetNode) : [];
+      // A transformation's frame: its own widgets, number and color; the node's (no handles yet): all of them.
+      const own = proxy.transformationId ? transformations.find(item => item.id === proxy.transformationId) : undefined, at = proxyNumber(transformations, proxy.transformationId);
+      const count = (own ? [own] : transformations).flatMap(item => item.properties).filter(property => property.handle).length;
+      const siblings = proxiesOf(proxyFrames, proxy.targetFrameId, proxy.nodeId, transformations.map(item => item.id));
       const stateId = targetNode ? target.editingStates[targetNode.id] : undefined, state = stateId && targetNode?.machine?.states.find(item => item.id === stateId);
       // The module that draws the node (its root's), to tell whether values adjust what input made in place.
       let root = targetNode; while (root?.parentId) root = findNode(target.scene, root.parentId);
       const module = root && target.generated ? programModules(target.generated.code).get(root.codeModule ?? root.id) : undefined;
-      return { id: proxy.id as FrameId, title: `◎ ${targetNode?.name || proxy.nodeId} · proxy`, subtitle: [`${count} handles`, state ? `editing ${state.label}` : ""].filter(Boolean).join(" · "),
+      return { id: proxy.id as FrameId, title: own ? `◎ ${at ? `${at.number} · ` : ""}${own.label}` : `◎ ${targetNode?.name || proxy.nodeId} · proxy`,
+        subtitle: [own ? targetNode?.name : "", `${count} handles`, state ? `editing ${state.label}` : ""].filter(Boolean).join(" · "),
         actions: <>
           {/* The frame (and node) this proxy controls: hover shows it on the board, click goes there. */}
-          <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}, ${targetNode?.name || proxy.nodeId}`} title={`이 proxy frame은 ${targetName}의 「${targetNode?.name || proxy.nodeId}」를 조작합니다. 눌러서 이동`}
+          <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}, ${targetNode?.name || proxy.nodeId}`} title={`This proxy frame controls “${targetNode?.name || proxy.nodeId}” in ${targetName}. Click to go there`}
             onMouseEnter={() => setLinkHover(proxy.targetFrameId as FrameId)} onMouseLeave={() => setLinkHover(null)}
             onClick={() => { setLinkHover(null); activateFrame(proxy.id); setPendingFrameFocus(proxy.targetFrameId as FrameId); }}>
-            <span className="proxy-link-kicker">LINKED</span><Icon name="arrow" size={11} /><b>{targetName}</b><i>/ {targetNode?.name || "삭제된 노드"}</i>{state && <em>{state.label}</em>}</button>
+            <span className="proxy-link-kicker">LINKED</span><Icon name="arrow" size={11} /><b>{targetName}</b><i>/ {targetNode?.name || "deleted node"}</i>{state && <em>{state.label}</em>}</button>
+          <ProxyFrameBar node={targetNode} transformations={transformations} current={proxy.id} siblings={siblings} busy={Boolean(target?.loading)} onHide={hideProxies}
+            onDesign={transformationId => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestHandles(proxy.nodeId, { transformationId }, ""); }}
+            onDesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId]); }}
+            onRedesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId], true); }} />
 </>,
         content: <ProxyFrame frameId={proxy.id} node={targetNode} transformations={transformations} targetName={targetName} busy={target?.loading || ""} onActivate={() => activateFrame(proxy.id)}
           bakedInput={bakesInput(module) ? { onUpdate: () => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).generateCode(false, `${target.generationMode === "compose" ? target.composePrompt : target.instruction}\n${ADJUST_IN_PLACE_INSTRUCTION}`); } } : undefined}
           onDesign={transformationId => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestHandles(proxy.nodeId, { transformationId }, ""); }}
+          only={proxy.transformationId}
+          onDesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId]); }}
           onSet={(propertyId, path, value) => { if (targetNode) sceneEdits(deps, proxy.targetFrameId).scalar(targetNode.id, propertyId, path, value); }}
           onError={(propertyId, message) => { const code = propertyId && targetNode ? transformations.flatMap(item => item.properties).find(property => property.id === propertyId)?.handle?.prepared : undefined;
             if (code) setHandleErrors(current => current[`${proxy.targetFrameId}:${proxy.nodeId}:${propertyId}`]?.code === code ? current : { ...current, [`${proxy.targetFrameId}:${proxy.nodeId}:${propertyId}`]: { code, message } });
-            else if (!propertyId) updatePanel(proxy.targetFrameId, { error: `proxy frame 오류: ${message}` }); }} /> };
+            else if (!propertyId) updatePanel(proxy.targetFrameId, { error: `Proxy frame error: ${message}` }); }} /> };
     }),
     ...exploreFrames.map(explore => {
       const target = panels[explore.targetFrameId], targetName = artworkOf(explore.targetFrameId)?.name || "frame";
       const rows = target ? constraintRows(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : [];
       const preview = (key: string) => explore.result?.values.find(value => previewKey(value) === key);
-      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "execution 조절" : "핵심 파라미터 조절", explore.result?.edits.length ? "추천 미리보기 코드" : "", "원래 프레임은 바뀌지 않음"].filter(Boolean).join(" · "),
-        actions: <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}`} title={`이 탐색 프레임은 ${targetName}의 brush 자국으로 만들었습니다. 눌러서 이동`}
+      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: [explore.mode === "execution" ? "Execution control" : "Key parameter control", explore.result?.edits.length ? "Recommendation preview code" : "", "Original frame is unchanged"].filter(Boolean).join(" · "),
+        actions: <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}`} title={`This exploration frame was made from brush marks in ${targetName}. Click to go there`}
           onMouseEnter={() => setLinkHover(explore.targetFrameId as FrameId)} onMouseLeave={() => setLinkHover(null)}
           onClick={() => { setLinkHover(null); setPendingFrameFocus(explore.targetFrameId as FrameId); }}>
           <span className="proxy-link-kicker">FROM</span><Icon name="arrow" size={11} /><b>{targetName}</b></button>,
         content: (boardZoom: number) => <ExploreFrameView frame={explore} zoom={boardZoom} specs={target ? valueSpecs(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : {}}
           labelOf={key => preview(key)?.label ?? rows.find(row => row.key === key)?.property ?? key}
           expand={key => { const value = preview(key); return value && target ? previewKeys(target.scene, value) : [key]; }}
-          onProgress={progress => patchExplore(explore.id, { progress })} onRetry={() => { void runExplore(explore); }} onActivate={() => activateFrame(explore.id)}
+          onProgress={progress => patchExplore(explore.id, { progress })} onRetry={note => { void runExplore(explore, note); }} onActivate={() => activateFrame(explore.id)}
           onValue={(key, value) => patchExplore(explore.id, current => { const values = { ...current.values }; if (value === null) delete values[key]; else values[key] = value; return { values }; })}
           partName={part => { const node = target ? findNode(target.scene, part.nodeId) : null; if (!node) return null;
             // A state or transition the frame's preview brings is named too.
@@ -1637,6 +1812,7 @@ export default function Home() {
               : [...((part.kind === "state" ? node.machine?.states : node.machine?.transitions) ?? []), ...((part.kind === "state" ? brought?.states : brought?.transitions) ?? [])].find(item => item.id === part.id)?.label;
             return name ? { name, node: node.name } : null; }}
           onPart={part => showPart(explore, part)}
+          onVariable={key => { const row = rows.find(item => item.key === key); if (row) showPart(explore, { kind: "constraint", nodeId: row.binding.nodeId, id: row.binding.path[0] }); }}
           onEdit={patch => patchExploreEdit(explore.id, patch)} onCancelRecommend={() => recommendAborts.current.get(explore.id)?.abort()}
           onRecommend={(image, moment) => { void recommendFromFrame(exploreRef.current.find(item => item.id === explore.id) ?? explore, image, moment); }} /> };
     }),
@@ -1647,8 +1823,8 @@ export default function Home() {
         ? { code: liveSceneSource(target.generated, target.scene), scene: target.scene, runtime: held.steps[at].runtime, values: stepValues(held.steps[at]) ?? {}, recommendation: info.recommendation,
           preview: info.recommendation.kind === "value" ? null : { ...info.source!, marks: info.listed.preview?.marks ?? [], handles: info.listed.preview?.handles ?? [] },
           specs: valueSpecs(target.scene, brushNodeIds(target.scene, info.brush, slot.targetFrameId)) } : null;
-      return { id: slot.id as FrameId, title: `⑂ ${slot.title} · fork`, subtitle: "Accept하면 AI 없이 이 버전으로 fork를 만듭니다 · 원래 프레임은 바뀌지 않음",
-        content: <ForkSlot title={slot.title} detail={slot.detail} status={info?.status ?? "error"} message={info?.message ?? "원래 프레임이나 targeted 도구가 없습니다."} preview={preview}
+      return { id: slot.id as FrameId, title: `⑂ ${slot.title} · fork`, subtitle: "Accept makes a fork from this version without AI · Original frame is unchanged",
+        content: <ForkSlot title={slot.title} detail={slot.detail} status={info?.status ?? "error"} message={info?.message ?? "The original frame or targeted tool is missing."} preview={preview}
           paused={Boolean(info?.paused)} onContinue={() => { void continueSlot(slot); }} edit={slot.edit} onEdit={patch => patchSlotEdit(slot.id, patch)}
           onRevise={image => { void reviseSlot(forkSlotsRef.current.find(item => item.id === slot.id) ?? slot, image); }} onCancelRevise={() => reviseAborts.current.get(slot.id)?.abort()}
           onAccept={() => { void acceptSlot(slot); }} onActivate={() => activateFrame(slot.id)} /> };
@@ -1658,8 +1834,15 @@ export default function Home() {
   const boardGroups = liveGroups(workspace.groups, new Set(frames.map(frame => frame.id))), grouped = new Set(boardGroups.flatMap(group => group.frames));
   // Frames that left the board leave their groups; a group with none left goes.
   const boardIds = frames.map(frame => frame.id).join("|");
-  useEffect(() => { const ids = new Set([...boardIds.split("|"), ...hiddenExamples]);
+  // Hidden frames keep their group (they come back to it).
+  useEffect(() => { const ids = new Set([...boardIds.split("|"), ...hiddenExamples, ...proxyFrames.filter(proxy => proxy.hidden).map(proxy => proxy.id)]);
     setWorkspace(current => { const next = liveGroups(current.groups, ids); return JSON.stringify(next) === JSON.stringify(current.groups) ? current : { ...current, groups: next }; }); }, [boardIds]);
+
+  // A node's frame that has widgets (made before frames were per transformation): split it into a frame per transformation.
+  useEffect(() => {
+    const whole = proxyFrames.find(proxy => !proxy.transformationId && !proxy.hidden && (() => { const node = panels[proxy.targetFrameId] && findNode(panels[proxy.targetFrameId].scene, proxy.nodeId); return Boolean(node && proxyGroups(node.transformations).length); })());
+    if (whole) openProxy(whole.targetFrameId, whole.nodeId, false);
+  }, [proxyFrames, panels]);
 
   // ── Inspector (right) ──────────────────────────────────────────────────────
   /** Frame handles are played with the Select tool: making one switches to it. */
@@ -1670,18 +1853,18 @@ export default function Home() {
   }));
   const statusLabel = liveStatus === "live" ? panel.dirtyNodeIds.length ? "Live · descriptions changed, regenerate to apply" : "Live · controls update code & visual" : liveStatus === "changed" ? "Structure changed · update code to connect" : generated ? "Connect controls to your current code" : "Generate code to enable live controls";
   const propertiesStage = <>
-    {stale && <div className="stale-banner">{sourceSketch ? `원본 스케치(${sourceSketch.name})가 바뀌었습니다. 원본에서 다시 Extract하면 새 프레임으로 추출됩니다.` : "스케치가 바뀌었습니다. 다시 Extract하면 새 프레임으로 추출됩니다."}</div>}
+    {stale && <div className="stale-banner">{sourceSketch ? `The source sketch (${sourceSketch.name}) changed. Extract again from the source to extract into a new frame.` : "The sketch changed. Extract again to extract into a new frame."}</div>}
     {scene.nodes.length > 0 && <div className={`live-controls-status status-${liveStatus}`} role="status"><span className="status-dot" />{statusLabel}</div>}
     {scene.nodes.length > 0 && <button className="primary-button rules-generate-button" disabled={busy} onClick={() => { void ai.generateCode(); }}>{generated && (liveStatus !== "live" || panel.dirtyNodeIds.length) ? "Update code" : generated ? "Regenerate code" : "Generate code"}<Icon name="code" size={17} /></button>}
     {panel.runtimeError && generated && <div className="runtime-error" role="alert">{panel.runtimeError}<button disabled={busy} onClick={() => { void ai.generateCode(true); }}>Fix with AI</button></div>}
     {node && nodeRole && <BrushRoleBanner role={nodeRole} nodeName={node.name} masterFrame={masterFrame(nodeRole.brush)} onMaster={() => goToMaster(nodeRole.brush)}
       onDetach={() => detachInstance(activeSketch, nodeRole.rootId, nodeRole.brush.id)} onAdopt={() => adoptMaster(activeSketch, nodeRole.rootId, nodeRole.brush.id)}
-      onDelete={busy ? undefined : () => { edits.removeIds([nodeRole.rootId]); setToast(nodeRole.master ? `${nodeRole.brush.name}의 master를 지웠습니다. Brush는 저장된 사본으로 계속 쓸 수 있습니다 (Layers에서 되돌리기).` : `${nodeRole.brush.name} brush stamp를 지웠습니다 (Layers에서 되돌리기).`); }} />}
+      onDelete={busy ? undefined : () => { edits.removeIds([nodeRole.rootId]); setToast(nodeRole.master ? `Deleted the master of ${nodeRole.brush.name}. The brush can still be used from its saved copy (undo in Layers).` : `Deleted the ${nodeRole.brush.name} brush stamp (undo in Layers).`); }} />}
     {node ? (() => { const transform = (apply: () => void) => guard(node.id, "semantic transformation", apply), machine = (apply: () => void) => guard(node.id, "state machine", apply);
       // The selected targeted tool's hidden parameters on this node, not decided yet: faint in the transformation they would join.
       const suggested = inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result.parameters ?? [] : [];
       return <PropertyInspector node={node} transformations={inspectedTransformations(panel, node)} library={scene.algorithms} state={nodeState} busy={busy} clip={clip}
-      onNode={patch => "description" in patch ? guard(node.id, "설명", () => edits.editNode(node.id, patch)) : edits.editNode(node.id, patch)} onTransformation={(id, patch) => transform(() => edits.editTransformation(node.id, id, patch))}
+      onNode={patch => "description" in patch ? guard(node.id, "description", () => edits.editNode(node.id, patch)) : edits.editNode(node.id, patch)} onTransformation={(id, patch) => transform(() => edits.editTransformation(node.id, id, patch))}
       onAddTransformation={() => transform(() => edits.addTransformation(node.id))} onRemoveTransformation={id => transform(() => edits.removeTransformation(node.id, id))} onMoveTransformation={(id, offset) => transform(() => edits.moveTransformation(node.id, id, offset))} onChooseState={stateId => edits.chooseState(node.id, stateId)}
       onState={patch => nodeState && machine(() => edits.editState(node.id, nodeState.id, patch))} onTransition={(id, patch) => machine(() => edits.editTransition(node.id, id, patch))}
       onScalar={(propertyId, path, value) => edits.scalar(node.id, propertyId, path, value)} onSwap={(propertyId, path, choice) => transform(() => edits.swap(node.id, propertyId, path, choice))}
@@ -1695,7 +1878,8 @@ export default function Home() {
       highlightPropertyId={(focus => inspectionKind && (focus?.kind === "constraint" || focus?.kind === "parameter") && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
       suggestions={suggested.map((item, index) => ({ item, index })).filter(({ item }) => item.nodeId === node.id && parameterStatus(item, scene) === "pending")}
       onAcceptSuggestion={index => suggested[index] && acceptSuggested(suggested[index])} onRejectSuggestion={index => rejectSuggested(index, true)}
-      highlightTransformationId={(focus => inspectionKind && focus?.kind === "transformation" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
+      highlightTransformationId={(focus => inspectionKind && focus?.kind === "transformation" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)
+        ?? (layerPick(activeSketch)?.nodeId === node.id ? layerPick(activeSketch)!.transformationId : null)}
       onMakePen={(propertyId, path) => edits.makePen({ nodeId: node.id, propertyId, path })}
       onHandle={(propertyId, handle) => edits.handle(node.id, propertyId, handle)} onDesignHandles={(target, instruction) => { void ai.suggestHandles(node.id, target, instruction); }}
       onOpenProxy={() => openProxy(activeSketch, node.id)} handleErrors={nodeHandleErrors(activeSketch, node)}
@@ -1703,19 +1887,22 @@ export default function Home() {
       clipFor={(propertyId, path) => edits.clipFor(node.id, propertyId, path)} onAddBlock={(block, transformationId) => transform(() => edits.addBlock(node.id, block, transformationId))} onGenerateMachine={() => machine(() => { void ai.generateMachine(node.id); })} onRemoveMachine={() => machine(() => edits.removeMachine(node.id))} />; })()
       : <><div className="section-kicker">LOOK A LITTLE CLOSER</div><h2>Every sketch is<br />a set of systems.</h2>
         <p className="section-description">{scene.nodes.length ? "Select a brush stamp or object in Layers or on the sketch to edit its semantic transformation." : "Draw or attach a photo, then extract its collections and objects."}</p>
-        {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span><button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
-        {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
+        {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span>
+          {/* What to extract and how: sent with Extract, and kept as the direction of the extracted frame's code. */}
+          <label className="refinement-input extract-direction"><span>EXTRACTION DIRECTION <small>optional</small></span><textarea aria-label="Extraction direction" placeholder="e.g. what to focus on or leave out, how the parts group, how it is made…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>
+          <button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
+        {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} title="Extracts again with “Your direction” below" onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
       </>}
     <AlgorithmLibrary scene={scene} busy={busy} targetName={node?.name || null} imports={algorithmImports}
       onEdit={edits.editAlgorithm} onUse={algorithmId => { if (node) edits.addProperty(node.id, algorithmId); }} onMakePen={algorithmId => edits.makePen({ algorithmId })}
       onCopy={edits.copyDefinition} clipFor={edits.definitionClip}
-      onImport={key => { const item = algorithmImports.find(entry => entry.key === key); if (item) { edits.importAlgorithm(item.source); setToast(`${item.algorithm.name} 블록을 이 스케치로 가져왔습니다.`); } }} />
+      onImport={key => { const item = algorithmImports.find(entry => entry.key === key); if (item) { edits.importAlgorithm(item.source); setToast(`Imported the ${item.algorithm.name} block into this sketch.`); } }} />
   </>;
 
   return <div className="studio live-studio freeform-studio scene-studio">
     <header className="topbar"><a className="brand" href="/" aria-label="Rulegen home"><span className="brand-mark"><i /><i /><i /></span>rulegen<span className="beta">LAB</span></a><div className="project-title"><span className="slash">/</span><input aria-label="Project name" value={artwork.name} maxLength={200} onChange={e => setArtwork(a => ({ ...a, name: e.target.value }))} /><span className="saved-dot" /><span className="saved-label">{saveState}</span></div><div className="top-actions"><button className="text-button" onClick={() => setHistoryOpen(true)}>AI history<Icon name="undo" size={14} /></button><button className="text-button" onClick={() => setExportOpen(true)}>Export project <Icon name="download" size={14} /></button><button className="text-button" onClick={() => importInput.current?.click()}>Open JSON</button><button className="text-button" onClick={() => { setNewName(""); setModal(true); }}>New exploration <Icon name="plus" size={15} /></button></div></header>
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Attach photograph" onChange={e => { if (e.target.files?.[0]) void attach(e.target.files[0]); e.target.value = ""; }} />
-    <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("프로젝트 파일이 너무 큽니다."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "올바른 Rulegen 프로젝트 JSON 파일을 선택해주세요." }); } }} />
+    <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("The project file is too large."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "Choose a valid Rulegen project JSON file." }); } }} />
     <div className="workspace">
       <ToolRail tool={tool} inspectionEraser={brushPick?.kind === "inspect-annotate" ? inspectionEraser : undefined} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={algorithmPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
         busy={busy} canAddSketch={!busy && (sketchFrames.length < MAX_SKETCH_FRAMES || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
@@ -1726,23 +1913,36 @@ export default function Home() {
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
         brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushPanel={toggleBrushPanel} onBrushGroup={clickBrushGroup} onBrushHover={setBrushHover} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)} onTargetedRemove={removeTargeted}
         onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }} brushForkOf={brush => brush.fork ? brushesRef.current.find(item => item.id === brush.fork!.brushId)?.name ?? null : null}
-        onHelp={() => setToast("V 선택·이동 · P 연필 · E 지우개 · L 라쏘 · H 이동 · ⌘/Ctrl+G 그룹 · ⇧⌘G 그룹 해제 · Delete 레이어 삭제 · 화살표 이동 · ⌘/Ctrl+Z 실행 취소 · ⌘/Ctrl+V 이미지 붙여넣기 · Esc 선택 해제")} />
+        onHelp={() => setToast("V Select/move · P Pencil · E Eraser · L Lasso · H Pan · ⌘/Ctrl+G Group · ⇧⌘G Ungroup · Delete Delete layer · Arrows Move · ⌘/Ctrl+Z Undo · ⌘/Ctrl+V Paste image · Esc Deselect")} />
       <aside className="layer-sidebar">
         <LayerPanel scene={scene} sketchId={activeSketch} selected={panel.selectedNodeIds} hovered={panel.hovered} busy={busy} canUndo={panel.sceneHistory.length > 0} canRedo={panel.sceneFuture.length > 0} title={currentSketch.name}
           onSelect={edits.select} onHover={edits.hover}
           onRename={edits.rename} onToggleVisible={edits.toggleVisible} onGroup={edits.group} onUngroup={edits.ungroup} onDelete={edits.remove}
           onMove={edits.reparent} onReorder={edits.reorder} onAdd={edits.add} onUndo={edits.undo} onRedo={edits.redo}
           onExtract={() => { void ai.extract(); }} canExtract={sourcePresent}
-          badge={id => { const role = brushRole(scene, activeSketch, id, brushes); return role?.rootId === id ? <BrushRoleBadge role={role} /> : null; }} />
+          pickedTransformation={layerPick(activeSketch)}
+          onPickTransformation={(nodeId, transformationId) => { edits.select(nodeId, false); setLayerTransformation({ frameId: activeSketch, nodeId, transformationId }); }}
+          onMoveTransformation={(fromNodeId, transformationId, toNodeId, beforeId) => guardEach([fromNodeId, toNodeId], "semantic transformation", () => {
+            edits.relocateTransformation(fromNodeId, transformationId, toNodeId, beforeId);
+            // In another node its id may change, so the pick is let go.
+            if (fromNodeId !== toNodeId) setLayerTransformation(null);
+          })}
+          onRemoveTransformation={(nodeId, transformationId) => guard(nodeId, "semantic transformation", () => edits.removeTransformation(nodeId, transformationId))}
+          copied={transformationClip?.label ?? null} onCopyTransformation={copyLayerTransformation} onPasteTransformation={(nodeId, afterId) => { pasteLayerTransformation({ nodeId, afterId }); }}
+          badge={id => { const role = brushRole(scene, activeSketch, id, brushes); if (role?.rootId === id) return <BrushRoleBadge role={role} />;
+            // A drawn form at the root that is no brush yet (e.g. one taken for a background before): it can be made one.
+            const node = !role && panel.generated ? findNode(scene, id) : undefined;
+            return node && !node.parentId && !isBackdrop(node) ? <button type="button" className="layer-make-brush" title="Make this a brush in the toolbar (brush it onto frames, inspect it)"
+              onClick={e => { e.stopPropagation(); makeBrush(activeSketch, id); }}>+ Brush</button> : null; }} />
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} highlight={linkHover}
-          links={[...exampleLinks, ...forkLinks, ...proxyFrames.map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ 조작" })), ...exploreFrames.filter(explore => !grouped.has(explore.id)).map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ 탐색" }))].filter(link => !hiddenExamples.has(link.from) && !hiddenExamples.has(link.to))} groups={boardGroups} onDeleteGroup={deleteGroup} groupAction={group => {
+          links={[...exampleLinks, ...forkLinks, ...proxyFrames.filter((proxy, i, all) => !proxy.hidden && all.findIndex(other => !other.hidden && other.targetFrameId === proxy.targetFrameId && other.nodeId === proxy.nodeId) === i).map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ Control" })), ...exploreFrames.filter(explore => !grouped.has(explore.id)).map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ Explore" }))].filter(link => !hiddenExamples.has(link.from) && !hiddenExamples.has(link.to))} groups={boardGroups} onDeleteGroup={deleteGroup} groupAction={group => {
             // A recommendation's group: pick its fork's inspection tool (once the fork is made).
             if (!group.frames.some(id => isSlotFrame(id) || brushes.some(item => item.fork && item.sourceFrameId === id))) return null;
             const fork = brushes.find(item => item.fork && group.frames.includes(item.sourceFrameId));
-            return fork ? { label: "◎ fork inspection 도구", title: `툴바에서 「${fork.name}」의 targeted inspection 도구를 고르고 fork 프레임으로 갑니다`, onClick: () => openFork(fork.id) }
-              : { label: "◎ fork inspection 도구", title: "fork 자리에서 Accept로 fork를 만들면 고를 수 있습니다", disabled: true, onClick: () => {} }; }} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+            return fork ? { label: "◎ fork inspection tool", title: `Pick the targeted inspection tool for “${fork.name}” in the toolbar and go to the fork frame`, onClick: () => openFork(fork.id) }
+              : { label: "◎ fork inspection tool", title: "Available once you make a fork with Accept in the fork slot", disabled: true, onClick: () => {} }; }} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
           onActivateFrame={id => activateFrame(id)} masterHighlight={masterHighlight} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
@@ -1753,13 +1953,17 @@ export default function Home() {
         {clip && <div className="block-clipboard" title="Right-click a socket to paste, or drag blocks from the palette"><span className="algorithm-badge">ƒ</span>Clipboard · <strong>{clip.label}</strong></div>}
         {panel.loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{panel.loading}</span><button onClick={() => cancel()}>Cancel</button></div>}{panel.error && <div className="error-banner" role="alert"><span>{panel.error}</span><button aria-label="Dismiss error" onClick={() => patchActive({ error: "" })}><Icon name="close" size={14} /></button></div>}
         <div ref={inspector} className="inspector-content live-inspector-content">
-          {!annotating && <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} onDraft={() => { void ai.draftComposePrompt(); }} onCompose={() => { void ai.compose(); }} busy={busy} drafting={panel.loading === compositionPromptLabel} />}
+          {!annotating && <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} tags={panel.composeTags.length} showTags={showComposeTags} onShowTags={setShowComposeTags}
+            withText={panel.composeWithText} onWithText={on => { patchActive({ composeWithText: on }); if (!on) setShowComposeTags(true); }} tagsStale={panel.composeTagsRevision !== currentSketch.revision}
+            tagList={panel.composeTags} openTag={openTags[activeSketch] ?? null} onHoverTag={tagId => setPointedTag(tagId ? { frameId: activeSketch, id: tagId } : null)}
+            canMoveTag={tagStructure(activeSketch).canMove} onMoveTag={tagStructure(activeSketch).onMove} onDeleteTag={tagStructure(activeSketch).onDelete} onAddTag={tagStructure(activeSketch).onAdd} onMoveTransformation={tagStructure(activeSketch).onMoveTransformation}
+            onPickTag={tagId => { setShowComposeTags(true); setOpenTags(current => ({ ...current, [activeSketch]: current[activeSketch] === tagId ? null : tagId })); setPendingFrameFocus(activeSketch as FrameId); }} onDraft={() => { void ai.draftComposePrompt(); }} onCompose={() => { void ai.compose(); }} busy={busy} drafting={panel.loading === compositionPromptLabel} />}
           {annotating && <ResultRevisionPanel hasSketch={Boolean(annotations.length)} clarifying={panel.clarifying} onClarify={() => { void revisions.beginClarification(); }} onRegenerateClarification={() => { void revisions.requestClarification(); }} generatingClarification={panel.loading === clarificationLabel} clarificationStale={Boolean(panel.clarificationContext && panel.clarificationContext !== revisionSnapshot(panel, ""))} onSketch={() => patchActive({ clarifying: false })} instruction={panel.revisionInstruction} proposal={panel.revisionProposal?.proposal || null} changes={proposalChanges} stale={proposalStale} busy={busy} tool={tool} canUndo={panel.annotationHistory.past.length > 0} canRedo={panel.annotationHistory.future.length > 0} onTool={chooseTool} onUndo={undo} onRedo={redo} onInstruction={value => patchActive({ revisionInstruction: value })} onRequest={() => { void revisions.requestRevision(); }} onConfirm={() => { void revisions.confirmRevision(); }} onDiscard={() => patchActive({ revisionProposal: null })} onClose={() => patchActive({ annotating: false })} />}
           {propertiesStage}
-          {scene.nodes.length > 0 && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder="예: 더 유기적으로, 반복은 적게, 파란색으로…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>}
+          {scene.nodes.length > 0 && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder="e.g. more organic, less repetition, in blue…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>}
         </div><div className="inspector-footer"><span className="tiny-dot" />Built for exploration, not perfection.</div></aside>
     </div>
-    <RawCodePanel code={liveSource} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("p5.js 코드를 복사했습니다.")} onError={message => patchActive({ error: message })}
+    <RawCodePanel code={liveSource} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("Copied the p5.js code.")} onError={message => patchActive({ error: message })}
       editor={{ draft: panel.codeDraft || "", busy, runtimeError: panel.runtimeError, onDraft: value => patchActive({ codeDraft: value }),
         onRun: () => { if (!generated) return; if (generated.code === panel.codeDraft) void prepare(panel.codeDraft); else patchActive({ generated: { ...generated, code: panel.codeDraft || "" }, executable: "", preparedCode: "" }); patchActive(previous => ({ renderRevision: previous.renderRevision + 1 })); },
         onFix: () => { void ai.generateCode(true); } }}
@@ -1776,12 +1980,12 @@ export default function Home() {
         renderPreview={listed => { const held = inspectionFor(panel, activeBrush.id), at = heldIndex(held);
           return panel.generated && at !== null ? <RecommendationPreview code={liveSource} scene={scene} runtime={held.steps[at].runtime} values={stepValues(held.steps[at]) ?? {}} recommendation={listed} preview={listed.preview} /> : null; }}
         applied={{ past: panel.applied.past, future: panel.applied.future, undoClean: appliedCurrent(panel, "undo"), redoClean: appliedCurrent(panel, "redo") }} recommendationKey={recommendationKey}
-        onUndoApplied={() => { const entry = stepApplied(deps, activeSketch, "undo"); if (entry) setToast(`「${entry.title}」 적용을 되돌렸습니다 (장면과 코드${followApplied(entry.id, "undo") ? ", overlay" : ""}).`); }}
-        onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`「${entry.title}」을(를) 다시 적용했습니다${followApplied(entry.id, "redo") ? " (업데이트한 overlay도)" : ""}.`); }}
+        onUndoApplied={() => { const entry = stepApplied(deps, activeSketch, "undo"); if (entry) setToast(`Reverted applying “${entry.title}” (scene and code${followApplied(entry.id, "undo") ? ", overlay" : ""}).`); }}
+        onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`Reapplied “${entry.title}”${followApplied(entry.id, "redo") ? " (with the updated overlay)" : ""}.`); }}
         onUpdateOverlays={listed => { void updateTargetedOverlays(activeBrush, listed); }}
         onExplore={openExplore} exploring={exploreOpen} overlaysUpdated={appliedId => Boolean(activeTargeted && overlaysUpdatedFor(activeTargeted, appliedId))}
         onApplyChanges={changes => applyChanges(deps, activeSketch, changes)}
-        code={panel.generated?.code} onApplyRecording={item => { void applyRecording(deps, activeSketch, item).then(done => { if (done) setToast(`그려진 항목마다 ${item.fields.join(", ")}을(를) 기록하도록 코드를 고쳤습니다.`); }); }}
+        code={panel.generated?.code} onApplyRecording={item => { void applyRecording(deps, activeSketch, item).then(done => { if (done) setToast(`Updated the code to record ${item.fields.join(", ")} for each drawn item.`); }); }}
         onAcceptParameter={acceptSuggested} onRejectParameter={rejectSuggested}
         onParameterValue={(nodeId, propertyId, value) => edits.scalar(nodeId, propertyId, [], value)}
         onApplyRecommendation={(_recommendation, index) => { if (activeTargeted) void forkRecommendation(activeSketch, activeBrush, activeTargeted, index); }}
@@ -1812,7 +2016,7 @@ export default function Home() {
       data={frameExport({ id: frameJson, name: artworkOf(frameJson)?.name || frameJson, scene: panels[frameJson].scene, generated: panels[frameJson].generated,
         brushOf: nodeId => { const role = brushRole(panels[frameJson].scene, frameJson, nodeId, brushes); return role ? { name: role.brush.name, master: role.master } : null; },
         brushes: brushes.filter(brush => brushNodeIds(panels[frameJson].scene, brush, frameJson).length).map(brush => ({ id: brush.id, name: brush.name, roots: brushRoots(panels[frameJson].scene, brush, frameJson), targeted: brush.targeted })) })} />}
-    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>스케치·사진·collection·object·알고리즘 블록·코드가 함께 저장됩니다. JSON 파일로 다운로드하거나 복사할 수 있어요.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("프로젝트 JSON을 복사했습니다."); } catch { patchActive({ error: "JSON 내용을 선택해 복사하거나 다운로드해주세요." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
-    {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>새 탐색을 시작하면 현재 로컬 초안이 교체됩니다. JSON으로 내보내면 언제든 다시 열 수 있어요.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
+    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>Sketches, photos, Collections, Objects, algorithm blocks, and code are saved together. You can download or copy them as a JSON file.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("Copied the project JSON."); } catch { patchActive({ error: "Select the JSON text to copy it, or download it." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
+    {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>Starting a new exploration replaces the current local draft. Export it as JSON to reopen it anytime.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
   </div>;
 }

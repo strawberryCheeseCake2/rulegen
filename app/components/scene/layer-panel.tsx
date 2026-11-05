@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import type { Scene } from "../../lib/scene/schema";
 import { descendantIds, layerTree } from "../../lib/scene/graph";
 import { Icon } from "../icons";
@@ -14,7 +14,21 @@ export type LayerPanelProps = {
   onExtract: () => void; canExtract: boolean;
   /** A mark after a row's name (the brush master ◆ / instance ◇ badge). */
   badge?: (nodeId: string) => React.ReactNode;
+  /**
+   * Each node's semantic transformations (its constraints) are listed under its row: picking one shows it in the
+   * inspector, dragging one onto a node (its end) or before another transformation moves it there, × deletes it.
+   */
+  onPickTransformation?: (nodeId: string, transformationId: string) => void;
+  onMoveTransformation?: (fromNodeId: string, transformationId: string, toNodeId: string, beforeId: string | null) => void;
+  onRemoveTransformation?: (nodeId: string, transformationId: string) => void;
+  /** The transformation shown in the inspector. */
+  pickedTransformation?: { nodeId: string; transformationId: string } | null;
+  /** Copying a transformation to the studio clipboard, and pasting the copied one (`copied`: its name) into a node, after `afterId` (none: at the end). */
+  onCopyTransformation?: (nodeId: string, transformationId: string) => void;
+  onPasteTransformation?: (nodeId: string, afterId: string | null) => void; copied?: string | null;
 };
+/** The drag data of a transformation in Layers (never a node: dropping it on a frame copies nothing). */
+const TRANSFORMATION_DRAG = "text/rulegen-transformation";
 
 export function LayerPanel(props: LayerPanelProps) {
   const { scene, selected, busy } = props;
@@ -22,6 +36,17 @@ export function LayerPanel(props: LayerPanelProps) {
   const [dragging, setDragging] = useState<string | null>(null);
   const rows = layerTree(scene);
   const primary = scene.nodes.find(node => node.id === selected[0]);
+  const [over, setOver] = useState<string | null>(null);
+  const carrying = (event: React.DragEvent) => Boolean(props.onMoveTransformation && !busy && event.dataTransfer.types.includes(TRANSFORMATION_DRAG));
+  /** A dragged transformation lands in `nodeId`, before `beforeId` (none: at its end). */
+  const takes = (nodeId: string, beforeId: string | null, key: string) => ({
+    onDragOver: (event: React.DragEvent) => { if (!carrying(event)) return; event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = "move"; setOver(key); },
+    onDragLeave: () => setOver(current => current === key ? null : current),
+    onDrop: (event: React.DragEvent) => {
+      if (!carrying(event)) return; event.preventDefault(); event.stopPropagation(); setOver(null);
+      try { const from = JSON.parse(event.dataTransfer.getData(TRANSFORMATION_DRAG)); if (from?.nodeId && from?.transformationId) props.onMoveTransformation!(from.nodeId, from.transformationId, nodeId, beforeId); } catch { /* not a transformation */ }
+    },
+  });
   const drop = (event: React.DragEvent, parentId: string | null, beforeId: string | null) => {
     event.preventDefault(); event.stopPropagation();
     const id = event.dataTransfer.getData("text/rulegen-node") || dragging;
@@ -46,13 +71,14 @@ export function LayerPanel(props: LayerPanelProps) {
     <div className="layer-list" role="tree" aria-label="Layer tree" aria-multiselectable="true" onDragOver={e => e.preventDefault()} onDrop={e => drop(e, null, null)} onClick={e => { if (e.target === e.currentTarget) props.onSelect(null, false); }}>
       {rows.map(({ node, depth }) => {
         const active = selected.includes(node.id);
-        return <div key={node.id} role="treeitem" aria-selected={active} aria-level={depth + 1}
-          className={`layer-row kind-${node.kind} ${active ? "selected" : ""} ${props.hovered === node.id ? "hovered" : ""} ${node.visible ? "" : "hidden-layer"}`}
+        return <Fragment key={node.id}><div role="treeitem" aria-selected={active} aria-level={depth + 1}
+          className={`layer-row kind-${node.kind} ${active ? "selected" : ""} ${props.hovered === node.id ? "hovered" : ""} ${node.visible ? "" : "hidden-layer"} ${over === node.id ? "transformation-drop" : ""}`}
           style={{ paddingLeft: 8 + depth * 16 }} draggable={!busy && editing !== node.id}
           onDragStart={e => { e.dataTransfer.setData("text/rulegen-node", node.id); e.dataTransfer.setData(NODE_DRAG_TYPE, JSON.stringify({ sketchId: props.sketchId, nodeId: node.id })); e.dataTransfer.effectAllowed = "copyMove"; setDragging(node.id); }}
-          onDragEnd={() => setDragging(null)} onDragOver={e => e.preventDefault()}
-          // Dropping on a collection nests inside it; on an object, places before it.
-          onDrop={e => node.kind === "collection" ? drop(e, node.id, null) : drop(e, node.parentId, node.id)}
+          onDragEnd={() => setDragging(null)} onDragOver={e => { if (carrying(e)) { takes(node.id, null, node.id).onDragOver(e); return; } e.preventDefault(); }}
+          onDragLeave={takes(node.id, null, node.id).onDragLeave}
+          // Dropping on a collection nests inside it; on an object, places before it. A transformation dropped on a node goes to its end.
+          onDrop={e => { if (carrying(e)) { takes(node.id, null, node.id).onDrop(e); return; } if (node.kind === "collection") drop(e, node.id, null); else drop(e, node.parentId, node.id); }}
           onMouseEnter={() => props.onHover(node.id)} onMouseLeave={() => props.onHover(null)}
           onClick={e => props.onSelect(node.id, e.shiftKey || e.metaKey || e.ctrlKey)} onDoubleClick={() => setEditing(node.id)}>
           <Icon name={node.kind === "collection" ? "collection" : "object"} size={14} />
@@ -62,9 +88,29 @@ export function LayerPanel(props: LayerPanelProps) {
             : <span className="layer-name" title={`${node.description || node.name} · drag onto another sketch frame to copy it there`}>{node.name}</span>}
           {props.badge?.(node.id)}
           {node.machine && <span className="layer-machine-badge" title={`${node.machine.states.length} states`}>{node.machine.states.length}S</span>}
+          {props.copied && props.onPasteTransformation && <button type="button" className="layer-paste" disabled={busy} title={`Paste “${props.copied}” at the end of ${node.name} (⌘V)`} aria-label={`Paste ${props.copied} into ${node.name}`}
+            onClick={e => { e.stopPropagation(); props.onPasteTransformation!(node.id, null); }}>Paste</button>}
           {node.transformations.length > 0 && <span className="layer-property-count" title={`${node.transformations.length} semantic transformation(s): ${node.transformations.map(item => item.label || item.id).join(" → ")}`}>{node.transformations.length}</span>}
           <button className="layer-visibility" aria-label={`${node.visible ? "Hide" : "Show"} ${node.name}`} onClick={e => { e.stopPropagation(); props.onToggleVisible(node.id); }}><Icon name={node.visible ? "eye" : "eye-off"} size={13} /></button>
-        </div>;
+        </div>
+        {node.transformations.length > 0 && <ul className="layer-transformations" aria-label={`Constraints of ${node.name}`} style={{ paddingLeft: 26 + depth * 16 }}>
+          {node.transformations.map((item, i) => {
+            const name = item.label || item.id, key = `${node.id}/${item.id}`, picked = props.pickedTransformation?.nodeId === node.id && props.pickedTransformation.transformationId === item.id;
+            return <li key={item.id} className={`layer-transformation ${picked ? "picked" : ""} ${over === key ? "drop" : ""}`} draggable={Boolean(props.onMoveTransformation) && !busy}
+              title={`${item.description || name}${item.properties.length ? `\n${item.properties.map(property => property.label || property.id).join(" · ")}` : ""}\nDrag onto a layer (or before another transformation) to move it there.`}
+              onDragStart={e => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData(TRANSFORMATION_DRAG, JSON.stringify({ nodeId: node.id, transformationId: item.id })); }}
+              onDragEnd={() => setOver(null)} {...takes(node.id, item.id, key)}
+              onMouseEnter={() => props.onHover(node.id)} onMouseLeave={() => props.onHover(null)}
+              onClick={e => { e.stopPropagation(); props.onPickTransformation?.(node.id, item.id); }}>
+              <span className="layer-transformation-order">{i + 1}</span><span className="layer-transformation-name">{name}</span>
+              {item.properties.length > 0 && <span className="layer-transformation-count" title={`${item.properties.length} propert${item.properties.length === 1 ? "y" : "ies"}`}>{item.properties.length}</span>}
+              {props.onCopyTransformation && <button type="button" className="layer-transformation-copy" aria-label={`Copy ${name} transformation`} title="Copy this transformation (⌘C), then paste it into any layer of any sketch (⌘V or Paste)"
+                onClick={e => { e.stopPropagation(); props.onCopyTransformation!(node.id, item.id); }}><Icon name="copy" size={11} /></button>}
+              {props.onRemoveTransformation && <button type="button" className="layer-transformation-remove" aria-label={`Delete ${name} transformation`} title="Delete this transformation and its properties" disabled={busy}
+                onClick={e => { e.stopPropagation(); props.onRemoveTransformation!(node.id, item.id); }}>×</button>}
+            </li>; })}
+        </ul>}
+        </Fragment>;
       })}
       {!rows.length && <div className="layer-empty"><Icon name="layers" size={24} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span>
         <button className="primary-button" disabled={busy || !props.canExtract} onClick={props.onExtract}>Extract brush stamps<Icon name="spark" size={15} /></button></div>}

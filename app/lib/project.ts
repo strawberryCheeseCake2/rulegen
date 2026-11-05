@@ -20,8 +20,8 @@ export const projectSchema = z.object({ version: z.literal(2), name: z.string().
   /** Exploration frames (Execution, key parameters) and fork slots: with their frame groups. */
   exploreFrames: readable(savedExploreFrameSchema, MAX_EXPLORE_FRAMES), forkSlots: readable(savedForkSlotSchema, MAX_FORK_SLOTS) }).superRefine((project, ctx) => {
   const ids = project.sketchFrames.map(f => f.id);
-  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "스케치 프레임 ID와 위치를 확인해주세요." });
-  if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Interaction pen을 확인해주세요." });
+  if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "Check the sketch frame IDs and positions." });
+  if (project.interactionPen.kind !== "interaction") ctx.addIssue({ code: "custom", message: "Check the interaction pen." });
 }).transform(project => {
   const ids = ["source", ...project.sketchFrames.map(f => f.id)];
   const sketchPanels = Object.fromEntries(ids.map(id => [id, project.sketchPanels[id] || sketchPanelSchema.parse({})]));
@@ -53,8 +53,8 @@ export function downloadFile(name: string, contents: string, type = "text/plain"
   const url = URL.createObjectURL(new Blob([contents], { type })); const a = document.createElement("a"); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 export async function readPhoto(file: File) {
-  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("PNG, JPG, WebP 사진을 첨부해주세요.");
-  if (file.size > 20_000_000) throw new Error("20MB 이하의 사진을 첨부해주세요.");
+  if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("Attach a PNG, JPG, or WebP image.");
+  if (file.size > 20_000_000) throw new Error("Attach an image of 20 MB or less.");
   const url = URL.createObjectURL(file);
   try {
     const image = new Image(); image.src = url; await image.decode();

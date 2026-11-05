@@ -25,7 +25,7 @@ export function AlgorithmLibrary({ scene, busy, targetName, imports, onEdit, onU
   const names = (id: string) => scene.algorithms.find(algorithm => algorithm.id === id)?.name || id;
   return <section className="block-palette" aria-label="Algorithm blocks">{menu}
     <header className="block-palette-header"><Icon name="function" size={14} /><strong>Algorithm blocks</strong><span>{scene.algorithms.length}</span></header>
-    <p className="algorithm-library-help">블록을 끌어 아무 property 소켓에나 끼우세요. 우클릭으로 복사해 다른 property·스케치에 붙여넣을 수도 있습니다. 블록 정의를 고치면 끼워진 모든 곳에 반영됩니다.</p>
+    <p className="algorithm-library-help">Drag a block into any property socket. You can also right-click to copy it and paste it into another property or sketch. Editing a block's definition updates every place it's plugged in.</p>
     {!scene.algorithms.length && <p className="empty-panel">No blocks yet. Extract brush stamps first.</p>}
     <div className="block-palette-list">{scene.algorithms.map(algorithm => {
       const uses = [...new Set((usage.get(algorithm.id) || []).map(use => nodeName(use.nodeId)))];

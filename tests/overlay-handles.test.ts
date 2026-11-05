@@ -89,7 +89,7 @@ test("a drag is a what-if of the step looked at only: that step reads it, the ot
   const scene = sampleScene(), [brush] = brushesFor(scene, "sketch-a", [], () => "brush-1"), noop = () => {};
   const html = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "inspect", scene, nodeIds: ["tree", "orb"], state: { ...edited, brushId: brush.id, cursor: 1 }, busy: false, running: true, onResetEdit: noop,
     onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
-  assert.match(html, /이 단계만 \(기록 24\)/); assert.match(html, /aria-label="Reset Radius at this step"/); assert.match(html, /class="[^"]*edited/);
+  assert.match(html, /This step only \(recorded 24\)/); assert.match(html, /aria-label="Reset Radius at this step"/); assert.match(html, /class="[^"]*edited/);
 });
 
 test("grips are drawn on the frame with what they do, only with an inspection tool that can drag them", () => {
@@ -129,7 +129,7 @@ test("the held step is drawn with its what-if values and the real values come ba
   const { readFileSync } = await import("node:fs");
   assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /function showPinned\(\)\{rulegenRestore\(pinned\);if\(pinnedParams\)/, "the frame does the same");
   // Nothing redraws after it with the real values (that drawing would be the one shown).
-  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /pinnedParams=event\.data\.params[^;]*;[^\n]*?showPinned\(\);return;\}/, "the restore message ends after drawing the held step");
+  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /pinnedParams=event\.data\.params[^;]*;[^\n]*?showPinned\(\);\n\s*const on=event\.data\.playOn;[^\n]*?startPlayOn\(on\.ms\);\}return;\}/, "the restore message ends after drawing the held step");
 });
 
 test("one drawn item can have its own what-if: the runtime gives it to m.v(key, id) and the overlays read it for that item", async () => {
@@ -156,7 +156,7 @@ test("one drawn item can have its own what-if: the runtime gives it to m.v(key, 
   assert.equal(editStep(state, 0, "orb/radius", null).steps[0].itemEdits, undefined, "taking the key back clears its item values too");
   // The frame sets them only while drawing the held step.
   const { readFileSync } = await import("node:fs");
-  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /if\(items\)rulegenItemValues=pinnedItems\|\|\{\};[^}]*try\{forceRender=true;p\.redraw\(\);reportDrawn\(.*?\);\}finally\{if\(items\)rulegenItemValues=\{\};/);
+  assert.match(readFileSync("app/components/code-preview.tsx", "utf8"), /if\(items\)rulegenItemValues=pinnedItems\|\|\{\};.*?try\{forceRender=true;p\.redraw\(\);reportDrawn\(.*?\);\}finally\{if\(items\)rulegenItemValues=\{\};/);
 });
 
 test("a grip on one item changes that item only: the code is made to read the value per item, or the grip is not offered", async () => {
@@ -167,7 +167,7 @@ test("a grip on one item changes that item only: the code is made to read the va
   const PER_ITEM = `const id = "orb:0"; m.store.items = [{ id, x: 300 }]; p.circle(m.box("orb").x + speed * m.state("orb").elapsed / 1000, 300, m.v("orb/radius", id) * 2);`;
   const records = { nodeId: "tree", fields: ["items"], perItem: ["orb/radius"], reason: "원마다 크기", edits: [{ find: READ, replace: PER_ITEM }] };
   assert.equal(recordingProblem(scene, code, records), null);
-  assert.match(recordingProblem(scene, code, { ...records, edits: [{ find: READ, replace: `m.store.items = []; ${READ}` }] })!, /항목별로 읽지 않습니다/, "perItem must really be read per item");
+  assert.match(recordingProblem(scene, code, { ...records, edits: [{ find: READ, replace: `m.store.items = []; ${READ}` }] })!, /does not read orb\/radius per item/, "perItem must really be read per item");
   assert.ok(readsPerItem(`m.opt(1, "orb/radius", id)`, "orb/radius"), "a guarded read per item counts");
   // A records edit reading a suggested parameter (not a value until accepted) falls back to the code's value.
   const suggestion = { nodeId: "orb", transformationId: "t", id: "bend", label: "굽힘", effect: "spatial" as const, description: "", form: "scale" as const, value: { type: "number" as const, value: 1, min: .2, max: 3, step: .1, unit: "×" }, reason: "", edits: [{ find: "x", replace: "x" }] };
@@ -186,7 +186,7 @@ test("a grip on one item changes that item only: the code is made to read the va
     inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "크기", previous: code, inspection }), new AbortController().signal)));
   const flat = await ask({ records: null });
   assert.deepEqual(flat.overlays.map(item => [item.id, Boolean(item.handle)]), [["size", true], ["each", false]], "read once for all: one grip would move every item");
-  assert.match(flat.summary, /손잡이 1개는 코드가 그 값을 항목마다 따로 읽지 않아/);
+  assert.match(flat.summary, /1 handle\(s\) were left out because the code does not read that value per item/);
   const single = await ask({ records });
   assert.deepEqual(single.overlays.map(item => [item.id, Boolean(item.handle)]), [["size", true], ["each", true]]);
   assert.deepEqual(single.records!.perItem, ["orb/radius"]); assert.equal(single.summary, "s");
@@ -207,5 +207,41 @@ test("the frame changes one item only for a grip on an each overlay, and nothing
   const home = readFileSync("app/routes/home.tsx", "utf8");
   assert.match(home, /if \(drag\.each && !single\) \{\s*handleDrag\.current = null;/, "no fallback that changes every item");
   assert.match(home, /editHeldStep\(drag\.frameId, brush\.id, drag\.key, drag\.last, single \? drag\.item! : undefined\)/);
-  assert.doesNotMatch(home, /항목 전체가 함께 바뀝니다/);
+  assert.doesNotMatch(home, /(all|every) items? (will )?changes? together/i);
+});
+
+test("letting go of a handle plays the held step on with the new value: what the code keeps and the machines move on from it", async () => {
+  const { run } = await import("./fixtures/scene");
+  const { readFileSync } = await import("node:fs");
+  const sketch = run(connectScene({ title: "Tree", explanation: "", code: sceneProgram }, sampleScene()).code);
+  sketch.draw(); sketch.read("rulegenJumpState('orb', 'moving')"); sketch.draw();
+  const held = JSON.stringify(sketch.read("rulegenSnapshot()"));
+  // startPlayOn: the held step's state, the what-if value over it, then frames go on (as the running sketch does).
+  const playOn = (speed: number, frames: number) => {
+    sketch.read(`rulegenRestore(${held}); rulegenParams["orb/speed"] = ${speed};`);
+    const xs: number[] = [];
+    for (let i = 0; i < frames; i++) { sketch.circles.length = 0; sketch.draw(); if (sketch.circles[0]) xs.push(sketch.circles[0][0]); }
+    return { xs, state: sketch.read("rulegenState.orb.id") };
+  };
+  const slow = playOn(40, 3), fast = playOn(100, 3);
+  assert.deepEqual([slow.xs[2] - slow.xs[0], fast.xs[2] - fast.xs[0]], [8, 20], "it moves on at the value set at the held step");
+  assert.equal(playOn(100, 14).state, "idle", "and the machine goes on to what comes next (the timed transition)");
+  // The frame does that, lets transitions happen only while playing on (not recorded as steps), and asks for it when a handle is let go.
+  const preview = readFileSync("app/components/code-preview.tsx", "utf8"), home = readFileSync("app/routes/home.tsx", "utf8");
+  assert.match(preview, /function startPlayOn\(ms\)\{if\(!pinned\|\|typeof rulegenRestore!=='function'\)return;rulegenRestore\(pinned\);if\(pinnedParams\)/);
+  assert.match(preview, /rulegenEmit=function\(nodeId,transitionId\)\{if\(pinned&&!following\)return false;/);
+  assert.match(preview, /if\(ok&&tracing&&!replaying&&!following\)/, "transitions while playing on are not recorded as steps");
+  assert.match(preview, /if\(following\)\{if\(\+\+followDrawn%4===0\)reportDrawn\(null\);if\(performance\.now\(\)>=following\)endPlayOn\(\);\}/, "the overlays follow it");
+  assert.match(home, /if \(drag\.ended && drag\.last !== null && autoPlayOnRef\.current\) requestPlayOn\(drag\.frameId, brush\.id\);/);
+});
+
+test("a grip on one item never changes every item; handles try a runtime state of the moment, and a pair test is drawn to meet at its threshold", async () => {
+  const { readFileSync } = await import("node:fs");
+  assert.doesNotMatch(readFileSync("app/routes/home.tsx", "utf8"), /shared = drag\.each/, "a grip on one item never changes every item");
+  for (const file of ["prompts/inspect.md", "prompts/explore.md"]) {
+    const prompt = readFileSync(file, "utf8");
+    assert.match(prompt, /m\.runtime\("<name>", <the item's id>, <the expression as it is>\)/, `${file}: one item's quantity kept in the execution state, changed by the handle`);
+    assert.match(prompt, /each thing's OWN shape at its own value, around it, so the two shapes touch exactly when the test passes/, `${file}: drawn so the shapes touch at the threshold`);
+    assert.doesNotMatch(prompt, /is ONE value|`d < t\(a\) \* ra|heart|merged!/i, `${file}: no change-them-all or pair-value rule, no words of one case`);
+  }
 });

@@ -63,7 +63,7 @@ export const propertyHandleSchema = z.object({
   prepared: z.string().min(1).max(MAX_HANDLE_CODE * 4),
   /** The scalars it drives: argument ids leading to each (empty: the property's own scalar). */
   paths: z.array(z.array(idSchema).max(MAX_VALUE_DEPTH)).min(1).max(8),
-  /** What the gesture does, shown above the widget ("끌어서 가지를 벌리기"). */
+  /** What the gesture does, shown above the widget ("Drag to spread the branches"). */
   hint: z.string().max(120).default(""),
 });
 export type PropertyHandle = z.infer<typeof propertyHandleSchema>;

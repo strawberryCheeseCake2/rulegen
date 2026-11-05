@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import type { SemanticPen } from "../lib/schema";
 import { BRUSH_TOOLS, brushGroup, brushTool, groupBrushes, parseBrushTool, subBrushes, type Brush, type BrushToolKind } from "../lib/brushes";
 import { AlgorithmPenSettings } from "./algorithm-pen-settings";
@@ -34,9 +35,17 @@ export const BRUSH_TOOL_INFO: Record<BrushToolKind, { icon: IconName; label: str
 
 /** Left toolbar: frames, drawing tools, semantic pens, history and zoom. */
 export function ToolRail(props: Props) {
+  // The Brush panel can be dragged by its heading (it stays where it was put, within the window; a double click puts it back).
+  const [panelAt, setPanelAt] = useState({ x: 0, y: 0 });
+  const panelDrag = useRef<{ pointer: number; x: number; y: number; from: { x: number; y: number }; box: DOMRect } | null>(null);
+  const panelMove = (e: React.PointerEvent) => {
+    const drag = panelDrag.current; if (!drag || drag.pointer !== e.pointerId) return;
+    const dx = Math.min(innerWidth - 8 - drag.box.right, Math.max(8 - drag.box.left, e.clientX - drag.x)), dy = Math.min(innerHeight - 8 - drag.box.bottom, Math.max(8 - drag.box.top, e.clientY - drag.y));
+    setPanelAt({ x: drag.from.x + dx, y: drag.from.y + dy });
+  };
   const toolButton = (name: string, icon: IconName, label: string) => {
     const active = (props.tool === name || (name === "eraser" && props.inspectionEraser)) && props.toolsActive;
-    const hint = name === "eraser" && props.inspectionEraser !== undefined ? `${label} · inspection annotation 지우기` : label;
+    const hint = name === "eraser" && props.inspectionEraser !== undefined ? `${label} · clear inspection annotation` : label;
     return <button className={`rail-button ${active ? "active" : ""}`} aria-label={label} title={hint} aria-pressed={active} aria-expanded={name === "pen" ? props.pencilOpen : undefined} onClick={() => props.onTool(name)}><Icon name={icon} /></button>;
   };
   return <nav className="rail" aria-label="Workspace toolbar">
@@ -74,8 +83,12 @@ export function ToolRail(props: Props) {
           <button className={`rail-button brush-group-button ${inUse ? "active" : ""}`} style={{ color: inUse ? current.color : undefined }} aria-label="Brushes"
             title={`Brush · ${current.name}${sub ? ` › ${sub.name}` : ""} · ${targetedName || info.label}`} aria-pressed={inUse} aria-expanded={open} onClick={() => props.onBrushPanel?.()}>
             <Icon name={inUse ? info.icon : "brush"} size={18} />{inUse && <span className="semantic-pen-dot" style={{ background: current.color }} />}<span className="brush-group-corner" /></button>
-          {open && <div className="pencil-popover brush-group-popover" role="group" aria-label="Brushes">
-            <div className="pencil-popover-heading"><span>Brushes</span><button aria-label="Close brush tools" onClick={props.onBrushGroupClose}><Icon name="close" size={14} /></button></div>
+          {open && <div className={`pencil-popover brush-group-popover ${panelAt.x || panelAt.y ? "moved" : ""}`} role="group" aria-label="Brushes" style={{ transform: panelAt.x || panelAt.y ? `translate(${panelAt.x}px, ${panelAt.y}px)` : undefined }}>
+            <div className="pencil-popover-heading brush-group-handle" title="Drag to move · double click to put back"
+              onPointerDown={e => { if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+                panelDrag.current = { pointer: e.pointerId, x: e.clientX, y: e.clientY, from: panelAt, box: e.currentTarget.parentElement!.getBoundingClientRect() }; }}
+              onPointerMove={panelMove} onPointerUp={() => { panelDrag.current = null; }} onPointerCancel={() => { panelDrag.current = null; }}
+              onDoubleClick={e => { if (!(e.target as HTMLElement).closest("button")) setPanelAt({ x: 0, y: 0 }); }}><span>Brushes</span><button aria-label="Close brush tools" onClick={props.onBrushGroupClose}><Icon name="close" size={14} /></button></div>
             {/* Top: pick a brush. */}
             <div className="brush-picker" role="listbox" aria-label="Brush list">{groups.map(item => {
               const picked = item.id === brush.id, used = activeGroup === item.id, count = subBrushes(all, item.id).length;
@@ -83,7 +96,7 @@ export function ToolRail(props: Props) {
               return <button key={item.id} role="option" aria-selected={picked} className={`brush-pick-row ${picked ? "picked" : ""} ${used ? "in-use" : ""}`} title={`${item.name} brush`} onClick={() => props.onBrushGroup?.(item.id)}
                 onMouseEnter={() => props.onBrushHover?.(item.id)} onMouseLeave={() => props.onBrushHover?.(null)} onFocus={() => props.onBrushHover?.(item.id)} onBlur={() => props.onBrushHover?.(null)}>
                 <span className="brush-thumb" style={{ borderColor: item.color }}>{item.thumbnail ? <img src={item.thumbnail} alt="" /> : <i className="brush-thumb-empty" style={{ background: item.color }} />}</span>
-                <span className="brush-pick-meta"><i className="brush-swatch" style={{ background: item.color }} />{item.fork && <em className="brush-fork-badge" title={`Fork: 「${item.fork.title}」 applied to a copy of ${props.brushForkOf?.(item) ?? "a deleted brush"}`}>⑂</em>}<span>{item.name}</span>
+                <span className="brush-pick-meta"><i className="brush-swatch" style={{ background: item.color }} />{item.fork && <em className="brush-fork-badge" title={`Fork: “${item.fork.title}” applied to a copy of ${props.brushForkOf?.(item) ?? "a deleted brush"}`}>⑂</em>}<span>{item.name}</span>
                 {(count > 0 || item.targeted.length > 0) && <small>{[count ? `${count} sub` : "", item.targeted.length ? `${item.targeted.length} targeted` : ""].filter(Boolean).join(" · ")}</small>}</span></button>;
             })}</div>
             {/* Below: the picked brush's tools and options. */}
@@ -100,7 +113,7 @@ export function ToolRail(props: Props) {
                 <Icon name="target" size={15} /><span>{tool.name}</span></button>
                 {props.onTargetedRemove && <button className="brush-targeted-remove" aria-label={`Remove targeted inspection ${tool.name}`} title="Remove this targeted inspection" onClick={() => props.onTargetedRemove!(brush.id, tool.id)}><Icon name="close" size={11} /></button>}</div>;
             })}
-            {!brush.targeted.length && <span className="brush-targeted-hint">Inspection annotation으로 concern을 표시하면 Targeted inspection 도구가 여기에 생깁니다.</span>}</div>
+            {!brush.targeted.length && <span className="brush-targeted-hint">Mark a concern with an inspection annotation and a targeted inspection tool appears here.</span>}</div>
             {/* Minimal examples of this brush's transformations: each a brush of its own (brush with it, inspect it). */}
             {subs.length > 0 && <div className="brush-sub-list" role="group" aria-label={`${brush.name} sub brushes`}><span className="left-setting-title">SUB BRUSHES</span>
               {subs.map(item => { const picked = inGroup && selected!.brushId === item.id;
@@ -110,11 +123,11 @@ export function ToolRail(props: Props) {
                       <Icon name={BRUSH_TOOL_INFO[tool].icon} size={14} />{tool === "brush" && <span>{item.name}</span>}</button>; })}
                   {props.onBrushRemove && <button className="brush-targeted-remove" aria-label={`Remove sub brush ${item.name}`} title="Remove this sub brush" onClick={() => props.onBrushRemove!(item)}><Icon name="close" size={11} /></button>}</div>; })}</div>}
             {brush.fork && <div className="brush-fork-row"><span className="left-setting-title">FORK</span>
-              <span>⑂ {props.brushForkOf?.(brush) ?? "지워진 brush"}에서 fork · 「{brush.fork.title}」 적용</span>
-              {props.brushForkOf?.(brush) && <button title="Pick the brush this fork came from" onClick={() => props.onBrushGroup?.(brushGroup(all, brush.fork!.brushId))}>원래 brush 보기<Icon name="arrow" size={12} /></button>}</div>}
+              <span>⑂ Fork of {props.brushForkOf?.(brush) ?? "a deleted brush"} · “{brush.fork.title}” applied</span>
+              {props.brushForkOf?.(brush) && <button title="Pick the brush this fork came from" onClick={() => props.onBrushGroup?.(brushGroup(all, brush.fork!.brushId))}>View original brush<Icon name="arrow" size={12} /></button>}</div>}
             {props.brushMaster && (() => { const master = props.brushMaster(brush);
               return <div className="brush-master-row"><span className="left-setting-title">MASTER</span>
-                {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">Master가 있던 프레임이 삭제되었습니다. Instance에서 Make master로 지정할 수 있습니다.</span>}</div>; })()}
+                {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">The frame that held the master was deleted. You can set one with Make master on an instance.</span>}</div>; })()}
             <label className="brush-name-field"><span>Name</span><input maxLength={100} value={brush.name} onChange={e => { if (e.target.value.trim()) props.onBrushChange?.({ ...brush, name: e.target.value }); }} /></label>
             {props.onBrushRemove && <button className="brush-remove" onClick={() => props.onBrushRemove!(brush)}><Icon name="trash" size={13} />Remove brush</button>}
             </div>

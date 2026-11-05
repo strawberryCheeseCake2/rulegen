@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"kind\":\"add-transformation\",\"nodeId\":\"tree\",\"targetId\":\"x\",\"targetIds\":[\"y\"],\"title\":\"뻗을 때 굵게\",\"detail\":\"가지를 뻗는 단계에서 획을 굵게\",\"changes\":[],\"reply\":\"가지 뻗기 단계에서 키운 크롭대로 굵게 만들었습니다.\",\"preview\":{\"caption\":\"가지가 굵어집니다\",\"edits\":[{\"nodeId\":\"tree\",\"find\":\"nowhere();\",\"replace\":\"p.stroke(m.v(\\\"tree/ink\\\")); p.strokeWeight(m.v(\\\"tree/weight\\\"));\"}],\"values\":[{\"nodeId\":\"tree\",\"id\":\"weight\",\"label\":\"굵기\",\"value\":{\"type\":\"number\",\"value\":3,\"min\":1,\"max\":12,\"step\":1,\"unit\":\"px\"}}],\"machine\":null,\"marks\":[],\"handles\":[]}}"
+        }
+      ]
+    }
+  ]
+}

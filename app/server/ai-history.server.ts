@@ -11,7 +11,7 @@ export type GenerationSummary = { key: string; intent: string; model: string; st
 async function safeFile(directory: string, name: string) {
   const target = path.join(directory, name);
   const info = await lstat(target);
-  if (!info.isFile() || info.isSymbolicLink() || info.size > 64_000_000) throw new Error("올바른 로그 파일이 아닙니다.");
+  if (!info.isFile() || info.isSymbolicLink() || info.size > 64_000_000) throw new Error("Not a valid log file.");
   return readFile(target);
 }
 async function json(directory: string, name: string) { return JSON.parse((await safeFile(directory, name)).toString("utf8")); }
@@ -20,10 +20,10 @@ async function optionalJson(directory: string, name: string) {
 }
 async function logDirectory(key: string) {
   const parts = key.split("/");
-  if (parts.length !== 2 || !datePattern.test(parts[0]) || !idPattern.test(parts[1])) throw new Error("올바른 로그 ID가 아닙니다.");
+  if (parts.length !== 2 || !datePattern.test(parts[0]) || !idPattern.test(parts[1])) throw new Error("Not a valid log ID.");
   const root = await realpath(aiLogRoot());
   const directory = path.join(root, ...parts);
-  if (await realpath(directory) !== directory) throw new Error("로그 폴더 밖의 파일은 열 수 없습니다.");
+  if (await realpath(directory) !== directory) throw new Error("Files outside the log folder cannot be opened.");
   return directory;
 }
 export async function listGenerations(cursor = "") {
@@ -52,7 +52,7 @@ async function hydrate(directory: string, value: unknown): Promise<unknown> {
   if (value && typeof value === "object") {
     const reference = value as Record<string, unknown>;
     if (typeof reference.file === "string" && typeof reference.mimeType === "string") {
-      if (!/^image-\d+\.(png|jpg|webp)$/.test(reference.file) || !/^image\/(png|jpeg|webp)$/.test(reference.mimeType)) throw new Error("이미지 로그 형식이 올바르지 않습니다.");
+      if (!/^image-\d+\.(png|jpg|webp)$/.test(reference.file) || !/^image\/(png|jpeg|webp)$/.test(reference.mimeType)) throw new Error("The image log format is invalid.");
       return `data:${reference.mimeType};base64,${(await safeFile(directory, reference.file)).toString("base64")}`;
     }
     return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([key, item]) => [key, await hydrate(directory, item)])));
@@ -69,7 +69,7 @@ export async function readGeneration(key: string) {
 export async function restoreGeneration(key: string) {
   const directory = await logDirectory(key);
   const metadata = await json(directory, "log.json");
-  if (metadata.status !== "success") throw new Error("완료된 AI 생성만 복원할 수 있습니다.");
+  if (metadata.status !== "success") throw new Error("Only completed AI generations can be restored.");
   const recovery = await optionalJson(directory, "recovery.json");
   if (recovery) return recoveredGenerationSchema.parse(await hydrate(directory, recovery));
   const input = requestSchema.parse(await hydrate(directory, await json(directory, "request.json")));

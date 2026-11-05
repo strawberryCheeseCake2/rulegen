@@ -1,0 +1,9 @@
+{
+  "id": "2026-11-01T17-06-47-525Z-revise-recommendation-8585b78d-932b-4800-ba88-b40ac63b3592",
+  "intent": "revise-recommendation",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-11-01T17:06:47.525Z",
+  "status": "failed",
+  "finishedAt": "2026-11-01T17:06:47.531Z",
+  "durationMs": 6
+}

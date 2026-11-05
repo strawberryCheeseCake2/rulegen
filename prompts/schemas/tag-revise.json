@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "transformation": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "effect": {
+          "type": "string",
+          "enum": [
+            "spatial",
+            "stylistic",
+            "temporal"
+          ]
+        },
+        "how": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "penId": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "properties": {
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 60
+              },
+              "how": {
+                "type": "string",
+                "maxLength": 160
+              }
+            },
+            "required": [
+              "label",
+              "value",
+              "how"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "label",
+        "effect",
+        "how",
+        "penId",
+        "properties"
+      ],
+      "additionalProperties": false
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "required": [
+    "transformation",
+    "note"
+  ],
+  "additionalProperties": false
+}

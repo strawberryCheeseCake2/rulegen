@@ -12,9 +12,9 @@ A targeted inspection of ONE brush (a reusable collection in a running p5.js ske
 The SAME recommendation, revised: what it proposes changes so the outcome looks like what the user showed. Keep everything the user did not ask to change.
 
 - `kind`, `nodeId`, `targetId`, `targetIds`, `changes`: as in the recommendation, unless the revision needs another kind (a value change that becomes a transformation change, …); the same rules as the inspection's recommendations: `targetId` an existing transformation, state or transition of node `nodeId` (`""` for `"add-transformation"`), `targetIds` `[]` except for `"transformation"`, `changes` `[]` except for `"value"` (keys from `constraints`).
-- `title`, `detail` (Korean): the revised fix, concretely enough to apply, saying the new outcome (not the history of the revision).
+- `title`, `detail` (English): the revised fix, concretely enough to apply, saying the new outcome (not the history of the revision).
 - `preview`: REQUIRED unless `kind` is `"value"` (then `null`). Start from the current `preview.edits` and change them so the preview now shows the revised outcome; `find` copied EXACTLY from `code` as it is (the current edits are NOT in `code`). Its `marks` show what the revised recommendation changes compared with the brush as it is now (not compared with the old preview); its `handles` stay on the quantities it hinges on (with the adjusted values as their starting values).
-- `reply`: one Korean sentence on what you changed, e.g. "겹친 부분만 크게 키우고 회전은 획 방향을 따르게 바꿨습니다."
+- `reply`: one English sentence on what you changed, e.g. "Enlarged only the overlapping parts and made the rotation follow the stroke direction."
 
 When the user's marks ask for something the recommendation cannot do in this brush, do the closest it can and say so in `reply`.
 

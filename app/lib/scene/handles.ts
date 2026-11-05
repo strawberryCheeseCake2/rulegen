@@ -47,6 +47,29 @@ export function proxyCells(count: number): Box[] {
 }
 /** Properties a proxy frame shows: those with a handle, in transformation order. */
 export const proxyProperties = (transformations: SemanticTransformation[]) => transformations.flatMap(item => item.properties).filter(property => property.handle);
+/** Transformations a proxy frame shows (those with a widget), each with its properties that have one; `hidden` ones left out. */
+export const proxyGroups = (transformations: SemanticTransformation[], hidden: string[] = []) => transformations.filter(item => !hidden.includes(item.id))
+  .map(transformation => ({ transformation, properties: proxyProperties([transformation]) })).filter(group => group.properties.length);
+
+/** Room above each transformation's section for its name. */
+export const SECTION_HEADER = 24;
+const INNER = 8;
+/**
+ * A proxy frame laid out by transformation: one section per transformation (a grid of sections, the last row
+ * stretched to the width), its widgets in a grid inside it shaped to the section. `counts`: widgets per section.
+ */
+export function proxySections(counts: number[]): { box: Box; cells: Box[] }[] {
+  const g = counts.length; if (!g) return [];
+  const cols = g <= 3 ? 1 : g <= 8 ? 2 : 3, rows = Math.ceil(g / cols), h = (H - GAP * (rows + 1)) / rows;
+  return counts.map((count, i) => {
+    const row = Math.floor(i / cols), inRow = Math.min(cols, g - row * cols), w = (W - GAP * (inRow + 1)) / inRow;
+    const box = { x: GAP + (i % cols) * (w + GAP), y: GAP + row * (h + GAP), w, h };
+    const inner = { x: box.x + INNER, y: box.y + SECTION_HEADER, w: box.w - INNER * 2, h: box.h - SECTION_HEADER - INNER };
+    const n = Math.max(1, count), sub = Math.max(1, Math.min(n, Math.round(Math.sqrt(n * inner.w / Math.max(1, inner.h))))), subRows = Math.ceil(n / sub);
+    const cw = (inner.w - INNER * (sub - 1)) / sub, ch = (inner.h - INNER * (subRows - 1)) / subRows;
+    return { box, cells: Array.from({ length: count }, (_, k) => ({ x: inner.x + (k % sub) * (cw + INNER), y: inner.y + Math.floor(k / sub) * (ch + INNER), w: cw, h: ch })) };
+  });
+}
 
 /** What a widget can read: each driven scalar's spec and value, keyed by its path ("a/b"; "" = the property's own value). */
 export type HandleSpec = { type: ScalarValue["type"]; value: ScalarValue["value"]; min?: number; max?: number; step?: number; unit?: string; options?: string[] };

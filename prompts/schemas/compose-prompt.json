@@ -6,10 +6,130 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 2000
+    },
+    "tags": {
+      "maxItems": 16,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "collection",
+              "object"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "parentId": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "strokeIds": {
+            "maxItems": 64,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "members": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "transformations": {
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 60
+                },
+                "effect": {
+                  "type": "string",
+                  "enum": [
+                    "spatial",
+                    "stylistic",
+                    "temporal"
+                  ]
+                },
+                "how": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "penId": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "properties": {
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "label": {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      "value": {
+                        "type": "string",
+                        "maxLength": 60
+                      },
+                      "how": {
+                        "type": "string",
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "label",
+                      "value",
+                      "how"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "label",
+                "effect",
+                "how",
+                "penId",
+                "properties"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "label",
+          "parentId",
+          "strokeIds",
+          "summary",
+          "members",
+          "transformations"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
-    "prompt"
+    "prompt",
+    "tags"
   ],
   "additionalProperties": false
 }

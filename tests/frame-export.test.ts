@@ -47,5 +47,5 @@ test("a frame exports as one JSON: nodes with constraints, each state's full con
   assert.equal(exported.valueFixes[0].key, "orb-2/radius"); assert.equal(exported.recommendations[0].nodeId, "orb-2");
   assert.deepEqual((exported.recommendations[0] as { current?: unknown }).current, { kind: "transformation", targetId: "pulse" }, "an added transformation reads as that transformation");
   const html = renderToStaticMarkup(createElement(FrameJsonDialog, { name: "Sketch 1", data, onClose: () => {}, onCopied: () => {} }));
-  assert.match(html, /state machine 1개\(state 2개\)/); assert.match(html, /Copy JSON/); assert.match(html, /aria-label="Frame JSON"/);
+  assert.match(html, /1 state machine \(2 states\)/); assert.match(html, /Copy JSON/); assert.match(html, /aria-label="Frame JSON"/);
 });

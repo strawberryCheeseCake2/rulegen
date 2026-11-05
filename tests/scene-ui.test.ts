@@ -80,3 +80,62 @@ test("the properties panel has a keyboard-accessible resize handle", async () =>
   assert.match(html, /role="separator" aria-orientation="vertical" aria-label="Resize properties panel" aria-valuemin="280" aria-valuemax="900" tabindex="0"/);
   assert.match(html, /double-click to reset/);
 });
+
+test("Layers lists each node's semantic transformations under it, to pick, drag and delete", () => {
+  const scene = sampleScene();
+  const html = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene, selected: [], hovered: null, busy: false, canUndo: false, canRedo: false, title: "Sketch", canExtract: true,
+    pickedTransformation: { nodeId: "orb", transformationId: "pulse" }, onMoveTransformation: noop, onRemoveTransformation: noop, onPickTransformation: noop } as unknown as LayerPanelProps));
+  for (const node of scene.nodes) {
+    const list = html.match(new RegExp(`aria-label="Constraints of ${node.name}"[\\s\\S]*?</ul>`))?.[0] ?? "";
+    for (const item of node.transformations) { assert.ok(list.includes(item.label || item.id), `${node.name}: ${item.label}`); assert.ok(list.includes(`aria-label="Delete ${item.label || item.id} transformation"`)); }
+  }
+  assert.match(html, /class="layer-transformation picked[^"]*"[^>]*draggable="true"/);
+});
+
+test("a transformation dragged in Layers moves within its node or to another one, ids made unique there and its state values left behind", async () => {
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const ops = await import("../app/lib/scene/panel-ops");
+  const { takeTransformation } = await import("../app/lib/scene/transformations");
+  const { findNode } = await import("../app/lib/scene/graph");
+  const panel = createSketchPanel({ scene: sampleScene() });
+  const ids = (scene: typeof panel.scene, id: string) => findNode(scene, id)!.transformations.map(item => item.id);
+  const reordered = ops.relocateTransformation(panel, "tree", "ink-wash", "tree", "branching-growth");
+  assert.deepEqual(ids(reordered.scene!, "tree"), ["ink-wash", "branching-growth"], "before another in its own node");
+  assert.deepEqual(ops.relocateTransformation(panel, "tree", "branching-growth", "tree", "ink-wash"), {}, "dropped where it is");
+  assert.deepEqual(ops.relocateTransformation(panel, "tree", "ink-wash", "tree", null), {}, "already last");
+  const moved = ops.relocateTransformation(panel, "orb", "pulse", "tree", "ink-wash");
+  assert.deepEqual(ids(moved.scene!, "tree"), ["branching-growth", "pulse", "ink-wash"]); assert.deepEqual(ids(moved.scene!, "orb"), []);
+  assert.ok(findNode(moved.scene!, "orb")!.machine!.states.every(state => !state.values.length), "the orb's states no longer set the properties that left");
+  assert.ok(moved.sceneHistory!.length > panel.sceneHistory.length, "an undoable layer change");
+  // Ids already used in the node it goes to get a suffix.
+  const tree = findNode(panel.scene, "tree")!, pulse = findNode(panel.scene, "orb")!.transformations[0];
+  const clash = takeTransformation({ ...tree, transformations: [...tree.transformations, { ...pulse, properties: [pulse.properties[0]] }] }, pulse, null);
+  assert.deepEqual(clash.transformations.at(-1)!.properties.map(item => item.id), ["radius-2", "speed"]); assert.equal(clash.transformations.at(-1)!.id, "pulse-2");
+  const full = createSketchPanel({ scene: { ...panel.scene, nodes: panel.scene.nodes.map(node => node.id === "tree" ? { ...node, transformations: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, label: "", description: "", properties: [] })) } : node) } });
+  assert.match(ops.relocateTransformation(full, "orb", "pulse", "tree", null).error!, /no room/);
+});
+
+test("a transformation copied in Layers pastes into any layer of any sketch: after the picked one or at the end, with its algorithms, ids unique there", async () => {
+  const { copyTransformation, pasteTransformation } = await import("../app/lib/scene/transfer");
+  const { findNode } = await import("../app/lib/scene/graph");
+  const { algorithmRefs } = await import("../app/lib/scene/algorithms");
+  const scene = sampleScene(), clip = copyTransformation(scene, "tree", "branching-growth");
+  assert.equal(clip.label, "Branching growth"); assert.ok(clip.library.length > 0, "the algorithms it uses go with it");
+  const ids = (next: typeof scene, id: string) => findNode(next, id)!.transformations.map(item => item.id);
+  // Into its own node, after the first: a copy beside it, its ids unique.
+  const own = pasteTransformation(scene, "tree", clip, "branching-growth");
+  assert.deepEqual(ids(own, "tree"), ["branching-growth", "branching-growth-2", "ink-wash"]);
+  assert.deepEqual(findNode(own, "tree")!.transformations[1].properties.map(item => item.id), ["structure-2"]);
+  // Into another node, at the end.
+  assert.deepEqual(ids(pasteTransformation(scene, "tree", clip, null), "tree").at(-1), "branching-growth-2");
+  assert.deepEqual(ids(pasteTransformation(scene, "orb", clip), "orb"), ["pulse", "branching-growth"]);
+  // Into another sketch with no algorithms: the definitions come along and the pasted values point at them.
+  const other = { algorithms: [], nodes: [{ ...findNode(scene, "orb")!, parentId: null, transformations: [], machine: null }] };
+  const pasted = pasteTransformation(other, "orb", clip), value = findNode(pasted, "orb")!.transformations[0].properties[0].value;
+  for (const id of algorithmRefs(value)) assert.ok(pasted.algorithms.some(item => item.id === id), id);
+  const full = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, transformations: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, label: "", description: "", properties: [] })), machine: null } : node) };
+  assert.throws(() => pasteTransformation(full, "orb", clip), /no room/);
+  const html = renderToStaticMarkup(createElement(LayerPanel, { ...handlers, scene, selected: ["orb"], hovered: null, busy: false, canUndo: false, canRedo: false, title: "Sketch", canExtract: true,
+    onCopyTransformation: noop, onPasteTransformation: noop, copied: "Branching growth" } as unknown as LayerPanelProps));
+  assert.match(html, /aria-label="Copy Pulse transformation"/); assert.match(html, /aria-label="Paste Branching growth into Orb"/);
+});

@@ -29,14 +29,14 @@ export function setStateValue(node: SceneNode, stateId: string, propertyId: stri
 export function validateMachine(node: SceneNode, machine: NodeMachine) {
   const ids = machine.states.map(state => state.id), duplicate = (values: string[]) => new Set(values).size !== values.length;
   const properties = new Map(nodeProperties(node).map(property => [property.id, property]));
-  if (duplicate(ids) || !ids.includes(machine.initialState) || duplicate(machine.transitions.map(t => t.id))) throw new Error(`${node.name}의 상태 또는 전이 ID를 확인해주세요.`);
-  if (machine.transitions.some(t => !ids.includes(t.from) || !ids.includes(t.to))) throw new Error(`${node.name}의 전이가 없는 상태를 가리킵니다.`);
+  if (duplicate(ids) || !ids.includes(machine.initialState) || duplicate(machine.transitions.map(t => t.id))) throw new Error(`Check the state and transition IDs of ${node.name}.`);
+  if (machine.transitions.some(t => !ids.includes(t.from) || !ids.includes(t.to))) throw new Error(`A transition of ${node.name} points to a state that does not exist.`);
   for (const state of machine.states) {
-    if (duplicate(state.values.map(item => item.propertyId))) throw new Error(`${node.name} · ${state.label}의 property 값이 중복되었습니다.`);
+    if (duplicate(state.values.map(item => item.propertyId))) throw new Error(`${node.name} · ${state.label} has duplicate property values.`);
     for (const item of state.values) {
       const property = properties.get(item.propertyId);
-      if (!property) throw new Error(`${node.name} · ${state.label}이 없는 property를 참조합니다.`);
-      if (valueShape(property.value) !== valueShape(item.value)) throw new Error(`${node.name} · ${state.label}의 ${property.label} 구조가 기본 property와 다릅니다.`);
+      if (!property) throw new Error(`${node.name} · ${state.label} refers to a property that does not exist.`);
+      if (valueShape(property.value) !== valueShape(item.value)) throw new Error(`In ${node.name} · ${state.label}, ${property.label} has a different structure from the base property.`);
     }
   }
 }
@@ -203,6 +203,67 @@ let rulegenLive = [], rulegenStarted = false;
 // What-if values of single drawn items (by item id), set only while an inspection draws a held step.
 let rulegenItemValues = {};
 const rulegenItemsActive = () => Object.keys(rulegenItemValues).length > 0;
+// Fields the modules are driven by (m.field), by "<root>/<field id>": what-if combs of them, set only while an inspection
+// draws a held step (each stroke pulls the field along its direction within its radius), and their signature (results
+// computed with them are kept apart from the ones without).
+let rulegenFieldEdits = {}, rulegenFieldSig = '';
+function rulegenSetFieldEdits(edits) {
+  const kept = {};
+  for (const key of Object.keys(edits && typeof edits === 'object' ? edits : {})) {
+    const strokes = (Array.isArray(edits[key]) ? edits[key] : []).filter(stroke => stroke && Array.isArray(stroke.points) && stroke.points.length > 1).slice(0, 24).map(stroke => {
+      const points = stroke.points.filter(q => Array.isArray(q) && Number.isFinite(q[0]) && Number.isFinite(q[1])).slice(0, 200), xs = points.map(q => q[0]), ys = points.map(q => q[1]);
+      return { points, radius: Math.max(4, Number(stroke.radius) || 60), strength: Math.max(0, Number(stroke.strength) || 1), box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+    }).filter(stroke => stroke.points.length > 1);
+    if (strokes.length) kept[key] = strokes;
+  }
+  rulegenFieldEdits = kept;
+  const text = JSON.stringify(kept);
+  let hash = 5381; for (let i = 0; i < text.length; i++) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
+  rulegenFieldSig = text === '{}' ? '' : text.length + ':' + hash;
+}
+/** The direction (radians) and strength of a field's value: an angle, [vx, vy] or { x, y }. */
+function rulegenFieldVector(value) {
+  if (typeof value === 'number') return { kind: 'angle', angle: value, mag: 1 };
+  if (Array.isArray(value)) return { kind: 'array', angle: Math.atan2(Number(value[1]), Number(value[0])), mag: Math.hypot(Number(value[0]), Number(value[1])) };
+  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return { kind: 'object', angle: Math.atan2(value.y, value.x), mag: Math.hypot(value.x, value.y) };
+  return null;
+}
+/** A field's value at (x, y) in canvas pixels, combed by the what-if strokes on it; in the form the module's function gives. */
+function rulegenFieldAt(key, fn, x, y) {
+  const base = fn(x, y), strokes = rulegenFieldEdits[key];
+  if (!strokes) return base;
+  const v = rulegenFieldVector(base); if (!v || !Number.isFinite(v.angle)) return base;
+  let sx = Math.cos(v.angle), sy = Math.sin(v.angle);
+  for (const stroke of strokes) {
+    const r = stroke.radius, b = stroke.box;
+    if (x < b[0] - r || x > b[2] + r || y < b[1] - r || y > b[3] + r) continue;
+    for (let i = 1; i < stroke.points.length; i++) {
+      const a = stroke.points[i - 1], c = stroke.points[i], dx = c[0] - a[0], dy = c[1] - a[1], length = Math.hypot(dx, dy); if (length < 1e-6) continue;
+      const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (length * length))), d = Math.hypot(x - a[0] - t * dx, y - a[1] - t * dy);
+      if (d >= r) continue;
+      // Each piece of the stroke pulls in proportion to its length, strongest on the stroke.
+      const w = stroke.strength * (1 - d / r) * (1 - d / r) * length / r * 2;
+      sx += w * dx / length; sy += w * dy / length;
+    }
+  }
+  const angle = Math.atan2(sy, sx);
+  if (v.kind === 'angle') { let turn = angle - v.angle; turn -= Math.round(turn / (2 * Math.PI)) * 2 * Math.PI; return v.angle + turn; }
+  const mag = v.mag || 1;
+  return v.kind === 'array' ? [Math.cos(angle) * mag, Math.sin(angle) * mag] : { x: Math.cos(angle) * mag, y: Math.sin(angle) * mag };
+}
+/** Every field the modules drew with, sampled on a grid over the canvas (direction and strength per cell), by "<root>/<field id>". */
+function rulegenFieldSamples() {
+  const out = {}, w = p.width || 900, h = p.height || 600, cols = 36, rows = 24;
+  for (const inst of rulegenLive) for (const [id, field] of inst.fields) {
+    const cells = [];
+    for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++) {
+      let v = null; try { v = rulegenFieldVector(rulegenFieldAt(field.key, field.fn, (i + .5) * w / cols, (j + .5) * h / rows)); } catch (error) { v = null; }
+      cells.push(v && Number.isFinite(v.angle) ? [Math.round(v.angle * 100) / 100, Math.round((Number.isFinite(v.mag) ? v.mag : 0) * 100) / 100] : [0, 0]);
+    }
+    out[field.key] = { root: inst.entry.root, id, cols, rows, w, h, cells, declared: field.declared || 1 };
+  }
+  return out;
+}
 // One run of the brush's code, recorded as its execution (only while an exploration frame draws a held moment):
 // every checkpoint the code passes (m.trace(label, data): an internal operation and the state it works on) and
 // every drawing call, in the order they run. With a budget, drawing calls after that many events are not drawn,
@@ -214,11 +275,88 @@ let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = nu
 const RULEGEN_MAX_EVENTS = 3000;
 const RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];
 const RULEGEN_VERTICES = { vertex: [0, 1], curveVertex: [0, 1], bezierVertex: [4, 5], quadraticVertex: [2, 3] };
-function rulegenRunStart(budget, roots, show) { rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0 }; rulegenShape = null; rulegenPath = []; rulegenWrapContext(p.drawingContext); }
+// options.points: each drawing call also keeps a few points of what it draws (canvas pixels), to compare runs mark by mark.
+// options.focus: the item followed (m.focus(item) is true for it alone instead of its fallback), so its own steps are taken.
+// options.solo: { item, index }: drawing calls of other items (or, without items, other than that event) are drawn faint.
+function rulegenRunStart(budget, roots, show, options) { const o = options && typeof options === 'object' ? options : {}, solo = o.solo && typeof o.solo === 'object' ? o.solo : null;
+  rulegenRun = { budget: Number.isFinite(budget) ? Math.max(0, Math.round(budget)) : null, total: 0, events: [], label: '', roots: Array.isArray(roots) && roots.length ? roots.map(String) : null, show: Number.isInteger(show) ? show : null, traces: 0, points: Boolean(o.points), lastTrace: null, termsNow: null, testsNow: null, termNames: new Set(),
+    focus: o.focus === null || o.focus === undefined ? null : String(o.focus), item: undefined, solo: solo && (solo.item !== null && solo.item !== undefined || Number.isInteger(solo.index)) ? { item: solo.item === null || solo.item === undefined ? null : String(solo.item), index: Number.isInteger(solo.index) ? solo.index : null } : null };
+  rulegenShape = null; rulegenPath = []; rulegenWrapContext(p.drawingContext); }
+/** Whether the drawing call just recorded is drawn faint: the run follows one mark (solo) and this call is not part of it. */
+function rulegenFaint() { const run = rulegenRun, solo = run && run.solo; if (!solo) return false; return !((solo.item !== null && run.item === solo.item) || solo.index === run.total - 1); }
+/** Draw with the context faint (or as it is). */
+function rulegenDrawFaint(ctx, faint, draw) { if (!faint || !ctx) return draw(); const alpha = ctx.globalAlpha; ctx.globalAlpha = alpha * .12; try { return draw(); } finally { ctx.globalAlpha = alpha; } }
 /** Whether the code running now is recorded (a run, and the module drawing is one of its roots). */
 const rulegenRunOwn = () => Boolean(rulegenRun) && !rulegenShowing && (!rulegenRun.roots || rulegenRun.roots.includes(rulegenRunRoot));
-function rulegenRunEnd() { const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events }; }
+function rulegenRunEnd() { rulegenFlushTerms(); const run = rulegenRun; rulegenRun = null; rulegenShape = null; return run && { total: run.total, events: run.events, terms: [...run.termNames] }; }
+// Inner terms (m.term): what-if scales by "<root>/<name>" (1: as the code makes it; 0: without it), set only while a held step is drawn.
+let rulegenTermScales = {};
+function rulegenSetTermScales(scales) { const kept = {}; for (const key of Object.keys(scales && typeof scales === 'object' ? scales : {})) { const s = Number(scales[key]); if (Number.isFinite(s) && s !== 1) kept[key] = s; } rulegenTermScales = kept; }
+/** A term's value scaled: a number, the numbers of a list, or the x, y of a point; anything else as it is. */
+function rulegenScaleTerm(value, s) {
+  if (typeof value === 'number') return value * s;
+  if (Array.isArray(value)) return value.map(item => typeof item === 'number' ? item * s : item);
+  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return Object.assign({}, value, { x: value.x * s, y: value.y * s });
+  return value;
+}
+/** How big a term's value is: |number|, or the length of a vector ([x, y] or { x, y }). */
+function rulegenTermSize(value) {
+  if (typeof value === 'number') return Math.abs(value);
+  if (Array.isArray(value) && typeof value[0] === 'number') return Math.hypot(value[0], Number(value[1]) || 0);
+  if (value && typeof value === 'object' && Number.isFinite(value.x) && Number.isFinite(value.y)) return Math.hypot(value.x, value.y);
+  return NaN;
+}
+/** The terms computed during the step just finished go on its checkpoint: each one's last value, mean size and how often it was computed. */
+function rulegenFlushTerms() {
+  const run = rulegenRun; if (!run) return;
+  // The decisions (m.test) made during the step go on it too (for a step of one item, only those about that item), at most 8.
+  if (run.testsNow) { const own = run.lastTrace; if (own) { const mine = run.testsNow.filter(t => own.item === undefined || t.item === undefined || t.item === own.item); own.tests = mine.slice(0, 8).map(({ item, ...t }) => t); } run.testsNow = null; }
+  if (!run.termsNow) return;
+  if (run.lastTrace) { const out = {}; for (const name of Object.keys(run.termsNow)) { const t = run.termsNow[name]; out[name] = { last: t.last, mean: t.sized ? rulegenRound(t.sum / t.sized) : null, n: t.n }; } run.lastTrace.terms = out; }
+  run.termsNow = null;
+}
+/** A few points (at most 12, the last kept) of what a drawing call draws, rounded. */
+const rulegenSample = points => { if (!points.length) return []; const step = Math.max(1, Math.ceil(points.length / 11)), kept = points.filter((q, i) => i % step === 0); if (kept[kept.length - 1] !== points[points.length - 1]) kept.push(points[points.length - 1]); return kept.slice(0, 12).map(q => [rulegenRound(q[0]), rulegenRound(q[1])]); };
+/**
+ * How a run with one thing changed differs from the run as it is: how far the mark target (an event index of
+ * the base run) moved (mean distance of its points; the same event, else the nearest of its kind) and whether it is gone,
+ * and the steps (checkpoints, or drawing calls without any) whose data or drawing came out different.
+ */
+function rulegenCompareRuns(base, other, target) {
+  const centre = e => [(e.x || 0) + (e.w || 0) / 2, (e.y || 0) + (e.h || 0) / 2];
+  const gap = (a, b) => { const pa = a.pts && a.pts.length ? a.pts : [centre(a)], pb = b.pts && b.pts.length ? b.pts : [centre(b)], n = Math.min(pa.length, pb.length); if (!n) return 0;
+    let sum = 0; for (let i = 0; i < n; i++) sum += Math.hypot(pa[Math.floor(i * pa.length / n)][0] - pb[Math.floor(i * pb.length / n)][0], pa[Math.floor(i * pa.length / n)][1] - pb[Math.floor(i * pb.length / n)][1]); return sum / n; };
+  let moved = 0, gone = false;
+  // A followed item: all its drawing calls, in order, against the other run's.
+  if (target && typeof target === 'object' && target.item !== undefined && target.item !== null) {
+    const of = run => run.events.filter(e => e.kind !== 'trace' && e.item === String(target.item)), a = of(base), b = of(other);
+    if (a.length && !b.length) gone = true;
+    else if (a.length) { let sum = 0; for (let k = 0; k < a.length; k++) sum += gap(a[k], b[Math.min(b.length - 1, Math.floor(k * b.length / a.length))]); moved = rulegenRound(sum / a.length); }
+  }
+  const mark = Number.isInteger(target) ? base.events.find(e => e.index === target) : null;
+  if (mark) {
+    let same = other.events.find(e => e.index === target && e.kind === mark.kind);
+    if (!same) { const [mx, my] = centre(mark); same = other.events.filter(e => e.kind === mark.kind).sort((a, b) => Math.hypot(centre(a)[0] - mx, centre(a)[1] - my) - Math.hypot(centre(b)[0] - mx, centre(b)[1] - my))[0]; }
+    if (same) moved = rulegenRound(gap(mark, same)); else gone = true;
+  }
+  // Steps, each with its checkpoint and the drawing calls until the next one.
+  const split = run => { const traced = run.events.some(e => e.kind === 'trace'), out = []; for (const e of run.events) { if (e.kind === 'trace' || !traced) out.push({ head: e, draws: traced ? [] : [e] }); else if (out.length) out[out.length - 1].draws.push(e); } return out; };
+  const a = split(base), b = split(other), steps = [];
+  for (let i = 0; i < Math.max(a.length, b.length) && steps.length < 400; i++) {
+    const x = a[i], y = b[i];
+    if (!x || !y) { steps.push(i); continue; }
+    const data = x.head.kind === 'trace' && JSON.stringify(x.head.data) !== JSON.stringify(y.head.data);
+    const drawn = x.draws.length !== y.draws.length || x.draws.some((e, k) => gap(e, y.draws[k]) > .5);
+    if (data || drawn) steps.push(i);
+  }
+  return { moved, gone, steps };
+}
 const rulegenRound = value => Math.round(value * 10) / 10;
+/** Points (in the code's coordinates) as canvas pixels, through the current transform. */
+function rulegenCanvas(points) {
+  const ctx = p.drawingContext, matrix = ctx && typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;
+  return points.filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y)).map(([x, y]) => matrix ? [(matrix.a * x + matrix.c * y + matrix.e) / density, (matrix.b * x + matrix.d * y + matrix.f) / density] : [x, y]);
+}
 /** The box of points (in the code's coordinates) on the canvas, through the current transform. */
 function rulegenBox(points) {
   const ctx = p.drawingContext, matrix = ctx && typeof ctx.getTransform === 'function' ? ctx.getTransform() : null, density = typeof p.pixelDensity === 'function' ? p.pixelDensity() || 1 : 1;
@@ -243,7 +381,7 @@ function rulegenShapePoints(name, a) {
 /** Record one event of the run; whether it is still within the budget (to be drawn). */
 function rulegenEvent(event) {
   const run = rulegenRun; run.total++;
-  if (run.events.length < RULEGEN_MAX_EVENTS) run.events.push(Object.assign({ index: run.total - 1, label: run.label }, event));
+  if (run.events.length < RULEGEN_MAX_EVENTS) run.events.push(Object.assign({ index: run.total - 1, label: run.label }, run.item !== undefined ? { item: run.item } : {}, event));
   return run.budget === null || run.total <= run.budget;
 }
 for (const name of RULEGEN_SHAPES) {
@@ -251,9 +389,9 @@ for (const name of RULEGEN_SHAPES) {
   p[name] = function (...args) {
     // Calls a drawing call makes itself (square → rect) are part of it.
     if (!rulegenRunOwn() || rulegenInOp) return base.apply(p, args);
-    const box = rulegenBox(rulegenShapePoints(name, args)); if (name === 'endShape') rulegenShape = null;
-    if (!rulegenEvent(Object.assign({ kind: name }, box || {}))) return p;
-    rulegenInOp++; try { return base.apply(p, args); } finally { rulegenInOp--; }
+    const points = rulegenShapePoints(name, args), box = rulegenBox(points); if (name === 'endShape') rulegenShape = null;
+    if (!rulegenEvent(Object.assign({ kind: name }, box || {}, rulegenRun.points ? { pts: rulegenSample(rulegenCanvas(points)) } : {}))) return p;
+    rulegenInOp++; try { return rulegenDrawFaint(p.drawingContext, rulegenFaint(), () => base.apply(p, args)); } finally { rulegenInOp--; }
   };
 }
 { const begin = p.beginShape; if (typeof begin === 'function') p.beginShape = function (...args) { if (rulegenRunOwn()) rulegenShape = []; return begin.apply(p, args); }; }
@@ -308,8 +446,8 @@ let rulegenPath = [], rulegenWrapContext = () => {};
         if (!tracking()) return base.apply(ctx, args);
         // A Path2D painted is somewhere the run cannot see: no box.
         const own = PAINT[name](args), points = own ? onCanvas(ctx, own) : args[0] && typeof args[0] === 'object' ? [] : rulegenPath;
-        if (!rulegenEvent(Object.assign({ kind: name }, boxOf(points) || {}))) return;
-        return base.apply(ctx, args);
+        if (!rulegenEvent(Object.assign({ kind: name }, boxOf(points) || {}, rulegenRun.points ? { pts: rulegenSample(points) } : {}))) return;
+        return rulegenDrawFaint(ctx, rulegenFaint(), () => base.apply(ctx, args));
       };
     }
   };
@@ -376,7 +514,7 @@ function rulegenInstance(entry) {
   // reads: value keys read while setup runs (setup re-runs only when one of them changes).
   // memo: results a module computes once per key (not part of m.store, so not copied into inspection steps).
   // memoStack: the m.memo computations running now; each records the values it reads (a value change recomputes it).
-  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [] };
+  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [], fields: new Map() };
   const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
   const m = {
     p,
@@ -392,25 +530,83 @@ function rulegenInstance(entry) {
     state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
     emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
     history() { inst.usesHistory = true; return rulegenGestures; },
+    // field(id, fn): a field the module is driven by (fn(x, y) in canvas pixels gives an angle, [vx, vy] or { x, y }); sample it only
+    // through the function returned, which an inspection can show and comb.
+    field(id, fn) {
+      if (typeof fn !== 'function') throw new Error('m.field needs a function (x, y) => angle or [vx, vy].');
+      // Declared again in the same frame (per mark): the arrows can show only one of them, so the inspection says so.
+      const key = inst.entry.root + '/' + String(id), was = inst.fields.get(String(id));
+      inst.fields.set(String(id), { key, fn, frame: rulegenFrameNo, declared: was && was.frame === rulegenFrameNo && was.fn !== fn ? was.declared + 1 : 1 });
+      return (x, y) => rulegenFieldAt(key, fn, x, y);
+    },
+    // focus(item, fallback): whether the steps of this item are taken (its checkpoints recorded): the item the user follows
+    // in an Execution frame, else the fallback (the representative items). Every drawing call after it belongs to item.
+    focus(item, fallback) {
+      const run = rulegenRun;
+      if (!run || rulegenShowing || (run.roots && !run.roots.includes(inst.entry.root))) return Boolean(fallback);
+      run.item = String(item);
+      return run.focus !== null ? run.item === run.focus : Boolean(fallback);
+    },
+    // term(name, value): one inner term of a computation (a pull, an offset, a noise contribution), returned as it is. An
+    // Execution frame records it on the step that computes it and can scale it (0: without it) to show what it does.
+    term(name, value) {
+      const id = String(name), key = inst.entry.root + '/' + id, scale = rulegenTermScales[key];
+      const out = scale === undefined ? value : rulegenScaleTerm(value, scale), run = rulegenRun;
+      if (run && !rulegenShowing && (!run.roots || run.roots.includes(inst.entry.root))) {
+        run.termNames.add(key);
+        const now = run.termsNow || (run.termsNow = {}), entry = now[id] || (now[id] = { n: 0, sum: 0, sized: 0, last: null }), size = rulegenTermSize(out);
+        entry.n++; if (Number.isFinite(size)) { entry.sum += size; entry.sized++; } entry.last = rulegenThin(rulegenPlain(out, 0), 0);
+      }
+      return out;
+    },
+    // runtime(name, id, value): one quantity of one item as the execution has it now (the reach it is tested with, the size
+    // it is drawn at, its speed, its target), returned as it is. It is kept in the module's store ("@runtime", by name
+    // and item id: { base, value }), so it is part of the execution state of every moment: changed there by hand, that item
+    // alone goes on with the changed value, in every computation that reads it, until what it is computed from changes.
+    runtime(name, id, value) {
+      if (rulegenShowing || !inst.store || typeof inst.store !== 'object') return value;
+      const all = inst.store['@runtime'] && typeof inst.store['@runtime'] === 'object' ? inst.store['@runtime'] : (inst.store['@runtime'] = {});
+      const own = all[name] && typeof all[name] === 'object' ? all[name] : (all[name] = {}), key = String(id), base = rulegenPlain(value, 0), kept = own[key];
+      const same = kept && typeof kept === 'object' && (typeof base === 'number' ? kept.base === base : JSON.stringify(kept.base) === JSON.stringify(base));
+      if (!same) { own[key] = { base, value: base }; return value; }
+      return kept.value;
+    },
+    // test(name, condition, shape, outcomes): a decision the code makes (things overlap, come within reach, cross a threshold, a
+    // chance comes up), returned as it is. An Execution frame records it on the step that makes it, with the geometry tested
+    // (shape: a reach { x, y, r }, a region { x, y, w, h }, a distance { x1, y1, x2, y2 }, a point, or a list of them) and what
+    // each outcome means there (outcomes: [if true, if false], e.g. ["merged!", "not merged"]), and draws it on the picture.
+    test(name, condition, shape, outcomes) {
+      const run = rulegenRun;
+      if (run && !rulegenShowing && (!run.roots || run.roots.includes(inst.entry.root))) {
+        const list = run.testsNow || (run.testsNow = []), said = Array.isArray(outcomes) ? outcomes : [];
+        if (list.length < 40) list.push({ name: String(name).slice(0, 40), pass: Boolean(condition), shape: shape === undefined ? null : rulegenThin(rulegenPlain(shape, 0), 0) ?? null,
+          yes: typeof said[0] === 'string' ? said[0].slice(0, 40) : '', no: typeof said[1] === 'string' ? said[1].slice(0, 40) : '', item: run.item });
+      }
+      return condition;
+    },
     // trace(label, data, show): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.
     // show(): draws the brush as it is after this step (in its own look), for code that draws nothing until later; called right here when this is the step reached.
     trace(label, data, show) {
       if (!rulegenRun || rulegenShowing || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;
       const ordinal = rulegenRun.traces++;
+      rulegenFlushTerms();
       rulegenRun.label = String(label).slice(0, 120);
       // Long lists are thinned (a point list keeps its shape: every k-th point and the last), never dropped.
       let plain = rulegenThin(rulegenPlain(data, 0), 0);
       if (plain !== undefined && JSON.stringify(plain).length > 30000) plain = Object.fromEntries(Object.entries(plain && typeof plain === 'object' ? plain : {}).filter(([, value]) => value === null || typeof value !== 'object'));
       const last = rulegenRun.events[rulegenRun.events.length - 1], box = rulegenDataBox(plain) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});
       rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain, shows: typeof show === 'function' }, box));
+      const own = rulegenRun.events[rulegenRun.events.length - 1]; rulegenRun.lastTrace = own && own.index === rulegenRun.total - 1 ? own : null;
       if (typeof show === 'function' && rulegenRun.show === ordinal) {
         rulegenShowing = true; p.push();
         try { show(); } catch (error) { /* a picture that fails is left out; the run goes on */ } finally { p.pop(); rulegenShowing = false; }
       }
     },
     memo(key, compute) {
-      const k = typeof key === 'string' ? key : JSON.stringify(key);
-      if (k.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
+      const named = typeof key === 'string' ? key : JSON.stringify(key);
+      if (named.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
+      // Computed with a combed field: kept apart from what is computed with the field as it is.
+      const k = rulegenFieldSig ? named + '#field:' + rulegenFieldSig : named;
       // While some item has its own what-if value, results are computed afresh (a cached one may be another item's).
       // During a recorded run too: the run is the code executing, checkpoints included.
       const hit = rulegenItemsActive() || rulegenRun ? undefined : inst.memo.get(k);

@@ -85,11 +85,11 @@ const near = (p: Point, box: { x: number; y: number; w: number; h: number }, pad
 /** The states and transitions an annotation stroke touches, as readable references. */
 export function strokeTargets(layout: MachineLayout, stroke: GraphStroke) {
   const hits: string[] = [];
-  for (const state of layout.states) if (stroke.some(p => near(p, { x: state.x, y: state.y, w: STATE_WIDTH, h: STATE_HEIGHT }, 16))) hits.push(`state ${state.id} 「${state.label}」`);
+  for (const state of layout.states) if (stroke.some(p => near(p, { x: state.x, y: state.y, w: STATE_WIDTH, h: STATE_HEIGHT }, 16))) hits.push(`state ${state.id} “${state.label}”`);
   for (const edge of layout.edges) {
     const samples = Array.from({ length: 21 }, (_, i) => bezier(edge.curve, i / 20));
     const label = { x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - 10, w: edge.labelWidth, h: 20 };
-    if (stroke.some(p => near(p, label, 10) || samples.some(s => Math.hypot(s.x - p.x, s.y - p.y) < 14))) hits.push(`transition ${edge.id} 「${edge.fullLabel}」`);
+    if (stroke.some(p => near(p, label, 10) || samples.some(s => Math.hypot(s.x - p.x, s.y - p.y) < 14))) hits.push(`transition ${edge.id} “${edge.fullLabel}”`);
   }
   return hits.slice(0, 16);
 }

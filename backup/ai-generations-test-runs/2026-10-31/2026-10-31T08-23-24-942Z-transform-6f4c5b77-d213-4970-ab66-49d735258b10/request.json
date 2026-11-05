@@ -1,0 +1,337 @@
+{
+  "intent": "transform",
+  "scene": {
+    "nodes": [
+      {
+        "id": "tree",
+        "kind": "collection",
+        "parentId": null,
+        "name": "Tree",
+        "description": "가지가 갈라지는 나무",
+        "primitive": "group",
+        "region": {
+          "x": 0.3,
+          "y": 0.05,
+          "w": 0.4,
+          "h": 0.9
+        },
+        "transformations": [
+          {
+            "id": "branching-growth",
+            "label": "Branching growth",
+            "description": "재귀 분기",
+            "properties": [
+              {
+                "id": "structure",
+                "label": "Branching",
+                "effect": "spatial",
+                "description": "가지 구조",
+                "value": {
+                  "type": "algorithm",
+                  "algorithmId": "recursive-branch",
+                  "args": [
+                    {
+                      "id": "depth",
+                      "value": {
+                        "type": "number",
+                        "value": 5,
+                        "min": 1,
+                        "max": 9,
+                        "step": 1,
+                        "unit": ""
+                      }
+                    },
+                    {
+                      "id": "length",
+                      "value": {
+                        "type": "algorithm",
+                        "algorithmId": "power-decay",
+                        "args": [
+                          {
+                            "id": "base",
+                            "value": {
+                              "type": "number",
+                              "value": 140,
+                              "min": 20,
+                              "max": 300,
+                              "step": 1,
+                              "unit": "px"
+                            }
+                          },
+                          {
+                            "id": "ratio",
+                            "value": {
+                              "type": "number",
+                              "value": 0.7,
+                              "min": 0.3,
+                              "max": 0.95,
+                              "step": 0.01,
+                              "unit": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "id": "ink-wash",
+            "label": "Ink wash",
+            "description": "먹색",
+            "properties": [
+              {
+                "id": "ink",
+                "label": "Ink",
+                "effect": "stylistic",
+                "description": "가지 색",
+                "value": {
+                  "type": "color",
+                  "value": "#75664e"
+                }
+              }
+            ]
+          }
+        ],
+        "visible": true,
+        "machine": null
+      },
+      {
+        "id": "orb",
+        "kind": "object",
+        "parentId": "tree",
+        "name": "Orb",
+        "description": "누르면 움직이는 원",
+        "primitive": "ellipse",
+        "region": {
+          "x": 0.45,
+          "y": 0.2,
+          "w": 0.1,
+          "h": 0.1
+        },
+        "transformations": [
+          {
+            "id": "pulse",
+            "label": "Pulse",
+            "description": "크기와 이동",
+            "properties": [
+              {
+                "id": "radius",
+                "label": "Radius",
+                "effect": "spatial",
+                "description": "",
+                "value": {
+                  "type": "number",
+                  "value": 24,
+                  "min": 10,
+                  "max": 140,
+                  "step": 1,
+                  "unit": "px"
+                }
+              },
+              {
+                "id": "speed",
+                "label": "Speed",
+                "effect": "temporal",
+                "description": "",
+                "value": {
+                  "type": "number",
+                  "value": 0,
+                  "min": 0,
+                  "max": 120,
+                  "step": 1,
+                  "unit": "px/s"
+                }
+              }
+            ]
+          }
+        ],
+        "visible": true,
+        "machine": {
+          "initialState": "idle",
+          "states": [
+            {
+              "id": "idle",
+              "label": "대기",
+              "description": "클릭을 기다립니다",
+              "values": []
+            },
+            {
+              "id": "moving",
+              "label": "이동",
+              "description": "오른쪽으로 이동",
+              "values": [
+                {
+                  "propertyId": "radius",
+                  "value": {
+                    "type": "number",
+                    "value": 80,
+                    "min": 10,
+                    "max": 140,
+                    "step": 1,
+                    "unit": "px"
+                  }
+                },
+                {
+                  "propertyId": "speed",
+                  "value": {
+                    "type": "number",
+                    "value": 40,
+                    "min": 0,
+                    "max": 120,
+                    "step": 1,
+                    "unit": "px/s"
+                  }
+                }
+              ]
+            }
+          ],
+          "transitions": [
+            {
+              "id": "press",
+              "from": "idle",
+              "to": "moving",
+              "label": "원 클릭",
+              "trigger": "event",
+              "afterMs": 1000
+            },
+            {
+              "id": "settle",
+              "from": "moving",
+              "to": "idle",
+              "label": "정착 후 대기",
+              "trigger": "after",
+              "afterMs": 1200
+            }
+          ]
+        }
+      }
+    ],
+    "algorithms": [
+      {
+        "id": "power-decay",
+        "name": "Power decay",
+        "description": "값 = base * ratio^depth",
+        "params": [
+          {
+            "id": "base",
+            "label": "Base",
+            "description": "첫 세대 길이",
+            "value": {
+              "type": "number",
+              "value": 140,
+              "min": 20,
+              "max": 300,
+              "step": 1,
+              "unit": "px"
+            }
+          },
+          {
+            "id": "ratio",
+            "label": "Ratio",
+            "description": "감소 비율",
+            "value": {
+              "type": "number",
+              "value": 0.7,
+              "min": 0.3,
+              "max": 0.95,
+              "step": 0.01,
+              "unit": ""
+            }
+          }
+        ]
+      },
+      {
+        "id": "recursive-branch",
+        "name": "Recursive branch",
+        "description": "depth 세대까지 둘로 갈라지고 length로 길이를 정합니다.",
+        "params": [
+          {
+            "id": "depth",
+            "label": "Depth",
+            "description": "세대 수",
+            "value": {
+              "type": "number",
+              "value": 6,
+              "min": 1,
+              "max": 9,
+              "step": 1,
+              "unit": ""
+            }
+          },
+          {
+            "id": "length",
+            "label": "Length",
+            "description": "세대별 길이",
+            "value": {
+              "type": "algorithm",
+              "algorithmId": "power-decay",
+              "args": [
+                {
+                  "id": "base",
+                  "value": {
+                    "type": "number",
+                    "value": 140,
+                    "min": 20,
+                    "max": 300,
+                    "step": 1,
+                    "unit": "px"
+                  }
+                },
+                {
+                  "id": "ratio",
+                  "value": {
+                    "type": "number",
+                    "value": 0.7,
+                    "min": 0.3,
+                    "max": 0.95,
+                    "step": 0.01,
+                    "unit": ""
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "id": "sine-wave",
+        "name": "Sine wave",
+        "description": "amplitude*sin(t*cycles)",
+        "params": [
+          {
+            "id": "amplitude",
+            "label": "Amplitude",
+            "description": "",
+            "value": {
+              "type": "number",
+              "value": 20,
+              "min": 0,
+              "max": 80,
+              "step": 1,
+              "unit": "px"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "targetNodeId": "orb",
+  "targetTransformationId": "",
+  "targetPropertyId": "radius",
+  "annotations": [],
+  "revisionSummary": "",
+  "alternative": false,
+  "previous": "",
+  "instruction": "",
+  "compositionPens": [],
+  "compositionStrokes": [],
+  "machineTarget": null,
+  "machineMarks": [],
+  "composePrompt": "",
+  "transformMarks": [],
+  "inspection": null,
+  "explore": null
+}

@@ -28,8 +28,8 @@ export function brushModule(deps: StudioDeps, brush: Brush) {
 /** A copy of the brush's collection at this canvas point, drawn by its module right away. */
 function stamp(deps: StudioDeps, brush: Brush, frameId: string, point: { x: number; y: number }) {
   const panel = deps.panel(frameId), module = brushModule(deps, brush), source = sourceScene(deps, brush);
-  if (!findNode(source, brush.nodeId)) { deps.updatePanel(frameId, { error: `${brush.name} brush의 brush stamp를 찾지 못했습니다.` }); return null; }
-  if (!module) { deps.updatePanel(frameId, { error: `${brush.name} brush의 코드가 아직 없습니다. 원본 프레임의 결과를 먼저 생성해주세요.` }); return null; }
+  if (!findNode(source, brush.nodeId)) { deps.updatePanel(frameId, { error: `Could not find the brush stamp of the ${brush.name} brush.` }); return null; }
+  if (!module) { deps.updatePanel(frameId, { error: `The ${brush.name} brush has no code yet. Generate the result in the original frame first.` }); return null; }
   try {
     const result = stampModule(panel, source, brush.nodeId, module, [{ x: point.x / W, y: point.y / H }], brush.name);
     deps.activate(frameId);
@@ -73,7 +73,7 @@ export function placeBrush(deps: StudioDeps, brush: Brush, frameId: string, poin
   if (panel.loading) return false;
   if (brushNodeIds(panel.scene, brush, frameId).length) {
     if (panel.generated) return true;
-    deps.updatePanel(frameId, { error: `이 프레임에는 이미 ${brush.name} brush가 있습니다. 결과를 먼저 생성하면 brush로 바로 움직여 볼 수 있습니다.` });
+    deps.updatePanel(frameId, { error: `This frame already has the ${brush.name} brush. Generate the result first, then you can move it with the brush right away.` });
     return false;
   }
   return Boolean(stamp(deps, brush, frameId, point));
@@ -100,7 +100,7 @@ export function startBrushGesture(deps: StudioDeps, brush: Brush, frameId: strin
     if (timer) clearInterval(timer);
     timer = null;
     if (ready) deps.updatePanel(frameId, { machinePlaying: true, annotating: false });
-    else deps.toast(`${brush.name} 결과가 준비되지 않아 brush 입력을 전달하지 못했습니다.`);
+    else deps.toast(`The ${brush.name} result is not ready, so the brush input could not be passed on.`);
   };
   const flush = () => {
     if (!ready) ready = running();

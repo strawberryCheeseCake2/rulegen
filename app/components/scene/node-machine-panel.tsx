@@ -59,7 +59,7 @@ export function NodeMachinePanel(props: Props) {
       // The graph is always sent so AI sees what was attached, plus the drawing if any.
       const image = await rasterizeSnapshot(machineSnapshotSvg(layout, draft.strokes, focus)).catch(() => undefined);
       props.onRefine({ target: focus, instruction: draft.instruction.trim(), image, marks: machineMarks(layout, draft.strokes) });
-    } catch (error) { props.onError(error instanceof Error ? error.message : "상태 머신 이미지를 만들지 못했습니다."); }
+    } catch (error) { props.onError(error instanceof Error ? error.message : "Couldn't create the state machine image."); }
     finally { setSending(false); }
   }
   return <div className="state-machine-body node-machine-body">
@@ -75,8 +75,8 @@ export function NodeMachinePanel(props: Props) {
       {props.inspected && (() => { const inspected = props.inspected, label = (id: string | null) => machine.states.find(item => item.id === id)?.label ?? id;
         const via = inspected.transition ? machine.transitions.find(item => item.id === inspected.transition)?.label : null;
         return <div className="machine-inspection-legend" role="note" aria-label="Inspection highlight">
-          {inspected.state && <span><i className="now" />이 단계: {inspected.from && inspected.from !== inspected.state ? `${label(inspected.from)} → ` : ""}<b>{label(inspected.state)}</b>{via ? ` (${via})` : ""}</span>}
-          {(inspected.states.length > 0 || inspected.transitions.length > 0) && <span><i className="related" />Inspection 관련: {[...inspected.states.map(label), ...inspected.transitions.map(id => machine.transitions.find(item => item.id === id)?.label ?? id)].join(", ")}</span>}
+          {inspected.state && <span><i className="now" />This step: {inspected.from && inspected.from !== inspected.state ? `${label(inspected.from)} → ` : ""}<b>{label(inspected.state)}</b>{via ? ` (${via})` : ""}</span>}
+          {(inspected.states.length > 0 || inspected.transitions.length > 0) && <span><i className="related" />Related to inspection: {[...inspected.states.map(label), ...inspected.transitions.map(id => machine.transitions.find(item => item.id === id)?.label ?? id)].join(", ")}</span>}
         </div>; })()}
       <MachineGraph key={node.id} machine={machine} inspected={props.inspected} selectedId={props.editingStateId} target={attached ? target : null} runtimeId={runtimeId} busy={busy} annotating={draft.annotating} strokes={draft.strokes} layout={props.layout}
         onMoveState={(id, point) => props.onLayout?.({ states: { ...props.layout?.states, [id]: point }, labels: { ...props.layout?.labels } })}
@@ -85,15 +85,15 @@ export function NodeMachinePanel(props: Props) {
       {draft.open && <form className="machine-refine-composer" aria-label="Refine state machine" onSubmit={e => { e.preventDefault(); void send(); }}>
         <div className="machine-refine-attachments">
           {attached ? <span className="machine-attachment" title={target?.kind === "transition" && "from" in attached ? `${machine.states.find(s => s.id === attached.from)?.label} → ${machine.states.find(s => s.id === attached.to)?.label}` : attached.id}>
-            <Icon name={target?.kind === "state" ? "grid" : "arrow"} size={12} /><b>{target?.kind === "state" ? "State" : "Transition"}</b>{attached.label} 첨부됨
-            <button type="button" aria-label="Detach" title="첨부 해제 (상태 머신 전체를 다듬기)" onClick={props.onClearTarget}><Icon name="close" size={11} /></button></span>
-            : <span className="machine-attachment machine-attachment-empty">첨부 없음 · 상태 머신 전체를 다듬습니다 (그래프에서 state/transition을 눌러 첨부)</span>}
-          {draft.strokes.length > 0 && <span className="machine-attachment machine-attachment-annotation"><Icon name="pen" size={12} /><b>Annotation</b>{draft.strokes.length}획 첨부됨
-            <button type="button" aria-label="Clear annotation" title="Annotation 지우기" onClick={() => patch({ strokes: [] })}><Icon name="close" size={11} /></button></span>}
+            <Icon name={target?.kind === "state" ? "grid" : "arrow"} size={12} /><b>{target?.kind === "state" ? "State" : "Transition"}</b>{attached.label} attached
+            <button type="button" aria-label="Detach" title="Detach (refine the whole state machine)" onClick={props.onClearTarget}><Icon name="close" size={11} /></button></span>
+            : <span className="machine-attachment machine-attachment-empty">Nothing attached · refines the whole state machine (click a state/transition in the graph to attach)</span>}
+          {draft.strokes.length > 0 && <span className="machine-attachment machine-attachment-annotation"><Icon name="pen" size={12} /><b>Annotation</b>{draft.strokes.length} stroke{draft.strokes.length === 1 ? "" : "s"} attached
+            <button type="button" aria-label="Clear annotation" title="Clear annotation" onClick={() => patch({ strokes: [] })}><Icon name="close" size={11} /></button></span>}
         </div>
-        <textarea autoFocus aria-label="How to refine" value={draft.instruction} maxLength={2000} rows={3} placeholder={attached ? `이 ${targetName}를 어떻게 바꿀지 적어주세요. 예: 놓으면 0.5초 동안 튕기듯 원래 자리로 돌아오게` : "상태 머신을 어떻게 바꿀지 적어주세요. Annotation만 그려도 됩니다."}
+        <textarea autoFocus aria-label="How to refine" value={draft.instruction} maxLength={2000} rows={3} placeholder={attached ? `Describe how to change this ${targetName}. e.g. on release, bounce back to its original spot over 0.5s` : "Describe how to change the state machine. Drawing only an annotation is fine too."}
           onChange={e => patch({ instruction: e.target.value })} onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); } if (e.key === "Escape") patch({ open: false }); }} />
-        <div className="machine-refine-actions"><span>{draft.annotating ? "그래프 위에 그린 annotation도 함께 보냅니다." : "⌘/Ctrl+Enter로 보내기"}</span>
+        <div className="machine-refine-actions"><span>{draft.annotating ? "The annotation drawn on the graph is sent too." : "⌘/Ctrl+Enter to send"}</span>
           <button type="button" onClick={() => patch({ open: false })}>Cancel</button>
           <button type="submit" className="primary" disabled={!canSend}><Icon name="spark" size={13} />{sending || busy ? "Refining…" : refineLabel}</button></div>
       </form>}

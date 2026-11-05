@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { algorithmCallSchema, algorithmSchema, idSchema, propertySchema, sceneBindingSchema, transformationSchema } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
+import { composeTagSchema, MAX_COMPOSE_TAGS, tagTargetSchema } from "./compose-tags";
 import { markStyleSchema, MAX_MARKS, overlaySchema, previewManipulationSchema, recommendationPreviewSchema, recommendationSchema } from "./inspection";
 export const pointSchema = z.object({ x: z.number(), y: z.number() });
 export type Point = z.infer<typeof pointSchema>;
@@ -18,20 +19,21 @@ export const semanticPenSchema = z.object({
   algorithm: z.object({ call: algorithmCallSchema, library: z.array(algorithmSchema).max(24) }).nullable().default(null),
   /** A transformation pen: the transformation as it is (its properties and values) and the algorithms they use. */
   transformation: z.object({ label: z.string().max(100), description: z.string().max(1000), properties: z.array(propertySchema).max(12), library: z.array(algorithmSchema).max(24) }).nullable().default(null),
-}).refine(pen => pen.kind === "interaction" || (pen.kind === "transformation" ? pen.transformation : pen.algorithm), { message: "펜에 담긴 알고리즘이나 transformation이 없습니다." });
+}).refine(pen => pen.kind === "interaction" || (pen.kind === "transformation" ? pen.transformation : pen.algorithm), { message: "The pen holds no algorithm or transformation." });
 export type SemanticPen = z.infer<typeof semanticPenSchema>;
 export const compositionStrokeSchema = z.object({ id: z.string().min(1).max(80), tool: z.enum(["pencil", "semantic", "interaction", "eraser"]), color: z.string().max(80), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(128), semanticPenId: z.string().max(80).nullable() });
 export const imageSchema = z.string().max(8_000_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/);
 export const MAX_RESULT_STROKES = 128;
 export const annotationSchema = z.object({ id: z.string().min(1).max(80), points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(2).max(600) });
 export const clarificationSchema = z.object({ clarification: z.string().trim().min(1).max(2000) });
-export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(1).max(2000) });
+/** compose-prompt, as the app takes it: the prompt and the tags of what it read in the sketch. */
+export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(1).max(2000), tags: z.array(composeTagSchema).max(MAX_COMPOSE_TAGS).default([]) });
 /** machine-refine result: the scene with the refined machine plus the updated Compose prompt. */
 export const machineRefineResultSchema = z.object({ scene: sceneSchema, composePrompt: z.string().max(2000) });
 /** split, as the app takes it: the parts of a transformation (each a transformation of its own) and the algorithms they use. */
 export const splitResultSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms: z.array(algorithmSchema).max(64), parts: z.array(transformationSchema).max(5) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
-export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern", "explore", "split", "revise-recommendation", "execution-recommendation"] as const;
+export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern", "explore", "split", "revise-recommendation", "execution-recommendation", "tag-revise"] as const;
 const inspectScalar = z.union([z.number(), z.string().max(200), z.boolean()]);
 /** Targeted inspection input: the brush's nodes, its constraint rows and the recorded steps. */
 export const inspectionInputSchema = z.object({
@@ -96,11 +98,15 @@ export type MachineTarget = z.infer<typeof machineTargetSchema>;
 export const machineMarkSchema = z.object({ points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64), targets: z.array(z.string().max(200)).max(16) });
 export type MachineMark = z.infer<typeof machineMarkSchema>;
 export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: sceneSchema.nullable().default(null), targetNodeId: idSchema.or(z.literal("")).default(""), targetTransformationId: idSchema.or(z.literal("")).default(""), targetPropertyId: idSchema.or(z.literal("")).default(""), image: imageSchema.optional(), resultImage: imageSchema.optional(), annotations: z.array(annotationSchema).max(MAX_RESULT_STROKES).default([]), revisionSummary: z.string().max(1500).default(""), alternative: z.boolean().default(false), previous: z.string().max(MAX_CODE_LENGTH).default(""), instruction: z.string().max(6000).default(""), compositionPens: z.array(semanticPenSchema).max(500).default([]), compositionStrokes: z.array(compositionStrokeSchema).max(500).default([]), machineTarget: machineTargetSchema.nullable().default(null), machineImage: imageSchema.optional(), machineMarks: z.array(machineMarkSchema).max(64).default([]), composePrompt: z.string().max(2000).default(""),
+  /** Compose from the tags on the sketch (what the AI read there) in place of, or with, the text prompt. */
+  composeTags: z.array(composeTagSchema).max(MAX_COMPOSE_TAGS).default([]),
+  /** tag-revise: the tag and which of its transformations to change. */
+  tagTarget: tagTargetSchema.nullable().default(null),
   /** Annotation strokes the user drew on the frame for a transform request (normalized; also drawn on the image). */
   transformMarks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(64)).max(64).default([]), inspection: inspectionInputSchema.nullable().default(null), explore: exploreInputSchema.nullable().default(null), }).superRefine((input, ctx) => {
   const ids = input.compositionPens.map(p => p.id);
-  if (new Set(ids).size !== ids.length || input.compositionStrokes.some(s => (s.tool === "semantic" || s.tool === "interaction") && (!s.semanticPenId || !ids.includes(s.semanticPenId)))) ctx.addIssue({ code: "custom", message: "펜 의미와 획을 연결하지 못했습니다." });
-  if (input.compositionStrokes.some(s => s.tool === "interaction" && input.compositionPens.find(p => p.id === s.semanticPenId)?.kind !== "interaction")) ctx.addIssue({ code: "custom", message: "Interaction annotation과 펜 의미를 확인해주세요." });
+  if (new Set(ids).size !== ids.length || input.compositionStrokes.some(s => (s.tool === "semantic" || s.tool === "interaction") && (!s.semanticPenId || !ids.includes(s.semanticPenId)))) ctx.addIssue({ code: "custom", message: "Could not link the strokes to their pen meanings." });
+  if (input.compositionStrokes.some(s => s.tool === "interaction" && input.compositionPens.find(p => p.id === s.semanticPenId)?.kind !== "interaction")) ctx.addIssue({ code: "custom", message: "Check the interaction annotations and pen meanings." });
 });
 export type GeneratedCode = z.infer<typeof generatedSchema>;
 export type Stroke = { points: Point[]; color: string; width: number; opacity: number; tool: "pen" | "eraser"; semanticPen?: SemanticPen };

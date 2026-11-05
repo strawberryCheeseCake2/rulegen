@@ -51,9 +51,9 @@ test("local coordinates and function parameters can share browser-global names",
 });
 test("a local top binding does not permit browser globals or unsafe member access", () => {
   for (const extra of ["top.postMessage('x','*')", "parent.postMessage('x','*')", "window.top", "globalThis.top", "self.top", "this.top", "p['top']", "p.constructor", "p['constructor']", "eval('1')", "Function('return 1')"]) {
-    assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`), /지원하지 않는/);
+    assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`), /Unsupported/);
   }
-  assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /API: top/);
+  assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /Unsupported API in the code: top/);
   // A .top property of an ordinary object (a rect, a box) is data.
   assert.doesNotThrow(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const rect={top:3};p.rect(0,rect.top,1,rect?.top);};"));
 });

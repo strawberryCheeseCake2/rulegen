@@ -111,7 +111,7 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
       <svg className="machine-edges" width={layout.width} height={layout.height} role="img" aria-label="Semantic state transitions"><defs><marker id={marker} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0L7 3.5L0 7" fill="context-stroke" /></marker></defs>{layout.edges.map(edge => {
         const active = edge.from === runtimeId, picked = pickedTransition === edge.id, path = curvePath(edge.curve);
         const taken = inspected?.transition === edge.id, related = Boolean(inspected?.transitions.includes(edge.id));
-        return <g key={edge.id} className={`machine-transition-edge ${active ? "active-transition" : ""} ${picked ? "selected-transition" : ""} ${taken ? "inspected-transition" : ""} ${related ? "related-transition" : ""}`}><title>{taken ? `${edge.description} · 이 단계에서 일어난 전이` : edge.description}</title>
+        return <g key={edge.id} className={`machine-transition-edge ${active ? "active-transition" : ""} ${picked ? "selected-transition" : ""} ${taken ? "inspected-transition" : ""} ${related ? "related-transition" : ""}`}><title>{taken ? `${edge.description} · transition taken at this step` : edge.description}</title>
           <path d={path} className={`transition-path ${edge.event ? "event-edge" : ""} ${active ? "active-edge" : ""}`} markerEnd={`url(#${marker})`} />
           <path d={path} className="transition-hit" data-transition-id={edge.id} />
           <g className={`transition-label ${moving?.kind === "label" && moving.id === edge.id ? "dragging" : ""}`} data-transition-id={edge.id} transform={`translate(${edge.labelPoint.x},${edge.labelPoint.y})`} role="button" tabIndex={0} aria-pressed={picked} aria-label={`Select transition ${edge.fullLabel}`}
@@ -120,7 +120,7 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
         </g>;
       })}</svg>
       {layout.states.map(state => <button key={state.id} data-state-id={state.id} className={`machine-state ${selectedId === state.id ? "selected-state" : ""} ${pickedState === state.id ? "attached-state" : ""} ${runtimeId === state.id ? "current-state" : ""} ${inspected?.state === state.id ? "inspected-state" : ""} ${inspected?.from === state.id && inspected.state !== state.id ? "inspected-from" : ""} ${inspected?.states.includes(state.id) ? "related-state" : ""} ${moving?.kind === "state" && moving.id === state.id ? "dragging" : ""}`} style={{ left: state.x, top: state.y }}
-        title={inspected?.state === state.id ? "Inspection: 이 단계의 state" : inspected?.states.includes(state.id) ? "Inspection과 관련된 state" : undefined}
+        title={inspected?.state === state.id ? "Inspection: state at this step" : inspected?.states.includes(state.id) ? "State related to the inspection" : undefined}
         aria-label={`Select state ${state.label}`} aria-pressed={pickedState === state.id} disabled={busy}
         // Pointer clicks are handled on release (a drag moves instead); this keeps keyboard activation.
         onClick={e => { if (e.detail === 0 && !annotating) onState(state.id); }}>

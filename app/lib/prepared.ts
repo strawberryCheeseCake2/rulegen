@@ -21,7 +21,7 @@ export function prepareProgram(code: string): Promise<string> {
   const running = pending.get(key);
   if (running) return running;
   const request = fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ intent: "prepare", code }) })
-    .then(async response => { const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || "코드를 실행하지 못했습니다."); rememberPrepared(code, result.executable); return result.executable as string; })
+    .then(async response => { const result = await response.json(); if (!response.ok || result.error) throw new Error(result.error || "Could not run the code."); rememberPrepared(code, result.executable); return result.executable as string; })
     .finally(() => pending.delete(key));
   pending.set(key, request);
   return request;

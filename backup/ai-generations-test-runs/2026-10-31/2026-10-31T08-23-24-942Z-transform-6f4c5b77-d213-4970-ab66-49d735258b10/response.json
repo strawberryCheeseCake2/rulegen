@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"algorithms\":[],\"transformation\":{\"id\":\"pulse\",\"label\":\"Wobble\",\"description\":\"\",\"properties\":[{\"id\":\"other\",\"label\":\"Radius\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":1,\"min\":0,\"max\":2,\"step\":1,\"unit\":\"\"}}]}}"
+        }
+      ]
+    }
+  ]
+}

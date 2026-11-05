@@ -7,9 +7,9 @@ export const findAlgorithm = (library: Algorithm[], id: string) => library.find(
 /** A new call of an algorithm using its parameter defaults (recursively). */
 export function instantiate(library: Algorithm[], algorithmId: string, depth = 1, stack: string[] = []): AlgorithmCall {
   const algorithm = findAlgorithm(library, algorithmId);
-  if (!algorithm) throw new Error(`알고리즘 ${algorithmId}을 찾지 못했습니다.`);
-  if (stack.includes(algorithmId)) throw new Error("알고리즘이 자기 자신을 파라미터로 참조합니다.");
-  if (depth > MAX_VALUE_DEPTH) throw new Error(`알고리즘은 최대 ${MAX_VALUE_DEPTH}단계까지 중첩할 수 있습니다.`);
+  if (!algorithm) throw new Error(`Could not find algorithm ${algorithmId}.`);
+  if (stack.includes(algorithmId)) throw new Error("An algorithm refers to itself as a parameter.");
+  if (depth > MAX_VALUE_DEPTH) throw new Error(`Algorithms can be nested at most ${MAX_VALUE_DEPTH} levels deep.`);
   return { type: "algorithm", algorithmId, args: algorithm.params.map(param => ({ id: param.id, value: isAlgorithm(param.value) ? instantiate(library, param.value.algorithmId, depth + 1, [...stack, algorithmId]) : structuredClone(param.value) })) };
 }
 
@@ -64,21 +64,21 @@ export function importAlgorithms(library: Algorithm[], incoming: Algorithm[]) {
 /** Reject dangling references, mismatched arguments and self-referencing defaults. */
 export function validateAlgorithms(library: Algorithm[]) {
   const ids = library.map(algorithm => algorithm.id);
-  if (new Set(ids).size !== ids.length) throw new Error("알고리즘 ID가 중복되었습니다.");
+  if (new Set(ids).size !== ids.length) throw new Error("Duplicate algorithm ID.");
   for (const algorithm of library) {
     const params = algorithm.params.map(param => param.id);
-    if (new Set(params).size !== params.length) throw new Error(`${algorithm.name}의 파라미터 ID가 중복되었습니다.`);
+    if (new Set(params).size !== params.length) throw new Error(`${algorithm.name} has duplicate parameter IDs.`);
     for (const param of algorithm.params) validateCall(library, param.value);
     instantiate(library, algorithm.id);
   }
 }
 export function validateCall(library: Algorithm[], value: Value, depth = 0) {
   if (!isAlgorithm(value)) return;
-  if (depth >= MAX_VALUE_DEPTH) throw new Error(`알고리즘은 최대 ${MAX_VALUE_DEPTH}단계까지 중첩할 수 있습니다.`);
+  if (depth >= MAX_VALUE_DEPTH) throw new Error(`Algorithms can be nested at most ${MAX_VALUE_DEPTH} levels deep.`);
   const algorithm = findAlgorithm(library, value.algorithmId);
-  if (!algorithm) throw new Error(`알고리즘 ${value.algorithmId}을 라이브러리에서 찾지 못했습니다.`);
+  if (!algorithm) throw new Error(`Could not find algorithm ${value.algorithmId} in the library.`);
   const args = value.args.map(arg => arg.id);
-  if (new Set(args).size !== args.length || args.length !== algorithm.params.length || algorithm.params.some(param => !args.includes(param.id))) throw new Error(`${algorithm.name}의 인자가 정의와 맞지 않습니다.`);
+  if (new Set(args).size !== args.length || args.length !== algorithm.params.length || algorithm.params.some(param => !args.includes(param.id))) throw new Error(`The arguments of ${algorithm.name} do not match its definition.`);
   for (const arg of value.args) validateCall(library, arg.value, depth + 1);
 }
 

@@ -7,8 +7,8 @@ export const THUMB_WIDTH = 216, THUMB_HEIGHT = 56;
 const CANVAS_WIDTH = 900, CANVAS_HEIGHT = 600;
 
 /** The part of the 900×600 result to show (canvas pixels): the node's box with some room, in the thumbnail's shape, inside the canvas. */
-export function thumbnailCrop(region: Region) {
-  const aspect = THUMB_WIDTH / THUMB_HEIGHT, room = 1.24;
+export function thumbnailCrop(region: Region, aspect = THUMB_WIDTH / THUMB_HEIGHT) {
+  const room = 1.24;
   const cx = (region.x + region.w / 2) * CANVAS_WIDTH, cy = (region.y + region.h / 2) * CANVAS_HEIGHT;
   let w = Math.max(24, region.w * CANVAS_WIDTH * room), h = Math.max(24, region.h * CANVAS_HEIGHT * room);
   if (w / h < aspect) w = h * aspect; else h = w / aspect;
@@ -26,10 +26,10 @@ export function blank(alpha: Uint8ClampedArray) {
 }
 
 /** The thumbnail (a small JPEG data URL) of a result image, or null when that part of it is empty. */
-export async function captureThumbnail(image: string, region: Region): Promise<string | null> {
+export async function captureThumbnail(image: string, region: Region, size = { w: THUMB_WIDTH, h: THUMB_HEIGHT }): Promise<string | null> {
   const picture = new Image(); picture.src = image; await picture.decode();
-  const scale = picture.naturalWidth / CANVAS_WIDTH, crop = thumbnailCrop(region);
-  const canvas = document.createElement("canvas"); canvas.width = THUMB_WIDTH * 2; canvas.height = THUMB_HEIGHT * 2;
+  const scale = picture.naturalWidth / CANVAS_WIDTH, crop = thumbnailCrop(region, size.w / size.h);
+  const canvas = document.createElement("canvas"); canvas.width = size.w * 2; canvas.height = size.h * 2;
   const ctx = canvas.getContext("2d"); if (!ctx) return null;
   ctx.drawImage(picture, crop.x * scale, crop.y * scale, crop.w * scale, crop.h * scale, 0, 0, canvas.width, canvas.height);
   if (blank(ctx.getImageData(0, 0, canvas.width, canvas.height).data)) return null;

@@ -4,6 +4,7 @@ import type { InspectionState } from "./inspection";
 import { emptyAnnotationHistory, type AnnotationHistory } from "./annotation-history";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
+import { composeTagSchema, MAX_COMPOSE_TAGS } from "./compose-tags";
 import { refreshProgram } from "./scene/machines";
 import { liveSceneSource } from "./scene/live";
 import type { SceneProposal } from "./scene/revisions";
@@ -19,7 +20,12 @@ export const sketchPanelSchema = z.object({
   exampleOf: z.object({ frameId: z.string().max(80), nodeId: z.string().max(80), transformationId: z.string().max(80) }).nullable().default(null),
   analysisRevision: z.number().default(-1), generated: generatedSchema.nullable().default(null),
   codeDraft: z.string().max(MAX_CODE_LENGTH).optional(),
-  composePrompt: z.string().max(2000).default(""), generationMode: z.enum(["extract", "compose"]).default("extract"),
+  composePrompt: z.string().max(2000).default(""),
+  /** What the AI read in the sketch when it wrote the Compose prompt (tags on the sketch), and the sketch revision it read. */
+  composeTags: z.array(composeTagSchema).max(MAX_COMPOSE_TAGS).default([]), composeTagsRevision: z.number().default(-1),
+  /** Whether Compose sends the text prompt; off, it composes from the tags on the sketch alone. */
+  composeWithText: z.boolean().default(true),
+  generationMode: z.enum(["extract", "compose"]).default("extract"),
   instruction: z.string().max(2000).default(""),
   /** Where the user moved each node's state boxes and transition labels in the State Machine panel. */
   machineLayouts: z.record(z.string().max(80), z.object({ states: z.record(z.string().max(80), point), labels: z.record(z.string().max(80), point) })).default({}),

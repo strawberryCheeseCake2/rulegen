@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { proxyDocument, type ProxyCell } from "../lib/proxy-runtime";
-import { CELL_HEADER, handleSpecs, handleTransformations, proxyCells, proxyProperties } from "../lib/scene/handles";
+import { proxyDocument, proxyTint, type ProxyCell, type ProxySection } from "../lib/proxy-runtime";
+import { CELL_HEADER, handleLeaves, handleSpecs, handleTransformations, proxyGroups, proxySections } from "../lib/scene/handles";
 import type { ScalarValue, SceneNode, SemanticTransformation } from "../lib/scene/schema";
 import { Icon } from "./icons";
 
-type PreviewProps = { cells: ProxyCell[];
+type PreviewProps = { cells: ProxyCell[]; /** Each transformation's section around its widgets. */ sections?: ProxySection[];
   /** The proxy frame's board id: pressing outside the widgets (cell titles, gaps) drags the frame. */
   frameId?: string;
   /** A widget set one of its property's scalars (path "a/b"; "" = the property's own value). */
@@ -16,17 +16,17 @@ type PreviewProps = { cells: ProxyCell[];
  * Runs a proxy frame's widgets in an isolated iframe. It reloads only when the
  * widgets themselves (code, names, layout) change; new values are sent in.
  */
-export function ProxyPreview({ cells, frameId, onSet, onError }: PreviewProps) {
+export function ProxyPreview({ cells, sections = [], frameId, onSet, onError }: PreviewProps) {
   const frame = useRef<HTMLIFrameElement>(null), token = useRef(""), ready = useRef(false);
-  const current = useRef({ cells, onSet, onError }); current.current = { cells, onSet, onError };
+  const current = useRef({ cells, sections, onSet, onError }); current.current = { cells, sections, onSet, onError };
   const [document, setDocument] = useState("");
-  const structure = JSON.stringify(cells.map(cell => [cell.id, cell.label, cell.hint, cell.effect, cell.box, cell.code, Object.keys(cell.specs)]));
+  const structure = JSON.stringify([cells.map(cell => [cell.id, cell.label, cell.hint, cell.effect, cell.box, cell.code, Object.keys(cell.specs)]), sections]);
   const values = JSON.stringify(Object.fromEntries(cells.map(cell => [cell.id, cell.specs])));
   const sendValues = () => { if (ready.current) frame.current?.contentWindow?.postMessage({ channel: "rulegen-proxy-control", token: token.current, type: "values", cells: JSON.parse(values) }, "*"); };
   useEffect(sendValues, [values]);
   useEffect(() => {
     const next = crypto.randomUUID(); token.current = next; ready.current = false;
-    setDocument(proxyDocument(next, window.location.origin, current.current.cells));
+    setDocument(proxyDocument(next, window.location.origin, current.current.cells, current.current.sections));
     const receive = (event: MessageEvent) => {
       const data = event.data;
       if (event.source !== frame.current?.contentWindow || data?.channel !== "rulegen-proxy" || data.token !== next) return;
@@ -55,14 +55,55 @@ export function ProxyPreview({ cells, frameId, onSet, onError }: PreviewProps) {
   </div>;
 }
 
-/** The cells a node's proxy frame runs: its properties with a handle (state values applied), laid out in a grid. */
-export function proxyCellsFor(transformations: SemanticTransformation[]): ProxyCell[] {
-  const properties = proxyProperties(transformations), boxes = proxyCells(properties.length);
-  return properties.map((property, i) => {
-    const handle = property.handle!, specs = handleSpecs(property);
-    return { id: property.id, label: property.label, hint: handle.hint, effect: property.effect, box: boxes[i], code: handle.prepared,
-      specs: Object.fromEntries(handle.paths.map(path => path.join("/")).filter(key => key in specs).map(key => [key, specs[key]])) };
-  });
+/**
+ * What a proxy frame runs: properties with a handle (state values applied), one section per transformation —
+ * only `only`'s for a transformation's own frame, which then has the whole frame — each numbered among the
+ * node's transformations that have widgets (the same number and color in every frame of the node).
+ */
+export function proxyLayoutFor(transformations: SemanticTransformation[], only?: string): { cells: ProxyCell[]; sections: ProxySection[] } {
+  const all = proxyGroups(transformations), numbers = new Map(all.map((group, i) => [group.transformation.id, i + 1]));
+  const groups = only ? all.filter(group => group.transformation.id === only) : all, layout = proxySections(groups.map(group => group.properties.length));
+  return {
+    sections: groups.map((group, i) => ({ id: group.transformation.id, label: group.transformation.label, box: layout[i].box, number: numbers.get(group.transformation.id)! })),
+    cells: groups.flatMap((group, i) => group.properties.map((property, k) => {
+      const handle = property.handle!, specs = handleSpecs(property);
+      return { id: property.id, label: property.label, hint: handle.hint, effect: property.effect, box: layout[i].cells[k], code: handle.prepared,
+        specs: Object.fromEntries(handle.paths.map(path => path.join("/")).filter(key => key in specs).map(key => [key, specs[key]])) };
+    })),
+  };
+}
+export const proxyCellsFor = (transformations: SemanticTransformation[], only?: string) => proxyLayoutFor(transformations, only).cells;
+/** A transformation's number and colors in its node's proxy frames (null: it has no widgets). */
+export function proxyNumber(transformations: SemanticTransformation[], transformationId: string | undefined) {
+  const number = proxyGroups(transformations).findIndex(group => group.transformation.id === transformationId) + 1;
+  return number ? { number, tint: proxyTint(number) } : null;
+}
+/** A transformation still has a property a widget could drive but has none yet. */
+const lacksHandles = (item: SemanticTransformation) => item.properties.some(property => handleLeaves(property).length > 0 && !property.handle);
+
+type Sibling = { id: string; transformationId?: string; hidden?: boolean };
+/**
+ * A proxy frame's header: one chip per frame of its node (each a transformation, in its color and number): it
+ * shows or hides that frame on the board (this frame's is marked). A transformation without widgets is a dashed
+ * chip that designs them. Then hide/show every frame of the node, and design every transformation still missing.
+ */
+export function ProxyFrameBar({ node, transformations, current, siblings, busy, onHide, onDesign, onDesignAll, onRedesignAll }: { node: SceneNode | undefined; transformations: SemanticTransformation[];
+  current: string; siblings: Sibling[]; busy: boolean; onHide: (ids: string[], hide: boolean) => void; onDesign: (transformationId: string) => void; onDesignAll: () => void;
+  /** Make every handle of the node again. */ onRedesignAll?: () => void }) {
+  if (!node) return null;
+  const framed = siblings.flatMap(frame => { const item = transformations.find(entry => entry.id === frame.transformationId), at = proxyNumber(transformations, frame.transformationId); return item && at ? [{ frame, item, ...at }] : []; });
+  const missing = handleTransformations(node).filter(lacksHandles), shown = siblings.filter(frame => !frame.hidden);
+  return <span className="proxy-bar" role="group" aria-label={`Proxy frames of ${node.name}`}>
+    {framed.map(({ frame, item, number, tint: [fill, line, ink] }) => { const off = Boolean(frame.hidden), here = frame.id === current;
+      return <button key={frame.id} className={`proxy-chip${off ? " off" : ""}${here ? " here" : ""}`} aria-pressed={!off} style={{ background: off ? undefined : fill, borderColor: line, color: ink }}
+        title={`${off ? "Show" : "Hide"} the proxy frame of ${item.label}${here ? " (this frame)" : ""}`} onClick={e => { e.stopPropagation(); onHide([frame.id], !off); }}>
+        <Icon name={off ? "eye-off" : "eye"} size={11} /><b>{number}</b>{item.label}</button>; })}
+    {missing.filter(item => !framed.some(entry => entry.item.id === item.id)).map(item => <button key={item.id} className="proxy-chip todo" disabled={busy}
+      title={`AI makes a direct manipulation interface for each property of ${item.label}`} onClick={e => { e.stopPropagation(); onDesign(item.id); }}>+ {item.label}</button>)}
+    {siblings.length > 1 && <button className="proxy-chip all" title={`Hide every proxy frame of ${node.name} (the handles are kept; show them again from the target frame)`} onClick={e => { e.stopPropagation(); onHide(shown.map(frame => frame.id), true); }}><Icon name="eye-off" size={11} />Hide all</button>}
+    {missing.length > 1 && <button className="proxy-chip all" disabled={busy} title={`AI makes handles for every transformation still without them (${missing.length}), one request each`} onClick={e => { e.stopPropagation(); onDesignAll(); }}><Icon name="spark" size={11} />Design all ({missing.length})</button>}
+    {onRedesignAll && framed.length > 0 && <button className="proxy-chip all" disabled={busy} title={`AI makes every handle of ${node.name} again (${framed.length} transformation(s)), one request each, seeing the current widgets; undo takes each back`} onClick={e => { e.stopPropagation(); onRedesignAll(); }}><Icon name="spark" size={11} />Redesign all</button>}
+  </span>;
 }
 
 type FrameProps = { /** The proxy frame's board id (to drag it by its body). */ frameId?: string; node: SceneNode | undefined; transformations: SemanticTransformation[]; targetName: string; busy: string; /** Using the frame works on its node (its frame active, the node selected). */ onActivate?: () => void;
@@ -70,19 +111,26 @@ type FrameProps = { /** The proxy frame's board id (to drag it by its body). */ 
   bakedInput?: { onUpdate: () => void };
   onSet: PreviewProps["onSet"]; onError: PreviewProps["onError"];
   /** Design the widgets of one transformation (a property's own is designed from its card). */
-  onDesign: (transformationId: string) => void };
-/** A proxy frame's content: the node's widgets, or what to do when there are none. */
-export function ProxyFrame({ frameId, node, transformations, targetName, busy, onSet, onError, onDesign, onActivate, bakedInput }: FrameProps) {
-  if (!node) return <div className="proxy-frame-surface" data-frame-handle={frameId}><div className="frame-empty"><Icon name="target" size={30} /><strong>대상 노드가 없습니다.</strong><span>{targetName}에서 이 노드가 삭제되었습니다. 이 proxy frame을 지워도 됩니다.</span></div></div>;
-  const cells = proxyCellsFor(transformations);
+  onDesign: (transformationId: string) => void;
+  /** The transformation this frame runs (none: the node's, by transformation). */
+  only?: string;
+  /** Design every transformation still without widgets. */
+  onDesignAll?: () => void };
+/** A proxy frame's content: the widgets of its transformation (or node), or what to do when there are none. */
+export function ProxyFrame({ frameId, node, transformations, targetName, busy, onSet, onError, onDesign, onActivate, bakedInput, only, onDesignAll }: FrameProps) {
+  if (!node) return <div className="proxy-frame-surface" data-frame-handle={frameId}><div className="frame-empty"><Icon name="target" size={30} /><strong>The target node is gone.</strong><span>This node was deleted from {targetName}. You can delete this proxy frame.</span></div></div>;
+  const { cells, sections } = proxyLayoutFor(transformations, only), designable = handleTransformations(node).filter(item => !only || item.id === only);
+  const own = only ? transformations.find(item => item.id === only) : undefined;
   // Without widgets the whole surface (but its button) moves the frame.
   return <div className="proxy-frame-surface" data-frame-handle={cells.length ? undefined : frameId} onPointerDownCapture={onActivate}>
-    {cells.length ? <ProxyPreview cells={cells} frameId={frameId} onSet={onSet} onError={onError} />
-      : <div className="frame-empty"><Icon name="target" size={30} /><strong>{node.name}의 proxy frame</strong>
-        <span>property마다 그 의미에 맞는 direct manipulation 인터페이스를 AI가 만들어 여기에 놓습니다. 여기서 조작하면 {targetName}의 결과가 바로 바뀝니다. transformation 하나씩, 또는 property 카드의 ◎로 property 하나씩 만듭니다.</span>
-        <div className="proxy-design-list">{handleTransformations(node).map(item => <button key={item.id} disabled={Boolean(busy)} title={`AI makes a direct manipulation interface for each property of ${item.label}`} onClick={() => onDesign(item.id)}>
-          <Icon name="spark" size={14} />Design <b>{item.label}</b></button>)}</div></div>}
-    {bakedInput && cells.length > 0 && !busy && <div className="proxy-notice" role="note"><span>{targetName}의 코드는 입력으로 만든 결과에 그때의 값을 저장해 둡니다. 그래서 값을 바꾸면 입력을 처음부터 다시 실행해 새로 그립니다. 이미 그린 결과가 그 자리에서 조절되게 하려면 코드를 업데이트하세요.</span>
+    {cells.length ? <ProxyPreview cells={cells} sections={sections} frameId={frameId} onSet={onSet} onError={onError} />
+      : <div className="frame-empty"><Icon name="target" size={30} /><strong>Proxy frame for {own ? `${node.name} · ${own.label}` : node.name}</strong>
+        <span>{only ? `This transformation has no handles now. ` : ""}For each property, the AI builds a direct manipulation interface that fits its meaning. Each transformation gets its own proxy frame, kept together in a group. Manipulating it changes the result in {targetName} right away.</span>
+        <div className="proxy-design-list">{designable.map(item => <button key={item.id} disabled={Boolean(busy)} title={`AI makes a direct manipulation interface for each property of ${item.label}`} onClick={() => onDesign(item.id)}>
+          <Icon name="spark" size={14} />Design <b>{item.label}</b></button>)}
+          {onDesignAll && designable.length > 1 && <button className="primary" disabled={Boolean(busy)} title={`AI makes handles for all ${designable.length} transformations, one request each`} onClick={onDesignAll}>
+            <Icon name="spark" size={14} />Design all <b>{designable.length}</b></button>}</div></div>}
+    {bakedInput && cells.length > 0 && !busy && <div className="proxy-notice" role="note"><span>The code of {targetName} stores the values at the time into results made from input, so changing a value replays the input from the start and redraws. To adjust already-drawn results in place, update the code.</span>
       <button onClick={bakedInput.onUpdate}><Icon name="code" size={12} />Update code to adjust in place</button></div>}
     {busy && <div className="proxy-busy" role="status"><span className="loading-spinner" />{busy}</div>}
   </div>;

@@ -27,17 +27,17 @@ export async function requestExplore(deps: StudioDeps, owner: string, brush: Bru
       recommendation: item ? { kind: item.kind, nodeId: item.nodeId, targetId: item.targetId, targetIds: item.targetIds, title: item.title, detail: item.detail, changes: item.changes, applied: item.applied } : null,
       input: { gestures: history.length, points: inputPath(runtime).length } } }) });
   const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "탐색 프레임을 만들지 못했습니다.");
+  if (!response.ok || result.error) throw new Error(result.error || "Could not create the exploration frame.");
   return exploreResultSchema.parse(result);
 }
 
 /** The prepared program an exploration frame runs: the frame's own, or with a recommendation's preview edits. */
 export async function exploreExecutable(deps: StudioDeps, owner: string, result: ExploreResult) {
   const panel = deps.panel(owner);
-  if (!panel.generated) throw new Error("이 프레임에 코드가 없습니다.");
+  if (!panel.generated) throw new Error("This frame has no code.");
   const code = liveSceneSource(panel.generated, panel.scene);
   if (!result.edits.length) return panel.executable && panel.preparedCode === panel.generated.code ? null : prepareProgram(code);
   const program = exploreProgram(code, panel.scene, result);
-  if ("error" in program) throw new Error(`추천 미리보기 코드를 적용하지 못했습니다: ${program.error}`);
+  if ("error" in program) throw new Error(`Could not apply the recommendation preview code: ${program.error}`);
   return prepareProgram(program.code);
 }

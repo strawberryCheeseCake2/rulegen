@@ -32,6 +32,8 @@ type Props = {
   plain?: boolean;
   /** Overlays react to clicks (focus); default: when `clickable`. Off: only the handles' grips take the pointer. */
   focusable?: boolean;
+  /** Size of the labels on screen (px, at any zoom; default 12). */
+  textSize?: number;
 };
 
 /**
@@ -57,7 +59,7 @@ const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props
   : kind === "ellipse" ? <ellipse cx={x + w / 2} cy={y + h / 2} rx={Math.abs(w / 2)} ry={Math.abs(h / 2)} {...props} />
   : kind === "line" ? <line x1={x} y1={y} x2={x + w} y2={y + h} {...props} /> : null;
 
-export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain, focusable = clickable }: Props) {
+export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain, focusable = clickable, textSize = 12 }: Props) {
   // The step being looked at (the latest unless another is picked): overlays are recomputed from its values and stores; the other steps show as ghosts.
   const index = heldIndex(state) ?? -1, step = state.steps[index];
   // Suggested parameters are read at the value the code uses wherever a step does not record them (not accepted yet, or recorded before).
@@ -82,7 +84,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
     setActive({ key: current.grip.handle.key, grip: current.grip.key, value: value ?? active?.value ?? null });
     if (phase === "end") { dragging.current = null; setActive(null); onHandle?.("end", current.grip.handle.key, value, item, each, motion); }
   };
-  const text = 12 / Math.max(.2, zoom);
+  const text = textSize / Math.max(.2, zoom);
   const uid = useId().replace(/:/g, ""), badge = 7 / Math.max(.2, zoom);
   // One number per step and overlay (an overlay drawn per item numbers its first item only), and the path through those spots in step order.
   const marked = placed.filter(item => item.key.endsWith(":0"));
@@ -134,7 +136,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
         const names = steps.map(j => `Step ${j + 1}${stepName ? ` · ${stepName(j)}` : ""}`).join("\n");
         return <g key={`badge:${key}`} className={`inspection-badge ${current ? "current" : "ghost"} ${go ? "clickable" : ""}`} opacity={current ? 1 : Math.max(.35, .8 - (Math.abs(ghost) - 1) * .08)}
           onPointerDown={e => { if (!go) return; e.preventDefault(); e.stopPropagation(); onStep!(next); }}>
-          <title>{more ? `${names}\n(같은 자리의 단계 ${steps.length}개 · 클릭하면 Step ${next + 1})` : names}</title>
+          <title>{more ? `${names}\n(${steps.length} steps at this spot · click for Step ${next + 1})` : names}</title>
           <circle cx={x} cy={y} r={badge} fill={current ? overlay.color : "#fffefa"} stroke={overlay.color} vectorEffect="non-scaling-stroke" />
           <text x={x} y={y} fontSize={badge * 1.25} fill={current ? "#fff" : overlay.color} textAnchor="middle" dominantBaseline="central">{shown + 1}</text>
           {more > 0 && <text x={x + badge * 1.15} y={y - badge * .9} fontSize={badge * .95} fill={overlay.color} className="inspection-badge-more">+{more}</text>}
@@ -156,7 +158,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
         const guide = moving && current ? (grip.handle.gesture === "rotate" ? <circle cx={current.drag.px} cy={current.drag.py} r={Math.hypot(grip.x - current.drag.px, grip.y - current.drag.py)} />
           : grip.handle.gesture === "slide" ? <line x1={current.drag.px} y1={current.drag.py} x2={current.drag.px + (grip.x - current.drag.px) * 1.6} y2={current.drag.py + (grip.y - current.drag.py) * 1.6} />
           : <line x1={current.drag.sx} y1={current.drag.sy} x2={grip.x} y2={grip.y} />) : null;
-        const shown = moving && active?.value !== null && active?.value !== undefined && typeof active.value !== "string" ? `${grip.handle.hint} · ${typeof active.value === "boolean" ? (active.value ? "켜짐" : "꺼짐") : Math.round(Number(active.value) * 100) / 100}` : grip.handle.hint;
+        const shown = moving && active?.value !== null && active?.value !== undefined && typeof active.value !== "string" ? `${grip.handle.hint} · ${typeof active.value === "boolean" ? (active.value ? "On" : "Off") : Math.round(Number(active.value) * 100) / 100}` : grip.handle.hint;
         return <g key={grip.key} className={`inspection-grip gesture-${grip.handle.gesture} ${moving ? "dragging" : ""}`} role="slider" aria-label={grip.handle.hint || `Adjust ${grip.handle.key}`}
           aria-valuenow={typeof active?.value === "number" && moving ? active.value : undefined}
           onPointerDown={e => {

@@ -44,7 +44,7 @@ test("extract sends the prompt file and strict schema, and returns a validated c
     assert.deepEqual(calls[0].text.format.schema, JSON.parse(schemaText("extract")));
     assert.equal(calls[0].input[0].content[1].image_url, image);
   });
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract" }), signal()), /이미지가 없습니다/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract" }), signal()), /There is no image to analyze/);
 });
 
 test("transform regenerates one property (or the whole transformation) and reuses or adds library algorithms", async () => {
@@ -62,9 +62,9 @@ test("transform regenerates one property (or the whole transformation) and reuse
     assert.equal(context.targetNodeId, "orb"); assert.equal(context.targetPropertyId, "radius"); assert.ok(context.scene.algorithms.length);
   });
   await withMockedAI(() => ({ algorithms: [], transformation: { ...transformation, properties: [{ ...transformation.properties[0], id: "other", value: num(1, 0, 2) }] } }), async () => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "orb", targetPropertyId: "radius" }), signal()), /선택과 다릅니다/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "orb", targetPropertyId: "radius" }), signal()), /does not match the selection/);
   });
-  await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "missing" }), signal()), /찾지 못했습니다/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene, targetNodeId: "missing" }), signal()), /Could not find the target Collection or Object/);
 });
 
 test("AI adds a new stacked transformation or replaces one in place, keeping property ids unique per node", async () => {
@@ -94,7 +94,7 @@ test("AI adds a new stacked transformation or replaces one in place, keeping pro
   assert.match(loadPrompt("extract"), /STACK of semantic transformations/);
   assert.match(loadPrompt("code"), /apply IN ORDER/);
   const full = { ...scene, nodes: scene.nodes.map(node => node.id === "tree" ? { ...node, transformations: Array.from({ length: 12 }, (_, i) => ({ id: `t${i}`, label: "", description: "", properties: [] })) } : node) };
-  await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene: full, targetNodeId: "tree" }), signal()), /더 이상/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "transform", scene: full, targetNodeId: "tree" }), signal()), /No more semantic transformations can be added/);
 });
 
 test("extracted nodes may carry several transformations; duplicate ids from the model are made unique", () => {
@@ -121,7 +121,7 @@ test("state machines are planned per collection/object and validated against tha
     assert.equal(calls[0].text.format.schema.properties.machine.properties.states.maxItems, 32);
   });
   await withMockedAI(() => ({ algorithms: [], machine: { ...machine, states: [machine.states[0], { ...machine.states[1], values: [{ propertyId: "radius", value: num(1, 0, 2) }] }] } }), async () => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "state-machine", scene, targetNodeId: "tree" }), signal()), /없는 property/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "state-machine", scene, targetNodeId: "tree" }), signal()), /refers to a property that does not exist/);
   });
 });
 
@@ -139,7 +139,7 @@ test("code receives every nested binding and returns a connected, executable ske
   await withMockedAI(() => ({ title: "Tree", explanation: "나무", code: "p.setup=()=>{p.createCanvas(900,600);}" }), async () => {
     await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene }), signal()), /rulegenModule/);
   });
-  await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene: { nodes: [], algorithms: [] } }), signal()), /추출/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "code", scene: { nodes: [], algorithms: [] } }), signal()), /Extract collections and objects from the sketch first/);
 });
 
 test("compose turns pen strokes into a scene that reuses the pen's algorithm; interaction marks add the interaction contract", async () => {
@@ -176,7 +176,7 @@ test("revision proposes a complete scene, keeps sketch regions of retained nodes
     assert.deepEqual(proposal.scene.nodes.find(node => node.id === "orb")!.region, scene.nodes.find(node => node.id === "orb")!.region);
   });
   await withMockedAI(() => ({ summary: "변경 없음", algorithms: [], nodes: aiScene.nodes }), async () => {
-    await assert.rejects(runAI(input, signal()), /실제 변경 제안이 없습니다/);
+    await assert.rejects(runAI(input, signal()), /No actual changes were proposed/);
   });
 });
 

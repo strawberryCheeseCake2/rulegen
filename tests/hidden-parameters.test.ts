@@ -54,13 +54,13 @@ test("a hidden constant is exposed as a property the module reads, without regen
 
 test("an exposure is refused when its edit does not fit the code", () => {
   const scene = sampleScene(), code = program().code;
-  assert.match(parameterProblem(scene, code, { ...gap, edits: [{ find: "nope", replace: "m.v(\"tree/segment-gap\")" }] })!, /찾지 못했습니다/);
-  assert.match(parameterProblem(scene, code, { ...gap, edits: [{ find: "i * 10", replace: "i * m.v(\"tree/segment-gap\")" }] })!, /여러 곳/);
+  assert.match(parameterProblem(scene, code, { ...gap, edits: [{ find: "nope", replace: "m.v(\"tree/segment-gap\")" }] })!, /Could not find the code to change/);
+  assert.match(parameterProblem(scene, code, { ...gap, edits: [{ find: "i * 10", replace: "i * m.v(\"tree/segment-gap\")" }] })!, /more than one place/);
   assert.match(parameterProblem(scene, code, { ...gap, edits: [{ find: LOOP, replace: LOOP.replaceAll("10", "m.v(\"tree/gap\")") }] })!, /m\.v\("tree\/segment-gap"\)/, "it must read the new key");
-  assert.match(parameterProblem(scene, code, { ...gap, id: "ink" })!, /이미 있습니다/);
+  assert.match(parameterProblem(scene, code, { ...gap, id: "ink" })!, /already exists/);
   assert.match(parameterProblem(scene, code, { ...gap, transformationId: "nope" })!, /transformation/);
-  assert.match(parameterProblem(scene, code, { ...gap, value: { ...gap.value, value: 99 } } as ParameterSuggestion)!, /범위/);
-  assert.match(parameterProblem(scene, code, gap, () => false)!, /올바르지/);
+  assert.match(parameterProblem(scene, code, { ...gap, value: { ...gap.value, value: 99 } } as ParameterSuggestion)!, /out of range/);
+  assert.match(parameterProblem(scene, code, gap, () => false)!, /The edited code is invalid/);
   // Every stamp drawn by the same code gets it (an instance shares the master's code id).
   const twin = { ...scene, nodes: [...scene.nodes, { ...scene.nodes.find(node => node.id === "tree")!, id: "tree-2", codeId: "tree", codeModule: "tree" }] };
   const exposed = exposeParameter(twin, program(), gap) as { scene: typeof scene };
@@ -98,13 +98,13 @@ test("the panel offers each hidden parameter to accept or reject, and an accepte
   const render = (sceneNow: typeof scene, parameters: unknown[]) => renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "targeted", targeted: tool(parameters), scene: sceneNow, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true,
     onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop, onAcceptParameter: noop, onRejectParameter: noop, onParameterValue: noop } as never));
   const pending = render(scene, [gap]);
-  assert.match(pending, /HIDDEN PARAMETERS/); assert.match(pending, /<em>제안<\/em>Segment gap/); assert.match(pending, /지금 코드의 값 10px \(2–40\)/);
-  assert.match(pending, />Accept<\/button>/); assert.match(pending, />Reject<\/button>/); assert.match(pending, /코드 변경 보기/);
+  assert.match(pending, /HIDDEN PARAMETERS/); assert.match(pending, /<em>Suggested<\/em>Segment gap/); assert.match(pending, /Current code value 10px \(2–40\)/);
+  assert.match(pending, />Accept<\/button>/); assert.match(pending, />Reject<\/button>/); assert.match(pending, /View code changes/);
   const accepted = render(exposed, [gap]);
-  assert.match(accepted, /<em>추가됨<\/em>/); assert.match(accepted, /type="range" aria-label="Segment gap" min="2" max="40" step="1" value="10"/, "a slider to try values right away");
+  assert.match(accepted, /<em>Added<\/em>/); assert.match(accepted, /type="range" aria-label="Segment gap" min="2" max="40" step="1" value="10"/, "a slider to try values right away");
   assert.doesNotMatch(accepted, />Accept<\/button>/);
   const rejected = render(scene, [{ ...gap, rejected: true }]);
-  assert.match(rejected, /<em>거절됨<\/em>/); assert.match(rejected, /다시 보기/); assert.doesNotMatch(rejected, />Accept<\/button>/);
+  assert.match(rejected, /<em>Rejected<\/em>/); assert.match(rejected, /Show again/); assert.doesNotMatch(rejected, />Accept<\/button>/);
 });
 
 test("a module replaced in place keeps its store, and m.memo recomputes when a value it read changes", async () => {
@@ -141,7 +141,7 @@ test("records: the module is made to keep a per-item value on its item records, 
   const records = { nodeId: "tree", fields: ["size"], reason: "별마다 크기가 다릅니다.", edits: [{ find: PUSH, replace: "items.push({ x: i * 20, y: 0, size });" }] };
   assert.equal(recordingProblem(scene, code, records), null);
   assert.match(recordingProblem(scene, code, { ...records, fields: ["speed"] })!, /speed/, "every field must be written by an edit");
-  assert.match(recordingProblem(scene, code, { ...records, edits: [{ find: "nope", replace: "size" }] })!, /찾지 못했습니다/);
+  assert.match(recordingProblem(scene, code, { ...records, edits: [{ find: "nope", replace: "size" }] })!, /Could not find the code to change/);
   const generated = { title: "t", explanation: "", code, sceneBindings: [], machineSignature: "" };
   assert.equal(recordingApplied(scene, code, records), false);
   const result = recordFields(scene, generated, records) as { generated: typeof generated };
@@ -175,7 +175,7 @@ test("records from AI are kept only when they apply to the brush's module, and t
   const plain = { ...reads, id: "box", label: "", each: "tree:items" };
   const cut = await ask({ records: { ...records, edits: [{ find: LOOP, replace: `${LOOP} m.store.segments = [` }] }, overlays: [reads, plain] });
   assert.equal(cut.records, null); assert.deepEqual(cut.overlays.map(item => item.id), ["box"]);
-  assert.match(cut.summary, /오버레이 1개를 표시하지 못했습니다/);
+  assert.match(cut.summary, /1 overlay\(s\) could not be shown/);
   assert.equal(overlayStoreFields({ ...reads, each: "", label: "${s(\"tree\", \"segments.0.@cx\")}" }).has("segments"), true);
   const already = await withMockedAI(() => ({ summary: "s", overlays: [reads], valueFixes: [], recommendations: [], parameters: [], records: { ...records, edits: [{ find: "gone", replace: "segments" }] } }), async () =>
     inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", previous: code,
@@ -187,9 +187,9 @@ test("records from AI are kept only when they apply to the brush's module, and t
   const render = (codeNow: string) => renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "targeted", scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, code: codeNow, onApplyRecording: noop,
     targeted: { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [], records }) },
     onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
-  assert.match(render(code), /ITEM RECORDS/); assert.match(render(code), />기록 추가<\/button>/, "not in the code (e.g. undone): it can be added again");
+  assert.match(render(code), /ITEM RECORDS/); assert.match(render(code), />Add recording<\/button>/, "not in the code (e.g. undone): it can be added again");
   const recorded = (await import("../app/lib/hidden-parameters")).recordFields(scene, program(), records) as { generated: { code: string } };
-  assert.match(render(recorded.generated.code), /✓ 그려진 항목마다 segments/); assert.doesNotMatch(render(recorded.generated.code), />기록 추가</);
+  assert.match(render(recorded.generated.code), /✓ Records segments for each drawn item/); assert.doesNotMatch(render(recorded.generated.code), />Add recording</);
 });
 
 // ── Hidden values on the overlays: a suggested parameter is shown before it is a property ──
@@ -237,8 +237,8 @@ test("a scale multiplies several constants: it starts at 1 and goes both ways", 
   const scale = { ...gap, id: "segment-scale", form: "scale" as const, value: { type: "number" as const, value: 1, min: .2, max: 3, step: .05, unit: "×" },
     edits: [{ find: LOOP, replace: LOOP.replaceAll("i * 10", "i * 10 * m.v(\"tree/segment-scale\")") }] };
   assert.equal(parameterProblem(scene, code, scale), null);
-  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, value: 2 } })!, /배율/);
-  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, min: 1 } })!, /배율/);
+  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, value: 2 } })!, /A scale must/);
+  assert.match(parameterProblem(scene, code, { ...scale, value: { ...scale.value, min: 1 } })!, /A scale must/);
   assert.equal(targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [], parameters: [gap] }).parameters[0].form, "constant", "older suggestions replace one constant");
 });
 
@@ -253,10 +253,10 @@ test("an undecided suggestion is a faint card in its transformation of the prope
   // In the transformation it would join, after its properties.
   const section = html.slice(html.indexOf('data-transformation-id="branching-growth"'));
   assert.ok(section.indexOf('data-property-id="segment-gap"') > 0 && section.indexOf('data-property-id="segment-gap"') < (section.indexOf("<section", 10) >>> 0), "inside its transformation card");
-  assert.match(html, /<em class="suggested-tag"[^>]*>제안<\/em>/); assert.match(html, /지금 코드의 값 10px/); assert.match(html, /aria-label="Segment gap \(suggested\)"[^>]*disabled/, "read-only until accepted");
+  assert.match(html, /<em class="suggested-tag"[^>]*>Suggested<\/em>/); assert.match(html, /Current code value 10px/); assert.match(html, /aria-label="Segment gap \(suggested\)"[^>]*disabled/, "read-only until accepted");
   assert.match(html, />Accept<\/button>/); assert.match(html, />Reject<\/button>/);
   assert.match(card(render({ suggestions: [{ item: gap, index: 0 }], highlightPropertyId: "segment-gap" })), /inspection-highlight/, "clicking it in the inspection highlights it here");
-  assert.match(render({ suggestions: [{ item: { ...gap, form: "scale", value: { type: "number", value: 1, min: .2, max: 3, step: .1, unit: "×" } }, index: 0 }] }), /배율 ×1/);
+  assert.match(render({ suggestions: [{ item: { ...gap, form: "scale", value: { type: "number", value: 1, min: .2, max: 3, step: .1, unit: "×" } }, index: 0 }] }), /Scale ×1/);
   assert.equal(card(render({ suggestions: [], state: undefined })), "");
   // The inspection panel's card is the button that highlights it (and is highlighted with it).
   const focused = renderToStaticMarkup(createElement(InspectionPanel, { brush, kind: "targeted", scene, nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), focus: { kind: "parameter", nodeId: "tree", id: "segment-gap" } }, busy: false, running: true,

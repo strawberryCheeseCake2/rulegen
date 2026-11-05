@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"kind\":\"add-transformation\",\"nodeId\":\"tree\",\"targetId\":\"\",\"targetIds\":[],\"title\":\"겹친 곳만 굵게\",\"detail\":\"겹친 곳의 획을 6px로\",\"changes\":[],\"preview\":{\"caption\":\"겹친 곳이 굵어집니다\",\"edits\":[{\"nodeId\":\"tree\",\"find\":\"p.stroke(m.v(\\\"tree/ink\\\"));\",\"replace\":\"p.stroke(m.v(\\\"tree/ink\\\")); p.strokeWeight(m.v(\\\"tree/weight\\\"));\"}],\"values\":[{\"nodeId\":\"tree\",\"id\":\"weight\",\"label\":\"굵기\",\"value\":{\"type\":\"number\",\"value\":3,\"min\":1,\"max\":12,\"step\":1,\"unit\":\"px\"}}],\"machine\":null,\"marks\":[{\"id\":\"where\",\"kind\":\"ellipse\",\"name\":\"새로 생김\",\"x\":\"s(\\\"tree\\\", \\\"ball.x\\\") - 20\",\"y\":\"280\",\"w\":\"40\",\"h\":\"40\",\"label\":\"새로 생김\",\"color\":\"#e0457b\",\"when\":\"\",\"each\":\"\"}],\"handles\":[{\"id\":\"h-tree/weight\",\"kind\":\"line\",\"name\":\"굵기\",\"x\":\"450\",\"y\":\"300\",\"w\":\"p(\\\"tree/weight\\\")\",\"h\":\"0\",\"label\":\"\",\"color\":\"#3a7bd5\",\"link\":{\"kind\":\"constraint\",\"nodeId\":\"tree\",\"id\":\"ink\"},\"when\":\"\",\"each\":\"\",\"handle\":{\"key\":\"tree/weight\",\"gesture\":\"drag\",\"x\":\"450 + p(\\\"tree/weight\\\")\",\"y\":\"300\",\"pivotX\":\"\",\"pivotY\":\"\",\"value\":\"start + dx\",\"hint\":\"끌어서 굵게\"}},{\"id\":\"h-@input:0:0.5\",\"kind\":\"line\",\"name\":\"굵기\",\"x\":\"450\",\"y\":\"300\",\"w\":\"p(\\\"@input:0:0.5\\\")\",\"h\":\"0\",\"label\":\"\",\"color\":\"#3a7bd5\",\"link\":{\"kind\":\"constraint\",\"nodeId\":\"tree\",\"id\":\"ink\"},\"when\":\"\",\"each\":\"\",\"handle\":{\"key\":\"@input:0:0.5\",\"gesture\":\"drag\",\"x\":\"450 + p(\\\"@input:0:0.5\\\")\",\"y\":\"300\",\"pivotX\":\"\",\"pivotY\":\"\",\"value\":\"start + dx\",\"hint\":\"끌어서 굵게\"}},{\"id\":\"h-tree/nope\",\"kind\":\"line\",\"name\":\"굵기\",\"x\":\"450\",\"y\":\"300\",\"w\":\"p(\\\"tree/nope\\\")\",\"h\":\"0\",\"label\":\"\",\"color\":\"#3a7bd5\",\"link\":{\"kind\":\"constraint\",\"nodeId\":\"tree\",\"id\":\"ink\"},\"when\":\"\",\"each\":\"\",\"handle\":{\"key\":\"tree/nope\",\"gesture\":\"drag\",\"x\":\"450 + p(\\\"tree/nope\\\")\",\"y\":\"300\",\"pivotX\":\"\",\"pivotY\":\"\",\"value\":\"start + dx\",\"hint\":\"끌어서 굵게\"}}]},\"reply\":\"겹친 곳만 굵게 바꿨습니다.\"}"
+        }
+      ]
+    }
+  ]
+}

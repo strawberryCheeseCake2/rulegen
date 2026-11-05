@@ -28,7 +28,8 @@ export type ExploreMode = (typeof EXPLORE_MODES)[number];
 export const EXEC_KEY = "@execution";
 export const MAX_EXPLORE_FRAMES = 16;
 
-const editSchema = z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) });
+// Room for a recommendation's preview, which may rewrite a whole rule (an output cut at a limit loses everything after it).
+const editSchema = z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(3000), replace: z.string().min(1).max(12000) });
 /** A value a preview reads that the scene does not have (the recommendation's new quantity), with its range. */
 export const previewValueSchema = z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) });
 export type PreviewValue = z.infer<typeof previewValueSchema>;
@@ -36,7 +37,7 @@ export type PreviewValue = z.infer<typeof previewValueSchema>;
 export const executionPartSchema = z.object({ kind: z.enum(["transformation", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
 export type ExecutionPart = z.infer<typeof executionPartSchema>;
 export const exploreResultSchema = z.object({
-  /** What the frame lets the user see and how the handle maps onto it (Korean). */
+  /** What the frame lets the user see and how the handle maps onto it (English). */
   summary: z.string().min(1).max(1200),
   /**
    * What execution means here: one run of the brush's code, its internal operations and drawing calls in order ("run"),
@@ -45,8 +46,8 @@ export const exploreResultSchema = z.object({
   axis: z.enum(["run", "input", "steps"]),
   /** Where along the axis the process happens (0..1): the execution handle moves within it. */
   from: z.number().min(0).max(1), to: z.number().min(0).max(1),
-  /** Exact edits of the brush's module, in this frame only: checkpoints (m.trace) of its execution, and a recommendation not applied yet. */
-  edits: z.array(editSchema).max(6),
+  /** Exact edits of the brush's module, in this frame only: checkpoints (m.trace) and inner terms (m.term) of its execution, and a recommendation not applied yet. */
+  edits: z.array(editSchema).max(10),
   /** The values the edits read that do not exist yet. */
   values: z.array(previewValueSchema).max(4),
   /** A recommendation's preview that makes the brush react to something it meets: the states and transitions it brings to the machine. */
@@ -208,7 +209,12 @@ export function exploreStep(frame: Pick<ExploreFrame, "base" | "progress" | "res
  * (`@last`), each with `done` and `total` (and `none` 1 when there is none), and the path through the steps.
  */
 export const RUN_ROOT = "@run", STEPS_ROOT = "@steps", NEXT_ROOT = "@next", LAST_ROOT = "@last";
-type RunEvent = { index: number; kind: string; label: string; x?: number; y?: number; w?: number; h?: number; data?: unknown };
+type RunEvent = { index: number; kind: string; label: string; x?: number; y?: number; w?: number; h?: number; data?: unknown; item?: string;
+  /** A checkpoint's inner terms (m.term) computed in its step: each one's last value, mean size and how often. */ terms?: Record<string, StepTerm>;
+  /** The decisions (m.test) made in its step: what was tested, where, and how it came out. */ tests?: StepTest[] };
+export type StepTerm = { last: unknown; mean: number | null; n: number };
+/** A decision a step made (m.test): its name, how it came out, the geometry it tested and what each outcome means. */
+export type StepTest = { name: string; pass: boolean; shape: unknown; yes?: string; no?: string };
 const opOf = (data: unknown) => { const op = data && typeof data === "object" ? Number((data as { op?: unknown }).op) : NaN; return Number.isInteger(op) ? op : 0; };
 export function runStores(run: { total: number; events: RunEvent[] }, done: number) {
   // An event with no place on the canvas is at its middle (so something there can still be grabbed).
@@ -272,16 +278,183 @@ export function stepsAt(run: { events: RunEvent[] }, point: { x: number; y: numb
 export function jumpTarget<T extends { done: number }>(moments: T[], done: number) {
   return moments.find(moment => moment.done > done) ?? moments[0] ?? null;
 }
+/**
+ * The KEY steps of a long run (the ones execution stops at; everything between them runs at once): the first round
+ * of its operations in full (one item through every operation, up to half the stops), then the rest in even chunks
+ * that end where an operation's run of steps ends, and always the end. Given as steps done (0 … count), with `keep`
+ * (e.g. a step jumped to) among them. A run short enough keeps every step.
+ */
+export function keySteps(run: { events: RunEvent[] }, limit = KEY_STEPS, keep: number[] = []) {
+  const ops = runSteps(run).map(event => opOf(event.data)), count = ops.length, stops = new Set<number>([0, count]);
+  for (const done of keep) if (done >= 0 && done <= count) stops.add(done);
+  if (count <= limit) return Array.from({ length: count + 1 }, (_, i) => i);
+  // The first round: until the first operation comes round again after another one (or one step, for a run of one operation).
+  let round = 1;
+  while (round < count && !(ops[round] === ops[0] && ops.slice(1, round).some(op => op !== ops[0]))) round++;
+  if (round >= count || ops.every(op => op === ops[0])) round = 1;
+  for (let done = 1; done <= Math.min(round, Math.floor(limit / 2)); done++) stops.add(done);
+  // Then chunks spread evenly over the rest, each ending where a round of the operations ends (the first operation comes
+  // again), or, for a run without rounds, where a run of one operation ends.
+  const ends: number[] = [];
+  for (let step = round; step < count; step++) {
+    const end = step === count - 1 || (round > 1 ? ops[step + 1] === ops[0] && ops[step] !== ops[0] : ops[step + 1] !== ops[step]);
+    if (end) ends.push(step + 1);
+  }
+  const room = Math.max(1, limit - stops.size), pool = ends.length > 1 ? ends : Array.from({ length: count - round }, (_, i) => round + i + 1);
+  for (let k = 1; k <= Math.min(room, pool.length); k++) stops.add(pool[Math.min(pool.length - 1, Math.round(k * pool.length / Math.min(room, pool.length)) - 1)]);
+  return [...stops].sort((a, b) => a - b);
+}
+/**
+ * The steps where one mark changes, as steps done once each is executed: the steps whose checkpoint or drawing calls
+ * belong to its item (m.focus), or, for a mark without one, the step of its own drawing call (`index`).
+ */
+export function markSteps(run: { events: (RunEvent & { item?: string })[] }, mark: { item: string | null; index: number }) {
+  const starts = runSteps(run).map(event => event.index), out: number[] = [];
+  const mine = (event: RunEvent & { item?: string }) => mark.item !== null ? event.item === mark.item : event.index === mark.index;
+  for (let k = 0; k < starts.length; k++) {
+    const end = k + 1 < starts.length ? starts[k + 1] : Infinity;
+    if (run.events.some(event => event.index >= starts[k] && event.index < end && mine(event))) out.push(k + 1);
+  }
+  return out;
+}
+type Point = { x: number; y: number };
+const isPoint = (value: unknown): value is Point => Boolean(value) && typeof value === "object" && Number.isFinite((value as Point).x) && Number.isFinite((value as Point).y);
+const onCanvas = (point: Point) => point.x >= -100 && point.x <= 1000 && point.y >= -100 && point.y <= 700;
+/**
+ * The geometry a step's data holds, to draw where the step works (canvas pixels), by the name it has there: every
+ * list of points as a path (thinned to 200), every single point; the step's own place (its `x`, `y`) is not one of them.
+ */
+export function dataShapes(data: unknown, limit = 12) {
+  const out: { key: string; points: Point[] }[] = [];
+  const walk = (value: unknown, key: string, depth: number) => {
+    if (out.length >= limit || depth > 3 || !value || typeof value !== "object") return;
+    if (Array.isArray(value)) {
+      const points = value.filter(isPoint).filter(onCanvas);
+      if (points.length >= 2) { const step = Math.ceil(points.length / 200); out.push({ key, points: points.filter((_, i) => i % step === 0 || i === points.length - 1) }); return; }
+      value.slice(0, 20).forEach((item, i) => walk(item, `${key}.${i}`, depth + 1)); return;
+    }
+    if (depth > 0 && isPoint(value)) { if (onCanvas(value)) out.push({ key, points: [{ x: value.x, y: value.y }] }); return; }
+    for (const [name, child] of Object.entries(value)) walk(child, key ? `${key}.${name}` : name, depth + 1);
+  };
+  walk(data, "", 0);
+  return out;
+}
+/** A step's inner terms split by what they are: vectors (drawn as arrows) and numbers (drawn as signed bars), with their mean size. */
+export function termGlyphs(terms: Record<string, StepTerm> | undefined) {
+  const vectors: { name: string; v: [number, number] }[] = [], scalars: { name: string; value: number }[] = [];
+  for (const [name, term] of Object.entries(terms ?? {})) {
+    const last = term.last;
+    if (typeof last === "number" && Number.isFinite(last)) scalars.push({ name, value: last });
+    else if (Array.isArray(last) && Number.isFinite(last[0]) && Number.isFinite(last[1])) vectors.push({ name, v: [Number(last[0]), Number(last[1])] });
+    else if (isPoint(last)) vectors.push({ name, v: [last.x, last.y] });
+  }
+  return { vectors, scalars };
+}
+type Box = { x: number; y: number; w: number; h: number };
+/** A shape a decision tested, as drawn: a reach (circle), a region (rect), a distance (line) or a point. */
+export type TestShape = { kind: "circle"; x: number; y: number; r: number } | { kind: "rect"; x: number; y: number; w: number; h: number }
+  | { kind: "line"; x1: number; y1: number; x2: number; y2: number } | { kind: "point"; x: number; y: number };
+const finite = (...values: unknown[]) => values.every(value => typeof value === "number" && Number.isFinite(value));
+function testShape(value: unknown): TestShape | null {
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (finite(v.x, v.y, v.r) && Number(v.r) >= 0) return { kind: "circle", x: Number(v.x), y: Number(v.y), r: Number(v.r) };
+  if (finite(v.x, v.y, v.w, v.h)) return { kind: "rect", x: Number(v.x), y: Number(v.y), w: Number(v.w), h: Number(v.h) };
+  if (finite(v.x1, v.y1, v.x2, v.y2)) return { kind: "line", x1: Number(v.x1), y1: Number(v.y1), x2: Number(v.x2), y2: Number(v.y2) };
+  if (finite(v.x, v.y)) return { kind: "point", x: Number(v.x), y: Number(v.y) };
+  return null;
+}
+const shapeBox = (shape: TestShape): Box => shape.kind === "circle" ? { x: shape.x - shape.r, y: shape.y - shape.r, w: shape.r * 2, h: shape.r * 2 }
+  : shape.kind === "rect" ? { x: Math.min(shape.x, shape.x + shape.w), y: Math.min(shape.y, shape.y + shape.h), w: Math.abs(shape.w), h: Math.abs(shape.h) }
+  : shape.kind === "line" ? { x: Math.min(shape.x1, shape.x2), y: Math.min(shape.y1, shape.y2), w: Math.abs(shape.x2 - shape.x1), h: Math.abs(shape.y2 - shape.y1) } : { x: shape.x, y: shape.y, w: 0, h: 0 };
+/**
+ * A step's decisions as drawn: the shapes each tested (up to 3; a list of shapes, e.g. both items' reaches), how it
+ * came out and its verdict (what the outcome means there, or the test's name with ✓ / ✗), placed above what it tested.
+ */
+export function testGlyphs(tests: StepTest[] | undefined) {
+  return (tests ?? []).flatMap(test => {
+    const shapes = (Array.isArray(test.shape) ? test.shape : [test.shape]).map(testShape).filter((shape): shape is TestShape => Boolean(shape)).slice(0, 3);
+    if (!shapes.length) return [];
+    const boxes = shapes.map(shapeBox), left = Math.min(...boxes.map(b => b.x)), top = Math.min(...boxes.map(b => b.y)), right = Math.max(...boxes.map(b => b.x + b.w));
+    const said = (test.pass ? test.yes : test.no)?.trim();
+    return [{ name: test.name, pass: test.pass, shapes, verdict: said || `${test.pass ? "" : "not "}${test.name}`, at: { x: (left + right) / 2, y: top } }];
+  });
+}
+/** Most key steps a run is shown in before "All steps". */
+export const KEY_STEPS = 24;
+/** The key step before or after `done` (or `done` itself at an end). */
+export const keyStep = (keys: number[], done: number, way: 1 | -1) => way > 0 ? keys.find(stop => stop > done) ?? keys.at(-1) ?? done : [...keys].reverse().find(stop => stop < done) ?? 0;
+
 /** The operation of a step (0: not named). */
 export const stepOp = (run: { events: RunEvent[] }, step: number) => opOf(runSteps(run)[step]?.data);
 
 /**
- * An edit that only adds checkpoints: without its m.trace(…) calls it is the code it replaces (a one-statement
- * body may get braces to hold one).
+ * An edit that only adds checkpoints and names inner terms, decisions (m.test) and kept runtime state (m.runtime): without its m.trace(…) calls, and with each
+ * m.term("<name>", expression) back to its expression, it is the code it replaces (a one-statement body may get
+ * braces to hold a checkpoint; a term may get parentheses around its expression).
  */
 export function traceOnly(edit: { find: string; replace: string }) {
-  const squash = (text: string) => text.replace(/[\s{}]+/g, "");
-  return edit.replace.includes("m.trace(") && squash(withoutTraces(edit.replace)) === squash(edit.find);
+  const squash = (text: string) => text.replace(/[\s{}]+/g, ""), bare = (text: string) => squash(text).replace(/[()]/g, "");
+  const terms = withoutTerms(withoutTraces(edit.replace)), tests = terms === null ? null : withoutTests(terms), plain = tests === null ? null : withoutRuntime(tests);
+  const wraps = ["m.term(", "m.test(", "m.runtime("].some(call => edit.replace.includes(call));
+  if (!(edit.replace.includes("m.trace(") || wraps) || plain === null) return false;
+  // Parentheses only matter where a term or a test was unwrapped (its expression may have had them or not).
+  return squash(plain) === squash(edit.find) || (wraps && bare(plain) === bare(edit.find) && squash(plain).length >= squash(edit.find).length);
+}
+/** The arguments of a call between `open` (its "(") and `close` (its ")"), split at the commas outside brackets and strings. */
+function callArgs(code: string, open: number, close: number) {
+  const args: string[] = []; let depth = 0, quote = "", start = open + 1;
+  for (let i = open + 1; i < close; i++) {
+    const c = code[i];
+    if (quote) { if (c === "\\") i++; else if (c === quote) quote = ""; continue; }
+    if (c === '"' || c === "'" || c === "`") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) { args.push(code.slice(start, i)); start = i + 1; }
+  }
+  return [...args, code.slice(start, close)];
+}
+/**
+ * The code with every m.test("<name>", condition, shape, outcomes) back to (condition); null when one is not written
+ * that way. Its shape and outcomes only describe the decision (they are read, never change anything).
+ */
+export function withoutTests(code: string): string | null {
+  let out = "", i = 0;
+  for (let at = code.indexOf("m.test(", i); at >= 0; at = code.indexOf("m.test(", i)) {
+    out += code.slice(i, at);
+    const open = at + "m.test".length, close = closing(code, open);
+    if (close < 0) return null;
+    const args = callArgs(code, open, close);
+    if (args.length < 2 || args.length > 4 || !/^\s*(["'])[a-z0-9-]{1,40}\1\s*$/.test(args[0]) || !args[1].trim()) return null;
+    out += `(${args[1].trim()})`; i = close + 1;
+  }
+  return out + code.slice(i);
+}
+/** The code with every m.runtime("<name>", id, expression) back to (expression); null when one is not written that way. */
+export function withoutRuntime(code: string): string | null {
+  let out = "", i = 0;
+  for (let at = code.indexOf("m.runtime(", i); at >= 0; at = code.indexOf("m.runtime(", i)) {
+    out += code.slice(i, at);
+    const open = at + "m.runtime".length, close = closing(code, open);
+    if (close < 0) return null;
+    const args = callArgs(code, open, close);
+    if (args.length !== 3 || !/^\s*(["'])[a-z0-9-]{1,40}\1\s*$/.test(args[0]) || !args[1].trim() || !args[2].trim()) return null;
+    out += `(${args[2].trim()})`; i = close + 1;
+  }
+  return out + code.slice(i);
+}
+/** The code with every m.term("<name>", expression) back to (expression); null when one is not written that way. */
+export function withoutTerms(code: string): string | null {
+  let out = "", i = 0;
+  for (let at = code.indexOf("m.term(", i); at >= 0; at = code.indexOf("m.term(", i)) {
+    out += code.slice(i, at);
+    const open = at + "m.term".length, close = closing(code, open);
+    if (close < 0) return null;
+    const head = /^\(\s*(["'])[a-z0-9-]{1,40}\1\s*,/.exec(code.slice(open, close));
+    if (!head) return null;
+    out += `(${code.slice(open + head[0].length, close).trim()})`; i = close + 1;
+  }
+  return out + code.slice(i);
 }
 /**
  * The code with its m.trace(…) calls (and their semicolons) taken out, with the conditions that only guard
@@ -348,9 +521,9 @@ export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreR
   const modules = new Map<string, string>();
   for (const edit of result.edits) {
     const key = moduleKeyOf(scene, edit.nodeId);
-    if (!key) return { error: "노드의 코드 모듈을 찾지 못했습니다" };
+    if (!key) return { error: "Could not find the node's code module" };
     const module = modules.get(key) ?? programModules(next).get(key);
-    if (!module) return { error: "노드의 코드 모듈을 찾지 못했습니다" };
+    if (!module) return { error: "Could not find the node's code module" };
     const edited = applyParameterEdits(module, [edit]);
     if ("error" in edited) return edited;
     modules.set(key, edited.module);

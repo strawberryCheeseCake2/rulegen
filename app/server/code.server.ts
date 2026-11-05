@@ -25,20 +25,20 @@ export function guardCode(source: string) {
       const globals = ["self", "frames", "window", "globalThis", "parent", "top", "opener"];
       if (name === "top" && (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.property === path.node && !parent.computed
         && !(t.isIdentifier(parent.object) && globals.includes(parent.object.name)) && !t.isThisExpression(parent.object)) return;
-      throw new Error(`코드에서 지원하지 않는 API: ${name}`);
+      throw new Error(`Unsupported API in the code: ${name}`);
     },
     // Strings are data (`alignment === "top"`), except as a computed key (`p["top"]`) or a reflection name anywhere.
     StringLiteral(path) {
       const value = path.node.value, parent = path.parent;
       const computedKey = (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.computed && parent.property === path.node;
-      if (reserved.has(value) || (blocked.has(value) && computedKey)) throw new Error("지원하지 않는 동적 API 접근입니다.");
+      if (reserved.has(value) || (blocked.has(value) && computedKey)) throw new Error("Unsupported dynamic API access.");
     },
     TemplateLiteral(path) {
       const parent = path.parent;
-      if ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.computed && parent.property === path.node && path.node.quasis.some(part => blocked.has(part.value.cooked ?? ""))) throw new Error("지원하지 않는 동적 API 접근입니다.");
+      if ((t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) && parent.computed && parent.property === path.node && path.node.quasis.some(part => blocked.has(part.value.cooked ?? ""))) throw new Error("Unsupported dynamic API access.");
     },
-    CallExpression(path) { if (t.isImport(path.node.callee)) throw new Error("생성 코드는 외부 모듈을 불러올 수 없습니다."); },
-    ImportExpression() { throw new Error("생성 코드는 외부 모듈을 불러올 수 없습니다."); },
+    CallExpression(path) { if (t.isImport(path.node.callee)) throw new Error("Generated code cannot import external modules."); },
+    ImportExpression() { throw new Error("Generated code cannot import external modules."); },
     "ForStatement|WhileStatement|DoWhileStatement|ForInStatement|ForOfStatement"(path) {
       const node = path.node as t.ForStatement;
       if (!t.isBlockStatement(node.body)) node.body = t.blockStatement([node.body]);
@@ -53,12 +53,12 @@ export function guardCode(source: string) {
 }
 export function prepareCode(source: string) {
   const code = guardCode(source);
-  if (!/p\.setup\s*=/.test(source) || !source.includes("createCanvas")) throw new Error("p.setup과 p.createCanvas가 있는 p5 코드를 입력해주세요.");
+  if (!/p\.setup\s*=/.test(source) || !source.includes("createCanvas")) throw new Error("Enter p5 code that has p.setup and p.createCanvas.");
   return code;
 }
 /** A direct manipulation widget: one `rulegenHandle(…)` registration, guarded like sketch code. */
 export function prepareHandle(source: string) {
-  if (!/rulegenHandle\s*\(/.test(source)) throw new Error("rulegenHandle(function (h) { … })로 widget을 등록해야 합니다.");
-  if (/createCanvas|p\.setup\s*=|p\.draw\s*=/.test(source)) throw new Error("widget은 캔버스를 만들거나 p.setup/p.draw를 바꾸지 않습니다.");
+  if (!/rulegenHandle\s*\(/.test(source)) throw new Error("The widget must be registered with rulegenHandle(function (h) { … }).");
+  if (/createCanvas|p\.setup\s*=|p\.draw\s*=/.test(source)) throw new Error("A widget does not create a canvas or change p.setup/p.draw.");
   return guardCode(source);
 }

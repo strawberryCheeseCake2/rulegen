@@ -13,7 +13,7 @@ export function makeAlgorithmPen(scene: Scene, source: PenSource, sourceSketchId
   const property = node && "propertyId" in source ? findProperty(node, source.propertyId) : undefined;
   const slot = property && valueAt(property.value, "path" in source ? source.path || [] : []);
   const call: AlgorithmCall | null = property ? (slot && isAlgorithm(slot) ? slot : null) : "algorithmId" in source ? instantiate(scene.algorithms, source.algorithmId) : null;
-  if (!call) throw new Error("펜에는 알고리즘이 들어 있는 property만 담을 수 있습니다.");
+  if (!call) throw new Error("A pen can only hold a property that contains an algorithm.");
   const algorithm = findAlgorithm(scene.algorithms, call.algorithmId)!;
   return semanticPenSchema.parse({
     id, name: `${algorithm.name} pen`.slice(0, 100), color, sourceSketchId,
@@ -26,7 +26,7 @@ export function makeAlgorithmPen(scene: Scene, source: PenSource, sourceSketchId
 /** Copy a node's semantic transformation (its properties as they are, and the algorithms they use) into a pen. No AI call. */
 export function makeTransformationPen(scene: Scene, nodeId: string, transformationId: string, sourceSketchId: string, id: string, color: string): SemanticPen {
   const node = findNode(scene, nodeId), transformation = node && findTransformation(node, transformationId);
-  if (!node || !transformation) throw new Error("펜에 담을 transformation을 찾지 못했습니다.");
+  if (!node || !transformation) throw new Error("Could not find the transformation to put in the pen.");
   const refs = transformation.properties.flatMap(property => algorithmRefs(property.value));
   return semanticPenSchema.parse({
     kind: "transformation", id, name: `${transformation.label || "Transformation"} pen`.slice(0, 100), color, sourceSketchId,

@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "Tree · 자라기 refers to a property that does not exist.",
+  "stack": "Error: Tree · 자라기 refers to a property that does not exist.\n    at validateMachine (/Users/kmg/Desktop/Code/genbrush/rulegen/app/lib/scene/machines.ts:38:28)\n    at Object.finalize (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:137:7)\n    at respond (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:122:51)\n    at async runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:77:13)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async tryit (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:6:75)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:22:5)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:21:3)"
+}

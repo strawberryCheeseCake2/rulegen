@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "Provide a sketch over the result and a text clarification.",
+  "stack": "Error: Provide a sketch over the result and a text clarification.\n    at runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:74:22)\n    at runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:26)\n    at async tryit (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:6:75)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:26:5)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:25:3)"
+}

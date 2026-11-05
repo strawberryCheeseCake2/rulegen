@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "고친 미리보기 코드를 적용하지 못했습니다. 다시 시도해주세요.",
+  "stack": "Error: 고친 미리보기 코드를 적용하지 못했습니다. 다시 시도해주세요.\n    at Object.finalize (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:228:54)\n    at respond (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:122:51)\n    at async runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:77:13)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async waitForActual (node:assert:621:5)\n    at async strict.rejects (node:assert:744:25)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/recommendation-revise.test.ts:41:5)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async TestContext.<anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/recommendation-revise.test.ts:40:3)\n    at async Test.run (node:internal/test_runner/test:1113:7)"
+}

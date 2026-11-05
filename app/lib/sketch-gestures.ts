@@ -10,7 +10,7 @@ export const SKETCH_SHAPES = ["x", "circle", "arrow", "cut", "line", "tap", "che
 export type SketchShape = (typeof SKETCH_SHAPES)[number];
 type Point = { x: number; y: number };
 export type Area = { x: number; y: number; w: number; h: number };
-export const SHAPE_NAMES: Record<SketchShape, string> = { x: "X 표시", circle: "동그라미", arrow: "화살표", cut: "가르는 선", line: "선", tap: "콕 찍기", check: "체크 표시", scribble: "덧칠", trace: "따라 그리기", custom: "표시" };
+export const SHAPE_NAMES: Record<SketchShape, string> = { x: "X mark", circle: "circle", arrow: "arrow", cut: "cutting line", line: "line", tap: "tap", check: "check mark", scribble: "scribble", trace: "trace", custom: "mark" };
 /** What a mark is checked against: the area it goes on, and for some shapes where it goes to, the path to follow, or the mark's own shape. */
 export type MarkSpec = { shape: SketchShape; area: Area; to?: Point | null; path?: Point[]; template?: Point[] };
 
@@ -63,40 +63,40 @@ function shapeDistance(a: Point[], b: Point[]) {
 
 /**
  * Whether the strokes drawn so far make the mark, and what to tell the user
- * (Korean): what is recognized, or what is still missing.
+ * (English): what is recognized, or what is still missing.
  */
 export function recognizeMark(spec: MarkSpec, strokes: Point[][]): { ok: boolean; message: string } {
   const { shape, area } = spec;
   const drawn = strokes.filter(stroke => stroke.length > 0);
   const last = drawn.at(-1), name = SHAPE_NAMES[shape];
-  if (!last) return { ok: false, message: `${name}를 그려주세요.` };
-  const ok = { ok: true, message: `${name}를 알아봤습니다. 제출하면 이 단계가 실행됩니다.` };
-  const where = (points: Point[]) => onArea(points, area) ? ok : { ok: false, message: `${name}를 표시된 자리 위에 그려주세요.` };
-  if (shape === "tap") return pathLength(last) <= 12 ? (within(last[0], area, 12) ? ok : { ok: false, message: "표시된 자리를 콕 찍어주세요." }) : { ok: false, message: "끌지 말고 한 번 콕 찍어주세요." };
-  if (pathLength(last) < 8) return { ok: false, message: `${name}를 그려주세요.` };
+  if (!last) return { ok: false, message: `Draw the mark: ${name}.` };
+  const ok = { ok: true, message: `Recognized the ${name}. Submit to run this step.` };
+  const where = (points: Point[]) => onArea(points, area) ? ok : { ok: false, message: `Draw the ${name} on the marked spot.` };
+  if (shape === "tap") return pathLength(last) <= 12 ? (within(last[0], area, 12) ? ok : { ok: false, message: "Tap the marked spot." }) : { ok: false, message: "Tap once without dragging." };
+  if (pathLength(last) < 8) return { ok: false, message: `Draw the mark: ${name}.` };
   if (shape === "x") {
     const lines = drawn.filter(stroke => pathLength(stroke) >= 8);
-    if (lines.length < 2) return { ok: false, message: "두 번째 획을 그어 X를 완성하세요." };
+    if (lines.length < 2) return { ok: false, message: "Draw a second stroke to complete the X." };
     const [a, b] = lines.slice(-2);
-    if (straightness(a) < .7 || straightness(b) < .7 || pathLength(a) < 16 || pathLength(b) < 16) return { ok: false, message: "X는 곧은 두 획으로 그어주세요." };
-    if (!crosses(a[0], a.at(-1)!, b[0], b.at(-1)!)) return { ok: false, message: "두 획이 서로 교차하게 그어주세요." };
+    if (straightness(a) < .7 || straightness(b) < .7 || pathLength(a) < 16 || pathLength(b) < 16) return { ok: false, message: "Draw the X with two straight strokes." };
+    if (!crosses(a[0], a.at(-1)!, b[0], b.at(-1)!)) return { ok: false, message: "Make the two strokes cross each other." };
     const u = { x: a.at(-1)!.x - a[0].x, y: a.at(-1)!.y - a[0].y }, v = { x: b.at(-1)!.x - b[0].x, y: b.at(-1)!.y - b[0].y };
     const angle = Math.acos(Math.min(1, Math.abs(u.x * v.x + u.y * v.y) / Math.max(1e-9, Math.hypot(u.x, u.y) * Math.hypot(v.x, v.y)))) * 180 / Math.PI;
-    if (angle < 35) return { ok: false, message: "두 획이 엇갈리게(X 모양으로) 그어주세요." };
+    if (angle < 35) return { ok: false, message: "Cross the two strokes at an angle, like an X." };
     return where([...a, ...b]);
   }
   if (shape === "circle") {
     const size = box(last), span = Math.max(size.w, size.h);
-    if (span < 16 || pathLength(last) < 40) return { ok: false, message: "조금 더 크게 둘러 그려주세요." };
-    if (distance(last[0], last.at(-1)!) > Math.max(20, span * .35)) return { ok: false, message: "처음 자리까지 이어서 둘러싸 주세요." };
-    return inside(last, center(area)) || onArea(last, area) ? ok : { ok: false, message: "표시된 자리를 둘러싸 주세요." };
+    if (span < 16 || pathLength(last) < 40) return { ok: false, message: "Draw the circle a bit larger." };
+    if (distance(last[0], last.at(-1)!) > Math.max(20, span * .35)) return { ok: false, message: "Close the loop back where you started." };
+    return inside(last, center(area)) || onArea(last, area) ? ok : { ok: false, message: "Circle the marked spot." };
   }
   if (shape === "arrow" || shape === "line") {
-    if (straightness(last) < (shape === "arrow" ? .75 : .85) || pathLength(last) < 30) return { ok: false, message: shape === "arrow" ? "한 번에 쭉 그어주세요." : "곧게 한 번에 그어주세요." };
+    if (straightness(last) < (shape === "arrow" ? .75 : .85) || pathLength(last) < 30) return { ok: false, message: shape === "arrow" ? "Draw it in one continuous stroke." : "Draw one straight stroke." };
     // An arrow starts on what moves and ends where it goes; a line joins the area's ends (or lies on it).
     if (shape === "arrow" && spec.to) {
-      if (!within(last[0], area)) return { ok: false, message: "옮길 것에서 시작해 그어주세요." };
-      return distance(last.at(-1)!, spec.to) <= Math.max(28, distance(last[0], spec.to) * .3) ? ok : { ok: false, message: "가야 할 자리까지 그어주세요." };
+      if (!within(last[0], area)) return { ok: false, message: "Start the stroke on the thing to move." };
+      return distance(last.at(-1)!, spec.to) <= Math.max(28, distance(last[0], spec.to) * .3) ? ok : { ok: false, message: "Draw all the way to where it should go." };
     }
     return where(last);
   }
@@ -104,21 +104,21 @@ export function recognizeMark(spec: MarkSpec, strokes: Point[][]): { ok: boolean
     // Through it: from outside, across, to outside.
     const a = normal(area), corners = [{ x: a.x, y: a.y }, { x: a.x + a.w, y: a.y }, { x: a.x + a.w, y: a.y + a.h }, { x: a.x, y: a.y + a.h }];
     const through = corners.some((corner, i) => crosses(last[0], last.at(-1)!, corner, corners[(i + 1) % 4]));
-    if (straightness(last) < .7) return { ok: false, message: "한 번에 곧게 그어 갈라주세요." };
-    return through && !within(last[0], area, 0) && !within(last.at(-1)!, area, 0) ? ok : { ok: false, message: "바깥에서 시작해 표시된 것을 가로질러 반대편까지 그어주세요." };
+    if (straightness(last) < .7) return { ok: false, message: "Cut through it with one straight stroke." };
+    return through && !within(last[0], area, 0) && !within(last.at(-1)!, area, 0) ? ok : { ok: false, message: "Start outside and draw across the marked item to the other side." };
   }
   if (shape === "check") {
     // Down to a lowest point partway, then up farther than it came down.
     let low = 0; last.forEach((point, i) => { if (point.y > last[low].y) low = i; });
     const fraction = low / Math.max(1, last.length - 1), down = last[low].y - last[0].y, up = last[low].y - last.at(-1)!.y;
-    if (fraction < .1 || fraction > .8 || down < 6 || up < down * 1.1 || Math.sign(last[low].x - last[0].x) !== Math.sign(last.at(-1)!.x - last[low].x)) return { ok: false, message: "✓ 모양으로 짧게 내렸다가 길게 올려 그어주세요." };
+    if (fraction < .1 || fraction > .8 || down < 6 || up < down * 1.1 || Math.sign(last[low].x - last[0].x) !== Math.sign(last.at(-1)!.x - last[low].x)) return { ok: false, message: "Draw a ✓: a short stroke down, then a long stroke up." };
     return where(last);
   }
   if (shape === "scribble") {
     const size = box(last);
     let turns = 0, before = 0;
     for (let i = 1; i < last.length; i++) { const dx = Math.sign(last[i].x - last[i - 1].x); if (dx && before && dx !== before) turns++; if (dx) before = dx; }
-    if (turns < 3 || pathLength(last) < 2 * (size.w + size.h)) return { ok: false, message: "그 자리를 여러 번 왔다 갔다 덧칠해주세요." };
+    if (turns < 3 || pathLength(last) < 2 * (size.w + size.h)) return { ok: false, message: "Scribble back and forth over the spot several times." };
     return where(last);
   }
   if (shape === "trace") {
@@ -127,11 +127,11 @@ export function recognizeMark(spec: MarkSpec, strokes: Point[][]): { ok: boolean
     if (path.length < 2) return where(last);
     const near = (point: Point, points: Point[]) => Math.min(...points.map(other => distance(point, other)));
     const tolerance = Math.max(18, Math.max(box(path).w, box(path).h) * .12), drawnPoints = resample(last, 40), pathPoints = resample(path, 40);
-    if (drawnPoints.reduce((sum, point) => sum + near(point, pathPoints), 0) / drawnPoints.length > tolerance) return { ok: false, message: "표시된 길을 따라 가깝게 그려주세요." };
-    return pathPoints.filter(point => near(point, drawnPoints) <= tolerance * 1.5).length >= pathPoints.length * .7 ? ok : { ok: false, message: "길을 끝까지 따라 그려주세요." };
+    if (drawnPoints.reduce((sum, point) => sum + near(point, pathPoints), 0) / drawnPoints.length > tolerance) return { ok: false, message: "Stay close to the marked path as you draw." };
+    return pathPoints.filter(point => near(point, drawnPoints) <= tolerance * 1.5).length >= pathPoints.length * .7 ? ok : { ok: false, message: "Trace the path all the way to the end." };
   }
   // custom: the mark AI drew as a template, at any size, on the area.
   const template = spec.template ?? [];
   if (template.length < 2) return where(last);
-  return shapeDistance(drawn.length > 1 ? drawn.flat() : last, template) <= .2 ? where(drawn.flat()) : { ok: false, message: "보이는 모양처럼 그려주세요." };
+  return shapeDistance(drawn.length > 1 ? drawn.flat() : last, template) <= .2 ? where(drawn.flat()) : { ok: false, message: "Draw it like the shape shown." };
 }

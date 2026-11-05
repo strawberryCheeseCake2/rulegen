@@ -25,7 +25,7 @@ test("split asks for the transformation with the example's module code, and keep
   // One part (or none) is no division: the reason is given instead.
   await withMockedAI(() => ({ divisible: true, reason: "", algorithms: [], parts: [part("grow", "Grow", "grow")] }), async () => {
     const result = splitResultSchema.parse(await runAI(requestSchema.parse({ intent: "split", scene, targetNodeId: "orb", targetTransformationId: "pulse", previous: code, instruction: "" }), signal()));
-    assert.equal(result.divisible, false); assert.deepEqual(result.parts, []); assert.match(result.reason, /나눌/);
+    assert.equal(result.divisible, false); assert.deepEqual(result.parts, []); assert.match(result.reason, /no meaningful inner algorithms to divide/);
   });
 });
 
@@ -61,7 +61,7 @@ test("Decompose on a minimal example divides its transformation: the example sta
   deps.request = async () => ({ divisible: false, reason: "하나의 감쇠식입니다.", algorithms: [], parts: [] });
   await sceneAI(deps, "ex").decompose();
   assert.equal(Object.keys(panels).filter(id => id.startsWith("sketch-")).length, 2);
-  assert.match(toasts.at(-1)!, /더 쪼갤 수 없습니다: 하나의 감쇠식입니다/);
+  assert.match(toasts.at(-1)!, /Cannot be divided further: 하나의 감쇠식입니다/);
 });
 
 test("a transformation pen carries the example's transformation as it is (properties, values, algorithms) and goes to Compose with the marks", () => {

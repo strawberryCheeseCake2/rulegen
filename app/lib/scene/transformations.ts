@@ -42,7 +42,7 @@ export function canAddProperty(node: SceneNode, transformationId?: string | null
 }
 
 export function addTransformation(node: SceneNode, transformation: Partial<SemanticTransformation> = {}): { node: SceneNode; id: string } {
-  if (!canAddTransformation(node)) throw new Error(`한 노드에는 semantic transformation을 ${MAX_TRANSFORMATIONS}개까지 둘 수 있습니다.`);
+  if (!canAddTransformation(node)) throw new Error(`A node can have at most ${MAX_TRANSFORMATIONS} semantic transformations.`);
   const id = uniqueTransformationId(node, transformation.id || transformation.label || "transformation");
   return { node: { ...node, transformations: [...node.transformations, { label: "", description: "", properties: [], ...transformation, id }] }, id };
 }
@@ -60,18 +60,38 @@ export function moveTransformation(node: SceneNode, transformationId: string, of
   return { ...node, transformations };
 }
 
+/** Room in `node` for `transformation` brought over from another node. */
+export const canTakeTransformation = (node: SceneNode, transformation: SemanticTransformation) =>
+  canAddTransformation(node) && nodeProperties(node).length + transformation.properties.length <= MAX_NODE_PROPERTIES;
+/**
+ * A transformation brought over from another node, put before `beforeId` (none: at the end). Its id and its
+ * property ids are made unique in this node, since state values and live keys address properties by id.
+ */
+export function takeTransformation(node: SceneNode, transformation: SemanticTransformation, beforeId?: string | null): SceneNode {
+  if (!canTakeTransformation(node, transformation)) throw new Error(`“${node.name}” has no room for “${transformation.label || transformation.id}”.`);
+  const used = new Set(nodeProperties(node).map(property => property.id));
+  const properties = transformation.properties.map(property => {
+    let id = property.id, suffix = 2; while (used.has(id)) id = `${property.id}-${suffix++}`;
+    used.add(id); return { ...property, id };
+  });
+  const moved = { ...transformation, id: uniqueTransformationId(node, transformation.id), properties };
+  const at = node.transformations.findIndex(item => item.id === beforeId);
+  const transformations = [...node.transformations]; transformations.splice(at < 0 ? transformations.length : at, 0, moved);
+  return { ...node, transformations };
+}
+
 /**
  * Add a property (its id made unique for the node) to a transformation; without
  * a target it goes to the last transformation with room, or a new one.
  */
 export function appendProperty(node: SceneNode, property: Property, transformationId?: string | null, newLabel = "Transformation"): { node: SceneNode; propertyId: string } {
-  if (nodeProperties(node).length >= MAX_NODE_PROPERTIES) throw new Error(`한 노드에는 property를 ${MAX_NODE_PROPERTIES}개까지 둘 수 있습니다.`);
+  if (nodeProperties(node).length >= MAX_NODE_PROPERTIES) throw new Error(`A node can have at most ${MAX_NODE_PROPERTIES} properties.`);
   let next = node, target = findTransformation(node, transformationId) || [...node.transformations].reverse().find(item => !transformationId && item.properties.length < MAX_PROPERTIES);
   if (!target) {
-    if (transformationId) throw new Error("property를 넣을 transformation을 찾지 못했습니다.");
+    if (transformationId) throw new Error("Could not find the transformation to add the property to.");
     const added = addTransformation(node, { label: newLabel }); next = added.node; target = findTransformation(next, added.id)!;
   }
-  if (target.properties.length >= MAX_PROPERTIES) throw new Error(`한 transformation에는 property를 ${MAX_PROPERTIES}개까지 둘 수 있습니다.`);
+  if (target.properties.length >= MAX_PROPERTIES) throw new Error(`A transformation can have at most ${MAX_PROPERTIES} properties.`);
   const propertyId = uniquePropertyId(next, property.id);
   return { node: updateTransformation(next, target.id, item => ({ ...item, properties: [...item.properties, { ...property, id: propertyId }] })), propertyId };
 }
@@ -83,10 +103,10 @@ export function appendProperty(node: SceneNode, property: Property, transformati
 export function placeTransformation(node: SceneNode, generated: SemanticTransformation, target: { transformationId?: string; propertyId?: string }): SceneNode {
   if (target.propertyId) {
     const replacement = generated.properties.find(property => property.id === target.propertyId);
-    if (!replacement || generated.properties.length !== 1 || !findProperty(node, target.propertyId)) throw new Error("생성된 property가 선택과 다릅니다. 다시 시도해주세요.");
+    if (!replacement || generated.properties.length !== 1 || !findProperty(node, target.propertyId)) throw new Error("The generated property does not match the selection. Try again.");
     return updateProperty(node, target.propertyId, () => replacement);
   }
-  if (target.transformationId && !findTransformation(node, target.transformationId)) throw new Error("다시 만들 semantic transformation을 찾지 못했습니다.");
+  if (target.transformationId && !findTransformation(node, target.transformationId)) throw new Error("Could not find the semantic transformation to regenerate.");
   const others = node.transformations.filter(item => item.id !== target.transformationId);
   const taken = new Set(others.flatMap(item => item.properties.map(property => property.id)));
   const properties = generated.properties.map(property => {
@@ -94,7 +114,7 @@ export function placeTransformation(node: SceneNode, generated: SemanticTransfor
     while (taken.has(id)) id = `${property.id.slice(0, 70)}-${suffix++}`;
     taken.add(id); return { ...property, id };
   });
-  if (others.flatMap(item => item.properties).length + properties.length > MAX_NODE_PROPERTIES) throw new Error(`한 노드에는 property를 ${MAX_NODE_PROPERTIES}개까지 둘 수 있습니다.`);
+  if (others.flatMap(item => item.properties).length + properties.length > MAX_NODE_PROPERTIES) throw new Error(`A node can have at most ${MAX_NODE_PROPERTIES} properties.`);
   if (target.transformationId) return { ...node, transformations: node.transformations.map(item => item.id === target.transformationId ? { ...generated, id: item.id, properties } : item) };
   return addTransformation(node, { ...generated, properties }).node;
 }

@@ -20,7 +20,7 @@ export function cropFrom(points: Point[], n: number): Pick<PreviewManipulation, 
   const outline = points.filter((_, i) => i % Math.max(1, Math.ceil(points.length / MAX_CROP_POINTS)) === 0).slice(0, MAX_CROP_POINTS).map(p => ({ x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }));
   const xs = outline.map(p => p.x), ys = outline.map(p => p.y), box = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
   if (outline.length < 3 || box.w < 8 || box.h < 8 || area(outline) < 100) return null;
-  return { object: `crop:${n}`, label: `크롭 #${n + 1}`, box, outline };
+  return { object: `crop:${n}`, label: `Crop #${n + 1}`, box, outline };
 }
 /** SVG path of an outline (closed). */
 export const outlinePath = (outline: Point[]) => outline.length ? `M${outline.map(p => `${p.x},${p.y}`).join("L")}Z` : "";
@@ -76,9 +76,9 @@ export function dragManipulation(start: Manip, part: "move" | "scale" | "rotate"
 const round = (value: number, by = 10) => Math.round(value * by) / by;
 /** Whether a manipulation changes anything. */
 export const manipulated = (item: Pick<Manip, "dx" | "dy" | "scale" | "rotate">) => Math.abs(item.dx) >= .5 || Math.abs(item.dy) >= .5 || Math.abs(item.scale - 1) >= .01 || Math.abs(item.rotate) >= .5;
-/** In plain words for the panel (Korean). */
-export const manipulationText = (item: Manip) => [Math.abs(item.dx) >= .5 || Math.abs(item.dy) >= .5 ? `이동 ${Math.round(item.dx)}, ${Math.round(item.dy)}px` : "",
-  Math.abs(item.scale - 1) >= .01 ? `크기 ×${item.scale.toFixed(2)}` : "", Math.abs(item.rotate) >= .5 ? `회전 ${Math.round(item.rotate)}°` : ""].filter(Boolean).join(" · ") || "그대로";
+/** In plain words for the panel (English). */
+export const manipulationText = (item: Manip) => [Math.abs(item.dx) >= .5 || Math.abs(item.dy) >= .5 ? `Move ${Math.round(item.dx)}, ${Math.round(item.dy)}px` : "",
+  Math.abs(item.scale - 1) >= .01 ? `Scale ×${item.scale.toFixed(2)}` : "", Math.abs(item.rotate) >= .5 ? `Rotate ${Math.round(item.rotate)}°` : ""].filter(Boolean).join(" · ") || "Unchanged";
 
 /**
  * Showing AI how a picture should look, on the picture itself: parts of it cropped by hand (a freeform outline drawn

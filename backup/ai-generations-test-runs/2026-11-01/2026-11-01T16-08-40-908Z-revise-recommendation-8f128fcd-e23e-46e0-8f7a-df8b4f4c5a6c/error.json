@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "Draw an annotation on the preview, move an object or handle, or describe how to revise it.",
+  "stack": "Error: Draw an annotation on the preview, move an object or handle, or describe how to revise it.\n    at runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:74:22)\n    at runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:26)\n    at async waitForActual (node:assert:621:5)\n    at async strict.rejects (node:assert:744:25)\n    at async TestContext.<anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/recommendation-revise.test.ts:47:3)\n    at async Test.run (node:internal/test_runner/test:1113:7)\n    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3)"
+}

@@ -16,6 +16,7 @@ import type { AppliedSnapshot, SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
 import { annotatedImage, compactMarks, manipulatedImage } from "./annotated-image";
 import type { ExecutionMoment } from "../lib/explore";
+import { hookField, type FieldHook } from "../lib/fields";
 import type { StudioDeps } from "./deps";
 
 type Change = { key: string; stateId: string; value: number | string | boolean };
@@ -41,7 +42,7 @@ export function applyChanges(deps: StudioDeps, owner: string, changes: Change[])
       const patch = ops.setPropertyScalar({ ...panel, scene, editingStates }, binding.nodeId, binding.path[0], binding.path.slice(1), value);
       if (patch.scene) { scene = patch.scene; applied++; }
     }
-    return applied ? ops.commitScene(panel, scene) : { error: "적용할 수 있는 값이 없습니다." };
+    return applied ? ops.commitScene(panel, scene) : { error: "There are no values that can be applied." };
   });
 }
 
@@ -54,9 +55,9 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
   /** `previews`: also write a quick visual preview for each recommendation; `onTimed`: how long the AI took (ms). */
   options: { previews?: boolean; onTimed?: (ms: number) => void } = {}) {
   const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner);
-  if (!nodeIds.length) { deps.updatePanel(owner, { error: `이 프레임에는 ${brush.name} brush가 없습니다.` }); return null; }
+  if (!nodeIds.length) { deps.updatePanel(owner, { error: `This frame has no ${brush.name} brush.` }); return null; }
   const snapshot = JSON.stringify(panel.scene), out: { result?: InspectResult } = {};
-  await deps.task(update ? "AI가 추가된 transformation이 보이도록 targeted inspection overlay를 고치고 있습니다…" : "AI가 이 concern에 맞는 targeted inspection을 만들고 있습니다…", async () => {
+  await deps.task(update ? "AI is updating the targeted inspection overlay to show the added transformation…" : "AI is creating a targeted inspection for this concern…", async () => {
     // The result is held at the selected step, so the live capture shows that moment.
     const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
     const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
@@ -68,11 +69,13 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: stepValues(item)!, runtime: runtimeForAI(item, nodeIds) })),
         marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update, previews: Boolean(options.previews) } }, owner));
     options.onTimed?.(performance.now() - started);
-    if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("검사 중 장면이 변경되었습니다. 다시 시도해주세요.");
+    if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The scene changed during inspection. Please try again.");
     out.result = result;
   }, owner);
   // The overlays read a per-item quantity the module computes but did not keep on its items: it now records it (code only, nothing drawn changes).
   if (out.result?.records) await applyRecording(deps, owner, out.result.records);
+  // The fields the concern is about are declared in the code, so they can be shown and combed (nothing drawn changes).
+  for (const hook of out.result?.fields ?? []) await applyFieldHook(deps, owner, hook);
   return out.result ?? null;
 }
 
@@ -93,7 +96,7 @@ export async function suggestConcerns(deps: StudioDeps, owner: string, brush: Br
   const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "concern", scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.slice(0, 2000), image,
     inspection: { brushName: brush.name, nodeIds, constraints: [], steps: [], cursor: null, marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS) } }) });
   const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "concern을 제안하지 못했습니다.");
+  if (!response.ok || result.error) throw new Error(result.error || "Could not suggest concerns.");
   return concernSuggestionsSchema.parse(result).suggestions;
 }
 
@@ -105,7 +108,7 @@ export async function suggestConcerns(deps: StudioDeps, owner: string, brush: Br
 export async function reviseRecommendation(deps: StudioDeps, owner: string, brush: Brush, context: { concern: string; summary: string; recommendation: Recommendation },
   edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string; adjusted: { key: string; label: string; from: Scalar; to: Scalar }[] }, signal: AbortSignal): Promise<RevisedRecommendation> {
   const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner), at = heldIndex(state);
-  if (!nodeIds.length || at === null) throw new Error("이 프레임의 brush와 기록된 단계가 필요합니다.");
+  if (!nodeIds.length || at === null) throw new Error("This frame's brush and recorded steps are needed.");
   const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
   const rows = constraintRows(panel.scene, nodeIds), item = context.recommendation;
   const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "revise-recommendation", scene: panel.scene, targetNodeId: nodeIds[0], instruction: edit.note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
@@ -115,7 +118,7 @@ export async function reviseRecommendation(deps: StudioDeps, owner: string, brus
       revise: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500), manipulations: edit.manipulations.slice(0, 12), adjusted: edit.adjusted.slice(0, 12),
         recommendation: { kind: item.kind, nodeId: item.nodeId, targetId: item.targetId, targetIds: item.targetIds, title: item.title, detail: item.detail, changes: item.changes, preview: item.preview ? { ...item.preview, marks: item.preview.marks ?? [], handles: item.preview.handles ?? [] } : null } } } }) });
   const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "recommendation을 고치지 못했습니다.");
+  if (!response.ok || result.error) throw new Error(result.error || "Could not revise the recommendation.");
   return revisedRecommendationSchema.parse(result);
 }
 
@@ -127,7 +130,7 @@ export async function recommendFromExecution(deps: StudioDeps, owner: string, br
   context: { concern: string; summary: string; moment: ExecutionMoment; base: (Recommendation & { applied: boolean }) | null; listed: Recommendation[]; step: { runtime: unknown; values: Record<string, Scalar> } },
   edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string }, signal: AbortSignal): Promise<RevisedRecommendation> {
   const panel = deps.panel(owner), nodeIds = brushNodeIds(panel.scene, brush, owner);
-  if (!nodeIds.length) throw new Error("이 프레임의 brush가 필요합니다.");
+  if (!nodeIds.length) throw new Error("This frame's brush is needed.");
   const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
   const rows = constraintRows(panel.scene, nodeIds), base = context.base;
   const step = { id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: context.step.values, runtime: context.step.runtime };
@@ -142,7 +145,7 @@ export async function recommendFromExecution(deps: StudioDeps, owner: string, br
           preview: base.preview ? { ...base.preview, marks: base.preview.marks ?? [], handles: base.preview.handles ?? [] } : null },
         applied: Boolean(base?.applied), listed: context.listed.map(item => item.title.slice(0, 160)).slice(0, 12) } } }) });
   const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "recommendation을 만들지 못했습니다.");
+  if (!response.ok || result.error) throw new Error(result.error || "Could not create the recommendation.");
   return revisedRecommendationSchema.parse(result);
 }
 
@@ -195,11 +198,11 @@ export async function applyRecommendation(deps: StudioDeps, owner: string, recom
  * applied entry, so Undo apply takes both back. Returns whether it was added.
  */
 export async function acceptParameter(deps: StudioDeps, owner: string, item: ParameterSuggestion) {
-  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `「${item.label}」을(를) 추가하지 못했습니다: ${why}` }); return false; };
-  if (!panel.generated) return fail("이 프레임에 코드가 없습니다");
+  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `Could not add “${item.label}”: ${why}` }); return false; };
+  if (!panel.generated) return fail("This frame has no code");
   const result = exposeParameter(panel.scene, panel.generated, item);
-  if ("error" in result) return fail(`${result.error}. 코드가 바뀌었으면 Inspect again을 해주세요`);
-  return swapModule(deps, owner, result, moduleKeyOf(panel.scene, item.nodeId)!, { title: `${item.label} 노출`, key: `parameter:${item.nodeId}:${item.id}` }, fail);
+  if ("error" in result) return fail(`${result.error}. If the code changed, use Inspect again`);
+  return swapModule(deps, owner, result, moduleKeyOf(panel.scene, item.nodeId)!, { title: `Expose ${item.label}`, key: `parameter:${item.nodeId}:${item.id}` }, fail);
 }
 
 /**
@@ -208,12 +211,22 @@ export async function acceptParameter(deps: StudioDeps, owner: string, item: Par
  * changes (in place, one applied entry). Returns whether it was applied now.
  */
 export async function applyRecording(deps: StudioDeps, owner: string, item: Recording) {
-  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `항목 기록(${item.fields.join(", ")})을 추가하지 못했습니다: ${why}` }); return false; };
-  if (!panel.generated) return fail("이 프레임에 코드가 없습니다");
+  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `Could not add item records (${item.fields.join(", ")}): ${why}` }); return false; };
+  if (!panel.generated) return fail("This frame has no code");
   if (recordingApplied(panel.scene, panel.generated.code, item)) return false;
   const result = recordFields(panel.scene, panel.generated, item);
-  if ("error" in result) return fail(`${result.error}. 코드가 바뀌었으면 Inspect again을 해주세요`);
-  return swapModule(deps, owner, { scene: panel.scene, generated: result.generated }, moduleKeyOf(panel.scene, item.nodeId)!, { title: `항목 기록: ${item.fields.join(", ")}`, key: `records:${item.nodeId}:${item.fields.join(",")}` }, fail);
+  if ("error" in result) return fail(`${result.error}. If the code changed, use Inspect again`);
+  return swapModule(deps, owner, { scene: panel.scene, generated: result.generated }, moduleKeyOf(panel.scene, item.nodeId)!, { title: `Item records: ${item.fields.join(", ")}`, key: `records:${item.nodeId}:${item.fields.join(",")}` }, fail);
+}
+
+/** Declare a field the concern is about in the frame's code (m.field around where the code computes it); nothing drawn changes. */
+export async function applyFieldHook(deps: StudioDeps, owner: string, hook: FieldHook) {
+  const panel = deps.panel(owner), fail = (why: string) => { deps.updatePanel(owner, { error: `Could not show the field “${hook.name}”: ${why}` }); return false; };
+  if (!panel.generated) return fail("This frame has no code");
+  const result = hookField(panel.scene, panel.generated, hook);
+  if ("error" in result) return fail(`${result.error}. If the code changed, use Inspect again`);
+  if (result.generated === panel.generated) return true;
+  return swapModule(deps, owner, { scene: panel.scene, generated: result.generated }, moduleKeyOf(panel.scene, hook.nodeId)!, { title: `Field: ${hook.name}`, key: `field:${hook.nodeId}:${hook.id}` }, fail);
 }
 
 /**
@@ -225,8 +238,8 @@ async function swapModule(deps: StudioDeps, owner: string, next: { scene: Scene;
   const panel = deps.panel(owner), before = snapshot(panel), code = next.generated.code, previous = panel.generated?.code;
   let executable: string;
   try { executable = preparedFor(code) ?? await prepareProgram(code); }
-  catch (error) { return fail(error instanceof Error ? error.message : "코드 검사를 통과하지 못했습니다"); }
-  if (deps.panel(owner).generated?.code !== previous) return fail("그 사이 코드가 바뀌었습니다");
+  catch (error) { return fail(error instanceof Error ? error.message : "The code did not pass the check"); }
+  if (deps.panel(owner).generated?.code !== previous) return fail("The code changed in the meantime");
   const preview = deps.preview(owner), text = programModules(executable).get(moduleKey);
   if (text && panel.executable && preview?.isReadyFor(panel.executable)) preview.inject(text, executable, moduleKey);
   deps.updatePanel(owner, current => {

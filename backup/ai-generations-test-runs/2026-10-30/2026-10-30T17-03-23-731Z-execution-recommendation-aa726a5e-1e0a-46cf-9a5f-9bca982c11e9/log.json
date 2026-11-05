@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-30T17-03-23-731Z-execution-recommendation-aa726a5e-1e0a-46cf-9a5f-9bca982c11e9",
+  "intent": "execution-recommendation",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-10-30T17:03:23.731Z",
+  "status": "failed",
+  "finishedAt": "2026-10-30T17:03:23.748Z",
+  "durationMs": 17
+}

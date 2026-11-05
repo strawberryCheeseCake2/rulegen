@@ -18,9 +18,9 @@ export function BrushRoleBanner({ role, nodeName, masterFrame, onMaster, onDetac
   const { brush, master } = role;
   return <div className={`brush-role-banner ${master ? "master" : "instance"}`} role="note" aria-label={`${brush.name} brush ${master ? "master" : "instance"}`}>
     <div className="brush-role-heading"><BrushRoleBadge role={role} /><strong>{brush.name}</strong><i style={{ background: brush.color }} /></div>
-    {master ? <span>{nodeName === brush.name ? "이 노드가" : `「${nodeName}」가 속한 collection이`} brush의 원본입니다. 여기서 바꾼 semantic transformation과 state machine은 앞으로 찍는 brush에 쓰입니다.</span>
-      : <span>{masterFrame ? <>이 brush의 instance입니다. Semantic transformation과 state machine은 master(<b>{masterFrame}</b>)에서 바꾸거나, detach해서 새 brush로 만든 뒤 바꾸세요.</>
-        : <>이 brush의 master가 있던 프레임이 삭제되었습니다. 이 instance를 master로 지정하거나 detach해서 새 brush로 만든 뒤 바꾸세요.</>}</span>}
+    {master ? <span>{nodeName === brush.name ? "This node is" : `The collection “${nodeName}” belongs to is`} the brush's original. Semantic transformations and state machines changed here are used by brushes you stamp from now on.</span>
+      : <span>{masterFrame ? <>This is an instance of the brush. Change semantic transformations and state machines on the master (<b>{masterFrame}</b>), or detach it into a new brush and change them there.</>
+        : <>The frame that held this brush's master was deleted. Make this instance the master, or detach it into a new brush and change it there.</>}</span>}
     <div className="brush-role-actions">
       {!master && (masterFrame ? <button onClick={onMaster}><Icon name="arrow" size={12} />Go to master</button> : <button onClick={onAdopt}>◆ Make master</button>)}
       {!master && <button onClick={onDetach}><Icon name="brush" size={12} />Detach as new brush</button>}
@@ -34,9 +34,9 @@ export function DetachDialog({ prompt, brushName, masterFrame, onDetach, onMaste
   return <div className="modal-backdrop" onClick={onCancel}><div className="modal detach-dialog" role="dialog" aria-modal="true" aria-labelledby="detach-title" onClick={e => e.stopPropagation()}>
     <button className="modal-close" aria-label="Close dialog" onClick={onCancel}><Icon name="close" /></button>
     <div className="section-kicker">◇ BRUSH INSTANCE</div>
-    <h2 id="detach-title">Instance는 brush를 따릅니다.</h2>
-    <p>「{prompt.nodeName}」는 <b>{brushName}</b> brush의 instance라서 <b>{prompt.what}</b>을(를) 여기서 바꾸면 brush와 달라집니다.
-      Detach하면 이 instance가 <b>새 brush의 master</b>가 되고, 방금 한 변경이 적용됩니다. 원래 brush와 다른 instance는 그대로입니다.</p>
+    <h2 id="detach-title">Instances follow their brush.</h2>
+    <p>“{prompt.nodeName}” is an instance of the <b>{brushName}</b> brush, so changing <b>{prompt.what}</b> here makes it differ from the brush.
+      Detaching makes this instance <b>the master of a new brush</b> and applies the change you just made. The original brush and its other instances stay as they are.</p>
     <button className="primary-button" autoFocus onClick={onDetach}>Detach and create new brush<Icon name="brush" /></button>
     {masterFrame ? <button className="alternative-button" onClick={onMaster}>Edit the master in {masterFrame}<Icon name="arrow" size={15} /></button>
       : <button className="alternative-button" onClick={onAdopt}>Make this instance the master and apply</button>}

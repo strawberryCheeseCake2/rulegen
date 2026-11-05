@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"summary\":\"s\",\"overlays\":[],\"valueFixes\":[],\"recommendations\":[],\"parameters\":[],\"records\":null,\"fields\":[{\"id\":\"flow\",\"nodeId\":\"tree\",\"name\":\"Flow direction\",\"reason\":\"The lines bunch where the flow converges.\",\"edits\":[{\"find\":\"p.stroke(m.v(\\\"tree/ink\\\"));\",\"replace\":\"const flow = m.field(\\\"flow\\\", (x, y) => 0); m.store.heading = flow(0, 0); p.stroke(m.v(\\\"tree/ink\\\"));\"}]},{\"id\":\"wind\",\"nodeId\":\"tree\",\"name\":\"Flow direction\",\"reason\":\"The lines bunch where the flow converges.\",\"edits\":[{\"find\":\"p.stroke(m.v(\\\"tree/ink\\\"));\",\"replace\":\"const flow = noField(\\\"wind\\\", (x, y) => 0); m.store.heading = flow(0, 0); p.stroke(m.v(\\\"tree/ink\\\"));\"}]}]}"
+        }
+      ]
+    }
+  ]
+}

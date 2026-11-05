@@ -572,6 +572,65 @@
           "type": "null"
         }
       ]
+    },
+    "fields": {
+      "default": [],
+      "maxItems": 2,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,40}$"
+          },
+          "nodeId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "edits": {
+            "maxItems": 4,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "find": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 3000
+                },
+                "replace": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 6000
+                }
+              },
+              "required": [
+                "find",
+                "replace"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "nodeId",
+          "name",
+          "reason",
+          "edits"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -580,7 +639,8 @@
     "valueFixes",
     "recommendations",
     "parameters",
-    "records"
+    "records",
+    "fields"
   ],
   "additionalProperties": false
 }

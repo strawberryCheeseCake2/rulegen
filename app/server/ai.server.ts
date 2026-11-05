@@ -66,9 +66,9 @@ function userContent(input: AIInput) {
 type Message = { role: "user" | "assistant"; content: object[] | string };
 
 async function runGeneration(input: AIInput, signal: AbortSignal, log: AIGenerationLog) {
-  if (!process.env.OPENAI_API_KEY) throw new Error("서버의 .env.local에 OPENAI_API_KEY를 설정해주세요.");
-  if (!isIntent(input.intent)) throw new Error("알 수 없는 생성 요청입니다.");
-  if (inFlight >= 2) throw new Error("요청이 진행 중입니다. 잠시 후 다시 시도해주세요.");
+  if (!process.env.OPENAI_API_KEY) throw new Error("Set OPENAI_API_KEY in the server's .env.local.");
+  if (!isIntent(input.intent)) throw new Error("Unknown generation request.");
+  if (inFlight >= 2) throw new Error("A request is in progress. Please try again in a moment.");
   const intent = intents[input.intent];
   const problem = intent.check?.(input);
   if (problem) throw new Error(problem);
@@ -76,9 +76,9 @@ async function runGeneration(input: AIInput, signal: AbortSignal, log: AIGenerat
   try {
     return (await respond(input, [{ role: "user", content: userContent(input) }], signal, log, 1)).result;
   } catch (error) {
-    if (error instanceof z.ZodError || error instanceof SyntaxError) throw new Error("모델 응답을 해석하지 못했습니다. 다시 생성해주세요.", { cause: error });
-    if (signal.aborted) throw new Error("요청이 취소되었습니다.", { cause: error });
-    if (error instanceof Error && /timeout|abort|fetch failed/i.test(error.message)) throw new Error("OpenAI 연결 시간이 초과되었습니다. 네트워크를 확인하고 다시 시도해주세요.", { cause: error });
+    if (error instanceof z.ZodError || error instanceof SyntaxError) throw new Error("Could not parse the model response. Please generate again.", { cause: error });
+    if (signal.aborted) throw new Error("The request was canceled.", { cause: error });
+    if (error instanceof Error && /timeout|abort|fetch failed/i.test(error.message)) throw new Error("The connection to OpenAI timed out. Check your network and try again.", { cause: error });
     throw error;
   } finally { inFlight--; }
 }
@@ -109,15 +109,15 @@ async function respond(input: AIInput, messages: Message[], signal: AbortSignal,
   await log.response(response, rawBody, attempt);
   if (!response.ok) {
     const code = providerCode(rawBody);
-    const message: Record<number, string> = { 400: "모델이 이미지 또는 구조화된 응답을 지원하지 않거나 요청 형식이 맞지 않습니다. OPENAI_MODEL을 확인해주세요.", 401: "OpenAI API 키를 확인해주세요.", 403: "이 API 키에는 모델 사용 권한이 없습니다.", 404: `설정한 모델 ${model}을 사용할 수 없습니다. OPENAI_MODEL을 확인해주세요.`,
-      429: code === "insufficient_quota" ? "OpenAI 사용 한도에 도달했습니다. 결제·사용량을 확인해주세요." : "OpenAI 요청 한도에 도달했습니다. 자동 재시도 후에도 계속되어 중단했습니다. 잠시 후 다시 시도해주세요.",
-      503: "OpenAI 서버가 과부하 상태입니다. 자동으로 다시 시도했지만 계속 실패했습니다. 잠시 후 다시 시도해주세요." };
-    throw new OpenAIError(message[response.status] || `OpenAI 서버 오류 (${response.status})${code ? ` · ${code}` : ""}. 자동 재시도 후에도 실패했습니다. 잠시 후 다시 시도해주세요.`, response.status, code);
+    const message: Record<number, string> = { 400: "The model does not support images or structured output, or the request format is invalid. Check OPENAI_MODEL.", 401: "Check your OpenAI API key.", 403: "This API key does not have access to the model.", 404: `The configured model ${model} is not available. Check OPENAI_MODEL.`,
+      429: code === "insufficient_quota" ? "The OpenAI usage quota has been reached. Check your billing and usage." : "The OpenAI rate limit was reached and persisted after automatic retries, so the request was stopped. Please try again in a moment.",
+      503: "The OpenAI server is overloaded. Automatic retries kept failing. Please try again in a moment." };
+    throw new OpenAIError(message[response.status] || `OpenAI server error (${response.status})${code ? ` · ${code}` : ""}. It still failed after automatic retries. Please try again in a moment.`, response.status, code);
   }
   const body = JSON.parse(rawBody);
-  if (body.status === "incomplete") throw new Error("생성 응답이 완료되지 않았습니다. 더 간단한 장면으로 다시 시도해주세요.");
+  if (body.status === "incomplete") throw new Error("The generation response was incomplete. Please try again with a simpler scene.");
   const text: string = body.output?.flatMap((item: { content?: { type: string; text?: string }[] }) => item.content || []).filter((item: { type: string }) => item.type === "output_text").map((item: { text: string }) => item.text).join("");
-  if (!text) throw new Error("모델이 결과를 반환하지 않았습니다. 다른 이미지나 설명으로 시도해주세요.");
+  if (!text) throw new Error("The model returned no result. Try a different image or description.");
   const output = (intent.variant?.(input)?.schema ?? intent.schema).parse(JSON.parse(text));
   return { text, result: intent.finalize ? intent.finalize(input, output) : output };
 }

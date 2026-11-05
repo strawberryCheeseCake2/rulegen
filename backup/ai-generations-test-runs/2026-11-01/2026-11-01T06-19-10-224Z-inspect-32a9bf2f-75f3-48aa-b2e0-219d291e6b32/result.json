@@ -1,0 +1,22 @@
+{
+  "summary": "s (1 field(s) could not be hooked into the code to show them. Please try again with Inspect again.)",
+  "overlays": [],
+  "valueFixes": [],
+  "recommendations": [],
+  "parameters": [],
+  "records": null,
+  "fields": [
+    {
+      "id": "flow",
+      "nodeId": "tree",
+      "name": "Flow direction",
+      "reason": "The lines bunch where the flow converges.",
+      "edits": [
+        {
+          "find": "p.stroke(m.v(\"tree/ink\"));",
+          "replace": "const flow = m.field(\"flow\", (x, y) => 0); p.stroke(m.v(\"tree/ink\"));"
+        }
+      ]
+    }
+  ]
+}

@@ -22,6 +22,7 @@ test("every AI output restores to its own sketch and leaves other sketches intac
   const outputs: Record<string, unknown> = {
     extract: scene, compose: renamed, transform: renamed, "state-machine": withMachine, code,
     "compose-prompt": { prompt: "new prompt" },
+    "tag-revise": { tagId: "a", index: 0, transformation: { label: "Fading", effect: "stylistic", how: "", pen: null, properties: [] }, note: "" },
     "machine-refine": { scene: withMachine, composePrompt: "- refined prompt" },
     clarification: { clarification: "가지를 키워줘" },
     revision: { summary: "가지를 키웁니다", scene: renamed },

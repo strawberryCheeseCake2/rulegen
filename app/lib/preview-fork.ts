@@ -19,7 +19,7 @@ import { sceneBindings } from "./scene/values";
 
 /** The fork's scene and code from a recommendation's preview, or why it cannot be made. */
 export function previewFork(scene: Scene, generated: GeneratedCode, recommendation: Pick<Recommendation, "kind" | "nodeId" | "targetId" | "title" | "detail">, preview: Pick<RecommendationPreview, "edits" | "values"> & { machine?: RecommendationPreview["machine"] }): { scene: Scene; generated: GeneratedCode } | { error: string } {
-  if (!preview.edits.length) return { error: "미리보기 코드가 없습니다" };
+  if (!preview.edits.length) return { error: "There is no preview code" };
   const program = exploreProgram(generated.code, scene, preview);
   if ("error" in program) return program;
   // The values go on the nodes that read them: one transformation per node with the recommendation's name and
@@ -29,7 +29,7 @@ export function previewFork(scene: Scene, generated: GeneratedCode, recommendati
   for (const value of preview.values) owners.set(value.nodeId, [...(owners.get(value.nodeId) ?? []), { id: value.id, label: value.label, effect: "spatial", description: "", value: value.value }]);
   let next = scene;
   for (const [nodeId, properties] of owners) {
-    const node = findNode(next, nodeId); if (!node) return { error: "추천이 바꾸는 노드를 찾지 못했습니다" };
+    const node = findNode(next, nodeId); if (!node) return { error: "Could not find the node the recommendation changes" };
     const codeId = node.codeId ?? node.id, module = moduleKeyOf(next, nodeId);
     const ids = new Set([nodeId, ...sceneInstances(next).filter(instance => instance.module === module).map(instance => instance.map[codeId]).filter(Boolean)]);
     for (const id of ids) {
@@ -40,7 +40,7 @@ export function previewFork(scene: Scene, generated: GeneratedCode, recommendati
   }
   // What it makes the brush react to is in its state machine too (the edits emit it).
   next = applyMachineChange(next, "machine" in preview ? preview.machine : null);
-  try { next = sceneSchema.parse(next); } catch { return { error: "미리보기 값을 property로 넣지 못했습니다" }; }
+  try { next = sceneSchema.parse(next); } catch { return { error: "Could not add the preview values as properties" }; }
   return { scene: next, generated: { ...generated, code: syncScene(program.code, next), sceneBindings: sceneBindings(next) } };
 }
 
@@ -48,10 +48,10 @@ function describe(node: SceneNode, recommendation: Pick<Recommendation, "kind" |
   const fresh = properties.filter(property => !nodeProperties(node).some(existing => existing.id === property.id));
   const changed = recommendation.kind === "transformation" ? findTransformation(node, recommendation.targetId) : undefined;
   if (changed) {
-    if (changed.properties.length + fresh.length > MAX_PROPERTIES) return { error: "그 transformation에 property를 더 넣을 수 없습니다" };
+    if (changed.properties.length + fresh.length > MAX_PROPERTIES) return { error: "No more properties can be added to that transformation" };
     return { node: updateTransformation(node, changed.id, item => ({ ...item, description: `${item.description}\n${recommendation.title}: ${recommendation.detail}`.trim().slice(0, 1000), properties: [...item.properties, ...fresh] })) };
   }
   if (!fresh.length && recommendation.kind !== "add-transformation") return { node };
-  if (node.transformations.length >= MAX_TRANSFORMATIONS) return { error: "노드에 transformation을 더 넣을 수 없습니다" };
+  if (node.transformations.length >= MAX_TRANSFORMATIONS) return { error: "No more transformations can be added to the node" };
   return { node: addTransformation(node, { label: recommendation.title.slice(0, 100), description: recommendation.detail.slice(0, 1000), properties: fresh.slice(0, MAX_PROPERTIES) }).node };
 }

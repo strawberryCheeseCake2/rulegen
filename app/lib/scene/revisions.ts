@@ -32,7 +32,7 @@ export function sceneChanges(before: Scene, after: Scene): SceneChange[] {
   const a = entries(before), b = entries(after);
   return [...new Set([...a.keys(), ...b.keys()])].flatMap(key => {
     const old = a.get(key), next = b.get(key);
-    return old?.value === next?.value ? [] : [{ kind: (!old ? "add" : !next ? "remove" : "change") as SceneChange["kind"], path: next?.path || old!.path, before: old?.value ?? "없음", after: next?.value ?? "없음" }];
+    return old?.value === next?.value ? [] : [{ kind: (!old ? "add" : !next ? "remove" : "change") as SceneChange["kind"], path: next?.path || old!.path, before: old?.value ?? "none", after: next?.value ?? "none" }];
   });
 }
 
@@ -41,7 +41,7 @@ export function settleProposal(current: Scene, proposed: Scene): Scene {
   return { ...proposed, nodes: proposed.nodes.map(node => { const old = current.nodes.find(item => item.id === node.id); return old ? keepHandles(old, { ...node, region: old.region }) : node; }) };
 }
 export function validateSceneProposal(current: Scene, proposed: Scene) {
-  if (!sceneChanges(current, proposed).length) throw new Error("실제 변경 제안이 없습니다. 수정 요청을 구체적으로 입력해주세요.");
+  if (!sceneChanges(current, proposed).length) throw new Error("No actual changes were proposed. Make your edit request more specific.");
 }
 
 export const sceneRevisionSnapshot = (scene: Scene, code: string, annotations: ResultAnnotation[], instruction: string, image: string) => JSON.stringify({ scene, code, annotations, instruction, image });

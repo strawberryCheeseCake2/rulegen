@@ -1,3 +1,4 @@
+import { fieldHookSchema, MAX_FIELD_HOOKS, type FieldStroke } from "./fields";
 import { z } from "zod";
 import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema, suggestionKey, type ParameterSuggestion } from "./hidden-parameters";
 import { findNode } from "./scene/graph";
@@ -53,6 +54,8 @@ export type InspectionState = {
   /** The style of each mark, by index (a missing one is the default). */
   markStyles: MarkStyle[];
   focus: InspectionFocus | null;
+  /** What-if combs of the fields the brush is driven by (by "<root>/<field id>"): the held step is drawn with them; nothing else changes. */
+  fieldEdits?: Record<string, FieldStroke[]>;
 };
 /** The step an inspection holds the result at: the one picked, else the latest (null when nothing is recorded). */
 export const heldIndex = (state: Pick<InspectionState, "steps" | "cursor">) => state.steps.length ? Math.min(state.cursor ?? state.steps.length - 1, state.steps.length - 1) : null;
@@ -143,7 +146,7 @@ export const handleSchema = z.object({
   pivotX: z.string().max(400), pivotY: z.string().max(400),
   /** The new value from the pointer: hx, hy (pointer), sx, sy (pointer at the start), dx, dy, start (the value at the start), px, py (pivot), angle, startAngle, dist, startDist (around the pivot). */
   value: z.string().max(600),
-  /** What the gesture does, in plain words (Korean, about 20 characters), e.g. "끝을 끌어 휘게". */
+  /** What the gesture does, in plain words (about 20 characters), e.g. "Drag the tip to bend". */
   hint: z.string().max(80),
 });
 export type OverlayHandle = z.infer<typeof handleSchema>;
@@ -179,6 +182,8 @@ export const inspectResultSchema = z.object({
   parameters: z.array(parameterSuggestionSchema).max(MAX_PARAMETER_SUGGESTIONS).default([]),
   /** Fields added to the module's item records so overlays can read a per-item quantity it computes but did not keep (applied with the result). */
   records: recordingSchema.nullable().default(null),
+  /** Fields of the brush the concern is about (a flow or direction field): shown over the held step and combed by hand. */
+  fields: z.array(fieldHookSchema).max(MAX_FIELD_HOOKS).default([]),
 });
 /**
  * A targeted tool's stored result. A new-transformation recommendation that was
@@ -195,7 +200,7 @@ export type PreviewMark = z.input<typeof previewMarkSchema>;
  * edits read. Run on the held step's marks in the panel; nothing is applied.
  */
 export const recommendationPreviewSchema = z.object({ caption: z.string().max(160),
-  edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(1500), replace: z.string().min(1).max(4000) })).max(4),
+  edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(3000), replace: z.string().min(1).max(12000) })).max(4),
   values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3),
   /** The states and transitions the change brings to the brush's state machine (the edits emit its event transitions). */
   machine: machineChangeSchema.nullable().default(null),
@@ -210,7 +215,7 @@ export const previewMarkOverlay = (mark: PreviewMark, nodeId = ""): Overlay => (
 export const inspectPreviewResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() })).max(6) });
 /** Recommendations a targeted tool keeps: the inspection's (6 at most) and ones made later from its Execution frames. */
 export const MAX_LISTED_RECOMMENDATIONS = 12;
-export const targetedResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(MAX_LISTED_RECOMMENDATIONS),
+export const targetedResultSchema = inspectResultSchema.extend({ fields: z.array(fieldHookSchema).max(MAX_FIELD_HOOKS).optional(), recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(MAX_LISTED_RECOMMENDATIONS),
   /** A suggested parameter the user turned down keeps `rejected`. */
   parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
@@ -312,7 +317,7 @@ function tokenize(source: string): Token[] {
     const number = /^(\d+\.?\d*|\.\d+)(e[+-]?\d+)?/i.exec(source.slice(i));
     if (number) { tokens.push({ type: "num", value: Number(number[0]) }); i += number[0].length; continue; }
     if (char === "\"" || char === "'") {
-      const end = source.indexOf(char, i + 1); if (end < 0) throw new Error("문자열이 닫히지 않았습니다.");
+      const end = source.indexOf(char, i + 1); if (end < 0) throw new Error("Unterminated string.");
       tokens.push({ type: "str", value: source.slice(i + 1, end) }); i = end + 1; continue;
     }
     const word = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(i));
@@ -320,7 +325,7 @@ function tokenize(source: string): Token[] {
     const pair = source.slice(i, i + 2);
     if (["<=", ">=", "==", "!=", "&&", "||"].includes(pair)) { tokens.push({ type: "op", value: pair }); i += 2; continue; }
     if ("+-*/%(),<>!".includes(char)) { tokens.push({ type: "op", value: char }); i++; continue; }
-    throw new Error(`수식에 쓸 수 없는 문자: ${char}`);
+    throw new Error(`Character not allowed in an expression: ${char}`);
   }
   return tokens;
 }
@@ -369,8 +374,8 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
   const tokens = tokenize(source); let index = 0;
   const peek = () => tokens[index], take = () => tokens[index++];
   const isOp = (...values: string[]) => peek()?.type === "op" && values.includes(peek()!.value as string);
-  const expect = (value: string) => { const token = take(); if (token?.type !== "op" || token.value !== value) throw new Error(`'${value}'가 필요합니다.`); };
-  const text = (what: string) => { const token = take(); if (token?.type !== "str") throw new Error(`${what}에는 문자열이 필요합니다.`); return token.value; };
+  const expect = (value: string) => { const token = take(); if (token?.type !== "op" || token.value !== value) throw new Error(`Expected '${value}'.`); };
+  const text = (what: string) => { const token = take(); if (token?.type !== "str") throw new Error(`${what} needs a string.`); return token.value; };
   const own = context.itemValues && context.item !== undefined ? context.itemValues[itemIdOf(context.item) ?? ""] : undefined;
   const read = (values: Record<string, Scalar> | undefined, key: string) => values ? numeric((values === context.values ? own?.[key] : undefined) ?? values[key] ?? context.fallback?.[key]) : NaN;
   function call(name: string): number {
@@ -390,7 +395,7 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
     else if (name === "nearest") { const x = or(); expect(","); value = nearestProgress(context, x, or()); }
     else if (name === "nearestStep") { const x = or(); expect(","); value = Math.round(nearestProgress(context, x, or()) * pathPoints(context).length); }
     else {
-      const fn = FUNCTIONS[name]; if (!fn) throw new Error(`알 수 없는 함수: ${name}`);
+      const fn = FUNCTIONS[name]; if (!fn) throw new Error(`Unknown function: ${name}`);
       const args = [or()];
       while (isOp(",")) { take(); args.push(or()); }
       expect(")"); return fn(...args);
@@ -399,7 +404,7 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
   }
   function primary(): number {
     const token = take();
-    if (!token) throw new Error("수식이 끝났습니다.");
+    if (!token) throw new Error("Unexpected end of expression.");
     if (token.type === "num") return token.value;
     if (token.type === "op" && token.value === "(") { const value = or(); expect(")"); return value; }
     if (token.type === "op" && token.value === "-") return -primary();
@@ -413,7 +418,7 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
       if (context.vars && Object.hasOwn(context.vars, token.value)) return context.vars[token.value];
       return call(token.value);
     }
-    throw new Error("수식을 읽지 못했습니다.");
+    throw new Error("Could not parse the expression.");
   }
   function product(): number {
     let value = primary();
@@ -436,7 +441,7 @@ export function evaluate(source: string, input: Record<string, Scalar> | Overlay
   function and(): number { let value = compare(); while (isOp("&&")) { take(); const right = compare(); value = Number(Boolean(value) && Boolean(right)); } return value; }
   function or(): number { let value = and(); while (isOp("||")) { take(); const right = and(); value = Number(Boolean(value) || Boolean(right)); } return value; }
   const value = or();
-  if (index < tokens.length) throw new Error("수식 뒤에 남은 내용이 있습니다.");
+  if (index < tokens.length) throw new Error("Unexpected content after the expression.");
   return value;
 }
 
@@ -638,17 +643,17 @@ export function handleProblem(handle: OverlayHandle, spec: { type: string } | un
   const runtime = isRuntimeKey(handle.key), move = handle.gesture === "move";
   if (runtime) {
     const target = handle.key.includes("${") ? { kind: handle.key.startsWith(STORE_KEY) ? "store" : "input" } : runtimeTarget(handle.key);
-    if (!target) return `실행 상태를 가리키지 못했습니다: ${handle.key.slice(0, 60)}`;
-    if (!move && target.kind !== "store") return "입력 경로는 move로만 옮길 수 있습니다";
-  } else if (move) return "move는 실행 상태(@input, @store)만 옮깁니다";
-  else if (!spec || (spec.type !== "number" && spec.type !== "toggle")) return "숫자나 토글 값만 조절할 수 있습니다";
+    if (!target) return `Does not point to an Execution state: ${handle.key.slice(0, 60)}`;
+    if (!move && target.kind !== "store") return "An input path can only be moved with move";
+  } else if (move) return "move only moves Execution state (@input, @store)";
+  else if (!spec || (spec.type !== "number" && spec.type !== "toggle")) return "Only number or toggle values can be adjusted";
   const vars = Object.fromEntries(HANDLE_VARIABLES.map(name => [name, 1]));
   const check: OverlayContext = { values: {}, stores: {}, states: {}, step: 0, steps: 1, item: {}, itemIndex: 0, vars };
   for (const source of [handle.x, handle.y, handle.value, handle.pivotX, handle.pivotY]) {
     // A move needs no value (it is where the pointer goes), nor a place (it sits on its point).
     if (move && (source === handle.value || !source.trim())) continue;
     if (!source.trim() && (source === handle.pivotX || source === handle.pivotY)) continue;
-    try { evaluate(source, check); } catch { return `수식을 읽지 못했습니다: ${source.slice(0, 60)}`; }
+    try { evaluate(source, check); } catch { return `Could not parse the expression: ${source.slice(0, 60)}`; }
   }
   return null;
 }
@@ -745,6 +750,7 @@ export function remapResult(result: InspectResultInput, ids: Map<string, string>
     // The edits are module code: it uses the code's node ids, the same in every frame.
     parameters: (result.parameters ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
     records: result.records ? { ...result.records, nodeId: map(result.records.nodeId) } : null,
+    fields: (result.fields ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
   };
 }
 /**

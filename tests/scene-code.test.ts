@@ -66,31 +66,31 @@ test("the module contract: one self-contained module per root, reading only its 
   const close = sceneProgram.lastIndexOf("});");
   const inside = (extra: string) => sceneProgram.replace("    mousePressed()", `    keyPressed() { ${extra} },\n    mousePressed()`);
   const variants: [string, RegExp][] = [
-    [sceneProgram.replace('m.v("tree/ink")', '"#000000"'), /연결하지 못했습니다/],
-    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/unknown")'), /연결이 올바르지/],
-    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/" + "speed")'), /연결이 올바르지/],
-    [inside("const read = m.v;"), /직접 호출/],
+    [sceneProgram.replace('m.v("tree/ink")', '"#000000"'), /could not be connected to the code/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/unknown")'), /property connections in the generated code are invalid/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/" + "speed")'), /property connections in the generated code are invalid/],
+    [inside("const read = m.v;"), /m\.v must be called directly/],
     [inside("helper(m);"), /m\.v \/ m\.box/],
-    [inside("rulegenParams[\"orb/radius\"] = 3;"), /접근할 수 없습니다/],
-    [inside("rulegenEmit(\"orb\", \"press\");"), /접근할 수 없습니다/],
+    [inside("rulegenParams[\"orb/radius\"] = 3;"), /cannot access rulegenParams/],
+    [inside("rulegenEmit(\"orb\", \"press\");"), /cannot access rulegenEmit/],
     [inside('m.emit("orb", "settle-now");'), /m\.emit/],
     [inside('m.emit("tree", "press");'), /m\.emit/],
     [inside('m.state("tree");'), /m\.state/],
-    [inside("p.draw = () => {};"), /p의 속성/],
+    [inside("p.draw = () => {};"), /cannot change properties of p/],
     [inside("p.background(0);"), /p\.background/],
     [inside("m.p.noLoop();"), /p\.noLoop/],
-    [inside("shared = 1;"), /전역 변수/],
+    [inside("shared = 1;"), /undeclared global variable shared/],
     [`${sceneProgram}\nlet shared = 0;`, /rulegenModule/],
-    [sceneProgram.replace('rulegenModule("tree"', 'rulegenModule("orb"'), /루트 노드 ID/],
-    [sceneProgram.replace("function (m)", "function (ctx)"), /형태/],
+    [sceneProgram.replace('rulegenModule("tree"', 'rulegenModule("orb"'), /must be a root node ID/],
+    [sceneProgram.replace("function (m)", "function (ctx)"), /must take the form/],
     [`const rulegenState = {};\n${sceneProgram}`, /rulegenModule/],
-    [`// @rulegen-scene:start\n${sceneProgram}`, /호스트/],
+    [`// @rulegen-scene:start\n${sceneProgram}`, /Host connection blocks/],
   ];
   assert.ok(close > 0);
   for (const [code, error] of variants) assert.throws(() => connect(code), error, code.slice(-120));
   // A second root node needs its own module.
   const scene = sampleScene(), split = updateNode(scene, "orb", node => ({ ...node, parentId: null }));
-  assert.throws(() => connect(sceneProgram, split), /연결이 올바르지|모듈이 필요/);
+  assert.throws(() => connect(sceneProgram, split), /property connections in the generated code are invalid|Each root node needs a module/);
 });
 
 test("modules are stored separately and run as instances: a copy with other node ids draws from the same module", async () => {
@@ -131,7 +131,7 @@ test("module state lives in m.store: the factory scope holds only functions and 
   assert.throws(() => connect(body("let x = 0;")), /m\.store/);
   assert.throws(() => connect(body("const trail = [];")), /m\.store/);
   assert.throws(() => connect(body("const v = p.createVector(1, 2);")), /m\.store/);
-  assert.throws(() => connect(body("", "      m.store = {};\n")), /m\.store는 바꿔/);
+  assert.throws(() => connect(body("", "      m.store = {};\n")), /m\.store cannot be replaced/);
   assert.doesNotThrow(() => connect(body("const TAU = Math.PI * 2, R = 3; const step = () => 1;", "      m.store.t = (m.store.t || 0) + TAU;\n")));
 });
 
@@ -194,8 +194,8 @@ test("modules derive input-made things from m.history(), so a value change adjus
     };
   }`;
   // m.history() passes the context check (this module just does not wire every property).
-  assert.throws(() => connect(`rulegenModule("tree", ${derived});`, scene), /property를 코드에 연결/);
-  assert.throws(() => connect(`rulegenModule("tree", function (m) { return { draw() { m.history(1); } }; });`, scene), /인자 없이/);
+  assert.throws(() => connect(`rulegenModule("tree", ${derived});`, scene), /properties could not be connected to the code/);
+  assert.throws(() => connect(`rulegenModule("tree", function (m) { return { draw() { m.history(1); } }; });`, scene), /called without arguments/);
   const sketch = run(assembleProgram(scene, [moduleSource("tree", derived)]));
   sketch.read("p.mouseX = 10; p.mouseY = 10; p.mousePressed(); for (let i = 1; i <= 20; i++) { p.mouseX = 10 + i; p.mouseDragged(); } p.mouseReleased();");
   assert.equal(sketch.read("rulegenGestures.length"), 1);

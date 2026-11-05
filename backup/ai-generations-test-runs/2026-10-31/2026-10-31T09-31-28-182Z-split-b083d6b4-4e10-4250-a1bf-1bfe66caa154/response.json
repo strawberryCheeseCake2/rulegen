@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"divisible\":true,\"reason\":\"둘로 나눴습니다.\",\"algorithms\":[],\"parts\":[{\"id\":\"pulse\",\"label\":\"Grow\",\"description\":\"Grow 설명\",\"properties\":[{\"id\":\"grow\",\"label\":\"grow\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":3,\"min\":0,\"max\":10,\"step\":1,\"unit\":\"\"}}]},{\"id\":\"drift\",\"label\":\"Drift\",\"description\":\"Drift 설명\",\"properties\":[{\"id\":\"drift\",\"label\":\"drift\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":3,\"min\":0,\"max\":10,\"step\":1,\"unit\":\"\"}}]}]}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "2026-10-29T16-57-11-113Z-split-452c1fe4-39cd-4671-b051-d5ff1d0c0ecc",
+  "intent": "split",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-10-29T16:57:11.113Z",
+  "status": "success",
+  "httpStatus": 200,
+  "openaiRequestId": null,
+  "finishedAt": "2026-10-29T16:57:11.149Z",
+  "durationMs": 36
+}

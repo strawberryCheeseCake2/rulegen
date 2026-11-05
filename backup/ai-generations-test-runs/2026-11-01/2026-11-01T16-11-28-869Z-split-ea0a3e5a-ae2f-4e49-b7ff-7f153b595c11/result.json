@@ -1,0 +1,156 @@
+{
+  "divisible": true,
+  "reason": "둘로 나눴습니다.",
+  "algorithms": [
+    {
+      "id": "power-decay",
+      "name": "Power decay",
+      "description": "값 = base * ratio^depth",
+      "params": [
+        {
+          "id": "base",
+          "label": "Base",
+          "description": "첫 세대 길이",
+          "value": {
+            "type": "number",
+            "value": 140,
+            "min": 20,
+            "max": 300,
+            "step": 1,
+            "unit": "px"
+          }
+        },
+        {
+          "id": "ratio",
+          "label": "Ratio",
+          "description": "감소 비율",
+          "value": {
+            "type": "number",
+            "value": 0.7,
+            "min": 0.3,
+            "max": 0.95,
+            "step": 0.01,
+            "unit": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "recursive-branch",
+      "name": "Recursive branch",
+      "description": "depth 세대까지 둘로 갈라지고 length로 길이를 정합니다.",
+      "params": [
+        {
+          "id": "depth",
+          "label": "Depth",
+          "description": "세대 수",
+          "value": {
+            "type": "number",
+            "value": 6,
+            "min": 1,
+            "max": 9,
+            "step": 1,
+            "unit": ""
+          }
+        },
+        {
+          "id": "length",
+          "label": "Length",
+          "description": "세대별 길이",
+          "value": {
+            "type": "algorithm",
+            "algorithmId": "power-decay",
+            "args": [
+              {
+                "id": "base",
+                "value": {
+                  "type": "number",
+                  "value": 140,
+                  "min": 20,
+                  "max": 300,
+                  "step": 1,
+                  "unit": "px"
+                }
+              },
+              {
+                "id": "ratio",
+                "value": {
+                  "type": "number",
+                  "value": 0.7,
+                  "min": 0.3,
+                  "max": 0.95,
+                  "step": 0.01,
+                  "unit": ""
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "sine-wave",
+      "name": "Sine wave",
+      "description": "amplitude*sin(t*cycles)",
+      "params": [
+        {
+          "id": "amplitude",
+          "label": "Amplitude",
+          "description": "",
+          "value": {
+            "type": "number",
+            "value": 20,
+            "min": 0,
+            "max": 80,
+            "step": 1,
+            "unit": "px"
+          }
+        }
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "id": "pulse-2",
+      "label": "Grow",
+      "description": "Grow 설명",
+      "properties": [
+        {
+          "id": "grow",
+          "label": "grow",
+          "effect": "spatial",
+          "description": "",
+          "value": {
+            "type": "number",
+            "value": 3,
+            "min": 0,
+            "max": 10,
+            "step": 1,
+            "unit": ""
+          }
+        }
+      ]
+    },
+    {
+      "id": "drift",
+      "label": "Drift",
+      "description": "Drift 설명",
+      "properties": [
+        {
+          "id": "drift",
+          "label": "drift",
+          "effect": "spatial",
+          "description": "",
+          "value": {
+            "type": "number",
+            "value": 3,
+            "min": 0,
+            "max": 10,
+            "step": 1,
+            "unit": ""
+          }
+        }
+      ]
+    }
+  ]
+}

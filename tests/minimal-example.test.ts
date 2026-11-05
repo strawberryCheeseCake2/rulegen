@@ -24,7 +24,7 @@ test("a minimal example keeps only the chosen transformation, centered, without 
   assert.deepEqual(only.nodes.find(node => node.id === "tree")!.transformations.map(item => item.id), ["ink-wash"]);
   assert.ok(only.algorithms.length < scene.algorithms.length || tree.transformations.length === 1, "only the algorithms this transformation uses");
   for (const algorithm of only.algorithms) assert.ok(scene.algorithms.some(item => item.id === algorithm.id));
-  assert.throws(() => minimalExampleScene(scene, "orb", "missing"), /찾지 못했습니다/);
+  assert.throws(() => minimalExampleScene(scene, "orb", "missing"), /Could not find the Transformation/);
   assert.match(minimalExampleInstruction(tree, "ink-wash"), /minimal example/);
 });
 
@@ -60,9 +60,9 @@ test("regenerating opens a composer with what is attached, a text box and drawin
   assert.doesNotMatch(render(null), /REGENERATE WITH AI/, "nothing runs or opens until a regenerate button is pressed");
   const html = render({ nodeId: "tree", target: { transformationId: "ink-wash" }, instruction: "", annotating: false, marks: [] });
   assert.equal(html.match(/REGENERATE WITH AI/g)?.length, 1);
-  assert.match(html, /<b>Transformation<\/b>[^<]*첨부됨/); assert.match(html, /Draw on frame/); assert.match(html, /aria-label="How to regenerate"/);
+  assert.match(html, /<b>Transformation<\/b>[^<]* attached/); assert.match(html, /Draw on frame/); assert.match(html, /aria-label="How to regenerate"/);
   const drawn = render({ nodeId: "tree", target: {}, instruction: "흔들리게", annotating: true, marks: [[{ x: .1, y: .1 }, { x: .2, y: .2 }]] });
-  assert.match(drawn, /<b>New transformation<\/b>/); assert.match(drawn, /Annotation<\/b>1획 첨부됨/); assert.match(drawn, /Done drawing/);
+  assert.match(drawn, /<b>New transformation<\/b>/); assert.match(drawn, /Annotation<\/b>1 stroke attached/); assert.match(drawn, /Done drawing/);
 });
 
 test("the bottom panel (code, state machine, inspection) has a height handle on its top edge", async () => {
@@ -168,7 +168,7 @@ test("example frames show non-input transformations without input, keep the hint
     updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
     createFrame: () => { const id = `sketch-${++frames}`; panels[id] = createSketchPanel(); return id; },
     task: async (_label: string, work: () => Promise<void>, owner: string) => { try { await work(); } catch (error) { panels[owner] = { ...panels[owner], error: (error as Error).message }; } },
-    request: async (_intent: string, body: any) => { instructions.push(body.instruction); if (++calls <= 2) throw new Error("요청이 진행 중입니다. 잠시 후 다시 시도해주세요."); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
+    request: async (_intent: string, body: any) => { instructions.push(body.instruction); if (++calls <= 2) throw new Error("A request is in progress. Please try again in a moment."); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
   } as any;

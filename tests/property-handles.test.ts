@@ -63,7 +63,7 @@ test("handles are UI only: the code stays live, and they survive regeneration wh
 
 test("widget code is guarded like sketch code and may not take over the frame", () => {
   assert.throws(() => prepareHandle("p.ellipse(0, 0, 10, 10);"), /rulegenHandle/);
-  assert.throws(() => prepareHandle("rulegenHandle(function (h) { p.createCanvas(10, 10); return {}; });"), /캔버스/);
+  assert.throws(() => prepareHandle("rulegenHandle(function (h) { p.createCanvas(10, 10); return {}; });"), /does not create a canvas/);
   assert.throws(() => prepareHandle("rulegenHandle(function (h) { window.location = 'x'; return {}; });"), /window/);
   assert.match(prepareHandle(pullWidget), /__rulegenGuard\(\)/);
 });
@@ -95,10 +95,10 @@ test("AI builds one interface per property, with the property's meaning, scalars
     assert.doesNotMatch(calls[1].input[0].content[0].text, /rulegenHandle/);
   });
   await withMockedAI(() => output, async calls => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetTransformationId: "ink-wash" }), new AbortController().signal), /handle 코드를 실행할 수 없습니다: .*document/, "a widget using a blocked API is left out with why");
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetTransformationId: "ink-wash" }), new AbortController().signal), /Could not run the handle code: .*document/, "a widget using a blocked API is left out with why");
     assert.equal(calls.length, 1);
     // Never the whole node at once: one property or one transformation.
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree" }), new AbortController().signal), /property 하나나 transformation 하나/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree" }), new AbortController().signal), /one property or one transformation/);
     assert.equal(calls.length, 1, "no AI call for a whole-node request");
   });
   await withMockedAI(() => ({ handles: [{ propertyId: "radius", paths: [], hint: "", code: pullWidget }, { propertyId: "speed", paths: [], hint: "", code: pullWidget }] }), async calls => {
@@ -107,7 +107,7 @@ test("AI builds one interface per property, with the property's meaning, scalars
     assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).properties.map((item: { propertyId: string }) => item.propertyId), ["speed"]);
   });
   await withMockedAI(() => ({ handles: [{ propertyId: "ink", paths: [], hint: "", code: "rulegenHandle(function (h) { window.x = 1; return {}; });" }] }), async () => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetPropertyId: "ink" }), new AbortController().signal), /handle 코드를 실행할 수 없습니다/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetPropertyId: "ink" }), new AbortController().signal), /Could not run the handle code/);
   });
   assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ propertyId: "radius", paths: [["missing"]], hint: "", code: pullWidget }] }, { propertyId: "radius" }, code => code).handles[0].handle.paths, [[]], "no valid path: all of its scalars");
   assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ propertyId: "radius", paths: [], hint: "", code: pullWidget }] }, {}, code => code).handles, [], "no target: nothing (never the whole node)");

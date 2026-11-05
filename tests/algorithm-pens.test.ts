@@ -58,7 +58,7 @@ test("Make pen copies the chosen algorithm locally without producing drawing geo
   assert.equal(pen.source.label, "Tree · Branching"); assert.equal(pen.meaning, scene.algorithms.find(item => item.id === "recursive-branch")!.description);
   assert.equal(pen.sourceSketchId, "source"); assert.equal("primitives" in pen, false); assert.equal("settings" in pen, false);
   assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "missing" }, "source", "x", "#3b73c4"));
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /알고리즘/);
+  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /property that contains an algorithm/);
 });
 
 test("composition includes semantic snapshots and pencil marks with spatial and eraser order", () => {
@@ -106,7 +106,7 @@ test("Compose sends freeform geometry, pen algorithms and the prompt to AI witho
     const sent = JSON.parse(payload.input[0].content[0].text); assert.equal(sent.instruction, "Power를 증가 패턴으로 만들고 연필 경로와 조합"); assert.equal(depth(sent.compositionPens[0]), 5); assert.equal(sent.compositionPens[0].algorithm.call.algorithmId, "recursive-branch"); assert.equal(sent.compositionStrokes[1].tool, "pencil"); assert.equal(payload.input[0].content[1].image_url, image);
     assert.match(payload.instructions, /ordinary pencil line/); assert.match(payload.instructions, /jointly describe/); assert.deepEqual(result.nodes.map(node => node.id), ["tree", "orb"]);
     assert.equal(payload.text.format.name, "rulegen_compose"); assert.deepEqual(payload.text.format.schema.required.sort(), Object.keys(payload.text.format.schema.properties).sort());
-    await assert.rejects(runAI(requestSchema.parse({ intent: "compose", ...context, instruction: "Compose" }), new AbortController().signal), /스케치/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "compose", ...context, instruction: "Compose" }), new AbortController().signal), /A sketch and a Compose prompt \(or its tags on the sketch\) are needed/);
   } finally { globalThis.fetch = previousFetch; if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey; }
 });
 
@@ -115,25 +115,30 @@ test("AI drafts an editable Compose prompt from the image and stored stroke sema
   const previousFetch = globalThis.fetch, previousKey = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "test-placeholder";
   let payload: any;
   const prompt = "Power 펜의 exponent 2로 점점 커지는 패턴을 만들고, 연필로 그린 곡선을 따라 배치해줘.";
-  globalThis.fetch = async (_url, options) => { payload = JSON.parse(String(options?.body)); return Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ prompt }) }] }] }); };
+  const tags = [{ id: "t1", kind: "object", label: "Tree", parentId: "", strokeIds: ["stroke-1", "stroke-3", "stroke-9"], summary: "", members: "ignored", transformations: [{ label: "Growth", effect: "spatial", how: "", penId: "mark-pen-1", properties: [{ label: "Exponent", value: "2", how: "" }] }] }];
+  globalThis.fetch = async (_url, options) => { payload = JSON.parse(String(options?.body)); return Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ prompt, tags }) }] }] }); };
   try {
     const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], tool: "eraser", semanticPen: undefined }] });
     const image = "data:image/png;base64,YQ==";
     const input = requestSchema.parse({ intent: "compose-prompt", image, ...context });
     const result = compositionPromptSchema.parse(await runAI(input, new AbortController().signal));
     assert.equal(result.prompt, prompt);
+    // A tag keeps only drawn marks (no eraser, no unknown id), sits on them, and names its pen.
+    assert.deepEqual(result.tags.map(tag => [tag.id, tag.strokeIds, tag.members, tag.transformations[0].pen?.name]), [["t1", ["stroke-1"], "", context.compositionPens[0].name]]);
+    assert.ok(result.tags[0].box.w > 0 && result.tags[0].box.h > 0);
     const sent = JSON.parse(payload.input[0].content[0].text);
     assert.equal(sent.instruction, ""); assert.equal(sent.features, undefined);
     assert.equal(depth(sent.compositionPens[0]), 5);
     assert.deepEqual(sent.compositionStrokes.map((s: { tool: string }) => s.tool), ["semantic", "pencil", "eraser"]);
     assert.equal(payload.input[0].content[1].image_url, image);
-    assert.match(payload.instructions, /editable Korean composition prompt/); assert.match(payload.instructions, /No code/);
-    assert.equal(payload.text.format.name, "rulegen_compose-prompt"); assert.equal(payload.max_output_tokens, 2000);
+    assert.match(payload.instructions, /editable English composition prompt/); assert.match(payload.instructions, /No code/);
+    assert.equal(payload.text.format.name, "rulegen_compose-prompt"); assert.equal(payload.max_output_tokens, 6000);
+    assert.deepEqual(payload.text.format.schema.required, ["prompt", "tags"]); assert.match(payload.instructions, /Tags on the sketch/);
     const edited = "같은 Power exponent를 유지하면서 더 작게 배치해줘";
     await runAI(requestSchema.parse({ ...input, instruction: edited }), new AbortController().signal);
     assert.equal(JSON.parse(payload.input[0].content[0].text).instruction, edited);
-    await assert.rejects(runAI(requestSchema.parse({ intent: "compose-prompt" }), new AbortController().signal), /스케치 이미지/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "compose-prompt" }), new AbortController().signal), /A sketch image is needed/);
     globalThis.fetch = async () => Response.json({ output: [{ content: [{ type: "output_text", text: '{"prompt":"  "}' }] }] });
-    await assert.rejects(runAI(input, new AbortController().signal), /응답을 해석/);
+    await assert.rejects(runAI(input, new AbortController().signal), /Could not parse the model response/);
   } finally { globalThis.fetch = previousFetch; if (previousKey === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previousKey; }
 });

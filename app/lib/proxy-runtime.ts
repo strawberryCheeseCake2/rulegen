@@ -1,8 +1,13 @@
 import { GUARD_RUNTIME } from "./render-guard";
-import { CELL_HEADER, type Box, type HandleSpec } from "./scene/handles";
+import { CELL_HEADER, SECTION_HEADER, type Box, type HandleSpec } from "./scene/handles";
 
 /** One widget of a proxy frame as the runtime gets it. */
 export type ProxyCell = { id: string; label: string; hint: string; effect: string; box: Box; specs: Record<string, HandleSpec>; code: string };
+/** One transformation's section: its name, drawn around its widgets. */
+export type ProxySection = { id: string; label: string; box: Box; /** Its number among the node's transformations with widgets (stable when others are hidden). */ number: number };
+/** Each section's colors (fill, outline, ink), by number: the frame's header chips use the same. */
+export const PROXY_TINTS = [["#e9f1fb", "#8fb0d8", "#2d5b8e"], ["#f4ecfa", "#bb9bd3", "#6b3f8f"], ["#fbf1e4", "#dcb57e", "#8a5a1c"], ["#e7f5ec", "#8fc5a3", "#2f6e48"], ["#fbebee", "#dba0ab", "#8e3346"], ["#eeeef6", "#a5a5c9", "#45457a"]];
+export const proxyTint = (number: number) => PROXY_TINTS[(Math.max(1, number) - 1) % PROXY_TINTS.length];
 
 /**
  * The proxy frame's runtime (inside a sandboxed iframe, with p5 loaded). Each
@@ -12,8 +17,8 @@ export type ProxyCell = { id: string; label: string; hint: string; effect: strin
  * reports it to the parent (`set` messages); the parent sends the values back
  * (`values`) whenever the target changes. A failing widget only blanks its own cell.
  */
-export function proxyRuntime(token: string, cells: ProxyCell[]) {
-  return `const TOKEN=${JSON.stringify(token)},CELLS=${JSON.stringify(cells).replace(/<\/script/gi, "<\\/script")},HEADER=${CELL_HEADER};
+export function proxyRuntime(token: string, cells: ProxyCell[], sections: ProxySection[] = []) {
+  return `const TOKEN=${JSON.stringify(token)},CELLS=${JSON.stringify(cells).replace(/<\/script/gi, "<\\/script")},SECTIONS=${JSON.stringify(sections).replace(/<\/script/gi, "<\\/script")},HEADER=${CELL_HEADER},SECTION_HEADER=${SECTION_HEADER};
 ${GUARD_RUNTIME}
 const __send=message=>parent.postMessage(Object.assign({channel:'rulegen-proxy',token:TOKEN},message),'*');
 new p5(p=>{
@@ -54,7 +59,7 @@ new p5(p=>{
   function call(cell,name,arg){if(!cell||cell.error||!cell.widget||typeof cell.widget[name]!=='function')return;budgetReset();try{return cell.widget[name](cell.h,arg);}catch(error){fail(cell,error);}}
   for(const cell of cells){
     let factory=null;const rulegenHandle=f=>{factory=f;};
-    try{budgetReset();eval(cell.code);if(typeof factory!=='function')throw new Error('rulegenHandle(function (h) { … })로 widget을 등록해주세요.');cell.h=api(cell);cell.widget=factory(cell.h)||{};}catch(error){fail(cell,error);}
+    try{budgetReset();eval(cell.code);if(typeof factory!=='function')throw new Error('Register the widget with rulegenHandle(function (h) { … }).');cell.h=api(cell);cell.widget=factory(cell.h)||{};}catch(error){fail(cell,error);}
   }
   function wrap(text,width){const words=String(text).split(' '),lines=[''];for(const word of words){const line=lines[lines.length-1];if(line&&p.textWidth(line+' '+word)>width)lines.push(word);else lines[lines.length-1]=line?line+' '+word:word;}return lines;}
   function drawCell(cell){
@@ -69,8 +74,15 @@ new p5(p=>{
     call(cell,'draw');
     g.restore();p.pop();
   }
+  // Each transformation's widgets sit in its own tinted section, named and numbered.
+  const tints=${JSON.stringify(PROXY_TINTS)};
+  function drawSection(section){
+    const b=section.box,[fill,line,ink]=tints[(Math.max(1,section.number)-1)%tints.length];
+    p.push();p.rectMode(p.CORNER);p.stroke(line);p.strokeWeight(1.2);p.fill(fill);p.rect(b.x,b.y,b.w,b.h,12);
+    p.noStroke();p.fill(ink);p.textAlign(p.LEFT,p.BASELINE);p.textStyle(p.BOLD);p.textSize(13);p.text(section.number+' · '+section.label,b.x+10,b.y+SECTION_HEADER-7);p.pop();
+  }
   p.setup=()=>{p.createCanvas(900,600);p.frameRate(30);p.textFont('sans-serif');__send({type:'ready'});};
-  p.draw=()=>{budgetReset();try{p.background('#f4f7f1');cells.forEach(drawCell);flush(false);}catch(error){__send({type:'error',id:null,error:String(error&&error.message||error)});}};
+  p.draw=()=>{budgetReset();try{p.background('#f4f7f1');SECTIONS.forEach(drawSection);cells.forEach(drawCell);flush(false);}catch(error){__send({type:'error',id:null,error:String(error&&error.message||error)});}};
   const at=()=>cells.find(cell=>inside(cell,mx,my))||null;
   function pointer(kind,x,y){
     pmx=mx;pmy=my;mx=x;my=y;
@@ -90,9 +102,9 @@ new p5(p=>{
 }
 
 /** The iframe document of a proxy frame. */
-export function proxyDocument(token: string, origin: string, cells: ProxyCell[]) {
+export function proxyDocument(token: string, origin: string, cells: ProxyCell[], sections: ProxySection[] = []) {
   const send = `parent.postMessage({channel:'rulegen-proxy',token:${JSON.stringify(token)},type:'error',id:null,error:String(error)},'*')`;
   return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval' ${origin}; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none';"><style>html,body{margin:0;overflow:hidden;background:#f4f7f1}canvas{display:block}</style><script src="${origin}/vendor/p5.min.js"></script></head><body><script>
 window.onerror=(error)=>{${send}};
-try{${proxyRuntime(token, cells)}}catch(error){${send}}</script></body></html>`;
+try{${proxyRuntime(token, cells, sections)}}catch(error){${send}}</script></body></html>`;
 }

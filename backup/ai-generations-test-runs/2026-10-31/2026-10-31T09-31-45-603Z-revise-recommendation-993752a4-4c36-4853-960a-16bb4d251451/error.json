@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "The revised recommendation cannot be applied to this brush. Please try again.",
+  "stack": "Error: The revised recommendation cannot be applied to this brush. Please try again.\n    at settledRecommendation (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:79:185)\n    at Object.finalize (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:236:57)\n    at respond (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:122:51)\n    at async runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:77:13)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async waitForActual (node:assert:621:5)\n    at async strict.rejects (node:assert:744:25)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/recommendation-revise.test.ts:44:5)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async TestContext.<anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/recommendation-revise.test.ts:43:3)"
+}

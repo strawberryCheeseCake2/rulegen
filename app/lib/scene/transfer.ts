@@ -1,9 +1,9 @@
-import type { Algorithm, AlgorithmCall, Scene, SceneNode, Value } from "./schema";
+import type { Algorithm, AlgorithmCall, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
 import { MAX_SCENE_NODES, MAX_VALUE_DEPTH } from "./schema";
 import { algorithmClosure, algorithmRefs, findAlgorithm, importAlgorithms, remapValue } from "./algorithms";
 import { clampRegion, descendantIds, findNode, fitCollections, moveNodes, unionRegion, uniqueNodeId } from "./graph";
 import { conformMachine } from "./machines";
-import { appendProperty, findProperty, mapProperties, nodeProperties, updateProperty } from "./transformations";
+import { appendProperty, canTakeTransformation, findProperty, findTransformation, mapProperties, nodeProperties, takeTransformation, updateProperty } from "./transformations";
 import { validateScene } from "./validate";
 import { isAlgorithm, replaceAt, valueAt, valueDepth } from "./values";
 
@@ -28,8 +28,8 @@ function remapNode(node: SceneNode, ids: Map<string, string>): SceneNode {
 /** Paste a copied algorithm into any slot (property root or nested argument). Structural: base value only. */
 export function pasteAlgorithm(scene: Scene, nodeId: string, propertyId: string, path: string[], clip: AlgorithmClip): Scene {
   const node = findNode(scene, nodeId), property = node && findProperty(node, propertyId);
-  if (!node || !property || !valueAt(property.value, path)) throw new Error("붙여넣을 위치를 찾지 못했습니다.");
-  if (path.length + valueDepth(clip.call) > MAX_VALUE_DEPTH) throw new Error(`알고리즘은 최대 ${MAX_VALUE_DEPTH}단계까지 중첩할 수 있습니다.`);
+  if (!node || !property || !valueAt(property.value, path)) throw new Error("Could not find where to paste.");
+  if (path.length + valueDepth(clip.call) > MAX_VALUE_DEPTH) throw new Error(`Algorithms can be nested at most ${MAX_VALUE_DEPTH} levels deep.`);
   const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
   const call = remapValue(clip.call, ids);
   const value = replaceAt(property.value, path, () => call);
@@ -48,9 +48,9 @@ export function pasteAlgorithm(scene: Scene, nodeId: string, propertyId: string,
  */
 export function transplantNodes(source: Scene, nodeId: string, target: Scene, at?: { x: number; y: number }): { scene: Scene; rootId: string; ids: Map<string, string> } {
   const root = findNode(source, nodeId);
-  if (!root) throw new Error("옮길 collection 또는 object를 찾지 못했습니다.");
+  if (!root) throw new Error("Could not find the Collection or Object to move.");
   const subtree = [nodeId, ...descendantIds(source, nodeId)].map(id => findNode(source, id)!);
-  if (target.nodes.length + subtree.length > MAX_SCENE_NODES) throw new Error(`한 스케치에는 최대 ${MAX_SCENE_NODES}개의 노드를 둘 수 있습니다.`);
+  if (target.nodes.length + subtree.length > MAX_SCENE_NODES) throw new Error(`A sketch can have at most ${MAX_SCENE_NODES} nodes.`);
   const refs = subtree.flatMap(node => nodeValues(node).flatMap(value => isAlgorithm(value) ? algorithmRefs(value) : []));
   const { library, ids } = importAlgorithms(target.algorithms, algorithmClosure(source.algorithms, refs));
   const nodeIds = new Map<string, string>();
@@ -94,13 +94,36 @@ export function readAlgorithmDrag(data: DataTransfer): AlgorithmClip | null {
   } catch { return null; }
 }
 
+/** What "Copy" on a transformation in Layers puts on the studio clipboard: the transformation plus every algorithm definition it needs. */
+export type TransformationClip = { transformation: SemanticTransformation; library: Algorithm[]; label: string };
+export function copyTransformation(scene: Scene, nodeId: string, transformationId: string): TransformationClip {
+  const node = findNode(scene, nodeId), transformation = node && findTransformation(node, transformationId);
+  if (!transformation) throw new Error("Could not find the transformation to copy.");
+  const refs = transformation.properties.flatMap(property => algorithmRefs(property.value));
+  return { transformation: structuredClone(transformation), library: algorithmClosure(scene.algorithms, refs), label: transformation.label || transformation.id };
+}
+/**
+ * Paste a copied transformation into a node (of this sketch or another): after `afterId` (none: at the end), its
+ * algorithms brought into this library (renamed where an id means something else here), its ids made unique in the node.
+ */
+export function pasteTransformation(scene: Scene, nodeId: string, clip: TransformationClip, afterId?: string | null): Scene {
+  const node = findNode(scene, nodeId);
+  if (!node) throw new Error("Could not find where to paste.");
+  if (!canTakeTransformation(node, clip.transformation)) throw new Error(`“${node.name}” has no room for “${clip.label}”.`);
+  const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
+  const copy = { ...clip.transformation, properties: clip.transformation.properties.map(property => ({ ...property, value: remapValue(property.value, ids) })) };
+  const after = node.transformations.findIndex(item => item.id === afterId), before = after < 0 ? null : node.transformations[after + 1]?.id ?? null;
+  const next = takeTransformation(node, copy, before);
+  return validateScene({ ...scene, algorithms: library, nodes: scene.nodes.map(item => item.id === nodeId ? next : item) });
+}
+
 /**
  * Dropping a block on a transformation's "new socket" creates a property holding it
  * (without a target transformation: the last one with room, or a new one).
  */
 export function addBlockProperty(scene: Scene, nodeId: string, clip: AlgorithmClip, transformationId?: string | null): Scene {
   const node = findNode(scene, nodeId);
-  if (!node) throw new Error("블록을 꽂을 노드를 찾지 못했습니다.");
+  if (!node) throw new Error("Could not find the node to attach the block to.");
   const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
   const call = remapValue(clip.call, ids) as AlgorithmCall;
   const definition = findAlgorithm(library, call.algorithmId);

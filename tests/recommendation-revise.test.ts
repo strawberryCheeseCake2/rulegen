@@ -38,13 +38,13 @@ test("revising a recommendation at its preview: AI gets what the user did there,
   });
   // A preview whose code does not apply, or a target outside the brush: nothing is replaced (an error to retry).
   await withMockedAI(() => ({ ...output, preview: { ...output.preview, edits: [{ ...edit, find: "nowhere();" }] } }), async () => {
-    await assert.rejects(runAI(request(scene, { recommendation, summary: "", manipulations: [manipulation] }), signal()), /미리보기 코드를 적용하지 못했습니다/);
+    await assert.rejects(runAI(request(scene, { recommendation, summary: "", manipulations: [manipulation] }), signal()), /Could not apply the preview code of the revised recommendation/);
   });
   await withMockedAI(() => ({ ...output, kind: "state", targetId: "ghost" }), async () => {
-    await assert.rejects(runAI(request(scene, { recommendation, summary: "", manipulations: [manipulation] }), signal()), /적용할 수 없습니다/);
+    await assert.rejects(runAI(request(scene, { recommendation, summary: "", manipulations: [manipulation] }), signal()), /recommendation cannot be applied to this brush/);
   });
   // Nothing done on the preview: nothing to revise.
-  await assert.rejects(runAI(request(scene, { recommendation, summary: "" }), signal()), /annotation을 그리거나/);
+  await assert.rejects(runAI(request(scene, { recommendation, summary: "" }), signal()), /Draw an annotation on the preview/);
 });
 
 test("a preview's marks and handles are kept in the brush's shared ids like its overlays", () => {
@@ -61,7 +61,7 @@ test("a part of the preview is cropped by drawing freely around it, then moved, 
   const outline = [{ x: 100, y: 100 }, { x: 160, y: 100 }, { x: 160, y: 160 }];
   // A loop drawn freely (200 points) around a part.
   const crop = cropFrom(Array.from({ length: 200 }, (_, i) => ({ x: 130 + 30 * Math.cos(i / 100 * Math.PI), y: 130 + 30 * Math.sin(i / 100 * Math.PI) })), 0)!;
-  assert.equal(crop.object, "crop:0"); assert.match(crop.label, /크롭 #1/);
+  assert.equal(crop.object, "crop:0"); assert.match(crop.label, /Crop #1/);
   assert.ok(Math.abs(crop.box.x - 100) < 1 && Math.abs(crop.box.y - 100) < 1 && Math.abs(crop.box.w - 60) < 1 && Math.abs(crop.box.h - 60) < 1, "its box is around what it encloses");
   assert.ok(crop.outline.length <= 64, "a long outline is thinned");
   assert.equal(cropFrom([{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 400, y: 1 }], 0), null, "a line encloses nothing");

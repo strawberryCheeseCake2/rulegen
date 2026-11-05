@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "The generated property does not match the selection. Try again.",
+  "stack": "Error: The generated property does not match the selection. Try again.\n    at placeTransformation (/Users/kmg/Desktop/Code/genbrush/rulegen/app/lib/scene/transformations.ts:86:108)\n    at <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:112:135)\n    at <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/app/lib/scene/graph.ts:124:70)\n    at Array.map (<anonymous>)\n    at updateNode (/Users/kmg/Desktop/Code/genbrush/rulegen/app/lib/scene/graph.ts:124:41)\n    at Object.finalize (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/intents.server.ts:112:28)\n    at respond (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:122:51)\n    at async runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:77:13)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async tryit (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:6:75)"
+}

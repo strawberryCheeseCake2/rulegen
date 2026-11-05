@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { run, sampleScene, sceneProgram } from "./fixtures/scene";
@@ -36,7 +37,7 @@ test("stamping into a frame with its own program keeps its modules; a different 
   assert.equal(renamed.scene.nodes.find(node => node.id === renamed.roots[0])?.codeModule, "tree~2");
   const sketch = run(renamed.generated.code); sketch.draw();
   assert.equal(sketch.circles.length, 2);
-  assert.throws(() => stampModule({ scene: source, generated: { ...generated(), code: "p.setup = () => {};" } }, source, "tree", moduleOf(code), [{ x: .5, y: .5 }], "Tree"), /이전 형식/);
+  assert.throws(() => stampModule({ scene: source, generated: { ...generated(), code: "p.setup = () => {};" } }, source, "tree", moduleOf(code), [{ x: .5, y: .5 }], "Tree"), /uses an older format/);
 });
 
 test("using a brush never calls AI: the module comes from the source frame's program", () => {
@@ -63,7 +64,7 @@ test("using a brush never calls AI: the module comes from the source frame's pro
   assert.equal(placeBrush(deps, brush, "sketch-a", { x: 100, y: 300 }), true, "the master's frame has it too");
   panels["sketch-c"] = createSketchPanel({ scene: target.scene });
   assert.equal(placeBrush(deps, brush, "sketch-c", { x: 100, y: 300 }), false, "it has the brush but no result to play with");
-  assert.match(panels["sketch-c"].error, /결과를 먼저 생성/);
+  assert.match(panels["sketch-c"].error, /Generate the result first/);
   assert.equal(panels["sketch-c"].scene.nodes.length, target.scene.nodes.length);
   assert.deepEqual(requests, []);
   // Without code in the source frame and no saved module, nothing is made.
@@ -177,6 +178,17 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   const reacting = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: scene.nodes.find(item => item.id === "orb")!.machine } : node) };
   assert.deepEqual(brushesFor(reacting, "sketch-c", [], () => "b").map(brush => brush.nodeId), ["background", "plant"]);
   assert.deepEqual(brushesFor(sampleScene(), "sketch-a", [], () => "b").map(brush => brush.nodeId), ["tree"], "a collection is a brush as before (its members are parts of it)");
+  // A flow field over the whole canvas (lines traced by an algorithm) is the drawing itself, not a background: a brush; plain paper is not.
+  const full = { x: 0, y: 0, w: 1, h: 1 }, orb = scene.nodes.find(node => node.id === "orb")!;
+  const flow = { ...scene, nodes: [
+    { ...orb, id: "paper", name: "Paper", parentId: null, region: full, machine: null, transformations: [{ id: "ground", label: "White ground", description: "", properties: [{ id: "fill", label: "Fill", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#ffffff" } }] }] },
+    { ...orb, id: "flowing-ink", name: "Flowing ink", parentId: null, region: full, machine: null, transformations: [{ id: "trace", label: "Trace currents", description: "", properties: [{ id: "paths", label: "Paths", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "power-decay", args: [] } }] }] },
+  ] };
+  assert.deepEqual(brushesFor(flow, "sketch-f", [], () => "b").map(brush => brush.nodeId), ["flowing-ink"]);
+  // A root form left without a brush can be made one by hand, from the layer panel.
+  const home = readFileSync("app/routes/home.tsx", "utf8");
+  assert.match(home, /return node && !node\.parentId && !isBackdrop\(node\) \? <button type="button" className="layer-make-brush"/);
+  assert.match(home, /updatePanel\(frameId, panel => \(\{ scene: markBrushes\(panel\.scene, \[brush\]\) \}\)\);/);
   // The object brush stamps into another frame and runs its own module, like a collection's.
   const program = connectScene({ title: "Plant", explanation: "", code: 'rulegenModule("background", function (m) { return { draw() { m.v("background/radius"); m.v("background/speed"); } }; });\nrulegenModule("plant", function (m) { return { draw() { const b = m.box("plant"); m.v("plant/speed"); p.circle(b.x, b.y, m.v("plant/radius") * 2); } }; });' }, composed).code;
   const result = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, composed, "plant", { key: "plant", text: programModules(program).get("plant")! }, [{ x: .5, y: .5 }], "Draggable plant");

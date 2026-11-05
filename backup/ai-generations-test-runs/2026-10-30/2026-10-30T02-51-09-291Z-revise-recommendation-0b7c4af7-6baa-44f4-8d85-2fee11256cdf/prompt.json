@@ -1,0 +1,618 @@
+{
+  "model": "gpt-6.1-sol",
+  "store": false,
+  "instructions": "# revise-recommendation — change one recommendation from what the user did on its preview\n\nA targeted inspection of ONE brush (a reusable collection in a running p5.js sketch) gave recommendations for the user's `concern` (`inspectionSummary` is what it found). The user is looking at the preview of ONE of them, `recommendation` (with its `preview`: code edits the panel runs on the brush marks of `step`, the values those edits read, the state machine change it brings, its `caption` and `marks`), and wants it changed BEFORE it is applied. The image is that preview as drawn now, with what the user did on it:\n\n- `annotationMarks` (normalized 0..1 points on the 900×600 canvas; `annotationMarkStyles` gives each mark's `color`, `width`, `opacity` by index), drawn on the image: circles, arrows, crossings-out, handwriting. They point at parts of the preview to change, say how (an arrow: move or extend that way; crossed out: not this; a drawn shape: like this), or both.\n- `manipulations`: objects of the preview the user moved, scaled or rotated directly. Each has the object's `box` before (canvas pixels), `dx`, `dy` (how far its center moved), `scale` (its size ×) and `rotate` (degrees, clockwise) and `object` / `label` (what it is: `\"<root>:<store path>.<index>\"` an item the brush keeps in its store, `\"picture:<n>\"` a part of the picture found by its pixels, `\"region:<n>\"` a box the user dragged out around whatever is in it; for the last two, the image tells what it holds). On the image the box before is dashed and the box after is solid. It shows what the user wants that object (and, unless the request says otherwise, the objects LIKE it, the same role in the brush) to look like: a direct demonstration of the outcome, not a one-off edit of that one item. Read it as the rule it implies (bigger where they overlap, turned to follow the stroke, placed further apart, …).\n- `adjusted`: values the user changed with the preview's handles (`key`, `label`, `from`, `to`): the amount the recommendation should use is `to`, not what it assumed. Put it in the revised recommendation (its `detail`, `changes`, or the preview's `values` and edits), not only in the preview.\n- `request`: what the user wrote (may be empty; then the marks and manipulations say it).\n\n## What to return\n\nThe SAME recommendation, revised: what it proposes changes so the outcome looks like what the user showed. Keep everything the user did not ask to change.\n\n- `kind`, `nodeId`, `targetId`, `targetIds`, `changes`: as in the recommendation, unless the revision needs another kind (a value change that becomes a transformation change, …); the same rules as the inspection's recommendations: `targetId` an existing transformation, state or transition of node `nodeId` (`\"\"` for `\"add-transformation\"`), `targetIds` `[]` except for `\"transformation\"`, `changes` `[]` except for `\"value\"` (keys from `constraints`).\n- `title`, `detail` (Korean): the revised fix, concretely enough to apply, saying the new outcome (not the history of the revision).\n- `preview`: REQUIRED unless `kind` is `\"value\"` (then `null`). Start from the current `preview.edits` and change them so the preview now shows the revised outcome; `find` copied EXACTLY from `code` as it is (the current edits are NOT in `code`). Its `marks` show what the revised recommendation changes compared with the brush as it is now (not compared with the old preview); its `handles` stay on the quantities it hinges on (with the adjusted values as their starting values).\n- `reply`: one Korean sentence on what you changed, e.g. \"겹친 부분만 크게 키우고 회전은 획 방향을 따르게 바꿨습니다.\"\n\nWhen the user's marks ask for something the recommendation cannot do in this brush, do the closest it can and say so in `reply`.\n\n## What a recommendation preview must look like\n\n- It shows the END RESULT the recommendation promises, as the user would recognize it at a glance: for \"dissolve the outlines where hearts overlap into one shape\" the overlapping hearts drawn as ONE outline (the inner borders gone); for \"replace overlapping hearts with one new heart\" those hearts gone and ONE bigger heart drawn where they were.\n- Recommendations that differ must LOOK different: show exactly what makes this one's outcome differ from the others listed (one merged outline vs one new heart), not a shared approximation.\n- Approximate how, not what: it need not do the real algorithm. Use the cheapest drawing that produces the right picture, e.g.:\n  - one shape from overlapping shapes: draw every overlapping shape's outline thick in the ink color, then fill all their interiors with the paper color (`#fffefa`) — what remains is the outer outline only;\n  - one new shape instead of several: skip drawing the ones that overlap (one condition where they are drawn) and draw one shape with the module's own drawing helper at their center, sized to cover them;\n  - removing or hiding something: a condition that skips drawing it; adding something: one extra call of the module's own helper.\n- Read what the module already has (its local variables in `draw`, the items it keeps in `m.store`, its helpers): no new data structures, no geometry algorithms (no polygon union, clustering loops over everything, physics).\n\n## How small\n\n- 1–3 edits, together about 25 lines at most. Prefer ONE edit that adds drawing at the end of `draw` (after the module draws) plus, if needed, one small condition where items are drawn.\n- Each edit is `{ nodeId, find, replace }`: `nodeId` a node of the brush (its module is edited), `find` copied EXACTLY from `code` (whitespace included) occurring exactly once in that module, `replace` the new code (keep the found text in it when you only add after it). Valid JavaScript; never add `m.trace`, input handlers or new state machines.\n- A NEW quantity the edits read is read with `m.v(\"<node id as the code uses it>/<new id>\")` and listed in `values` (`nodeId`, a new lowercase `id` with `-`, a short `label`, `value`: `{ \"type\": \"number\", \"value\", \"min\", \"max\", \"step\", \"unit\" }` or `{ \"type\": \"toggle\", \"value\" }`). Usually `[]`.\n- `caption`: one short Korean sentence on what to look at (e.g. \"겹친 하트의 안쪽 윤곽이 사라지고 바깥 윤곽만 남습니다\").\n\nCode that does not apply or does not parse is dropped (the user then sees no preview), so copy `find` exactly.\n\nTHE BEHAVIOR IS IN THE STATE MACHINE. When the recommendation makes the brush REACT to something that happens while it runs (things meet, touch, overlap, merge, split, a limit is reached, an item dies or is born from another), that reaction is part of the brush's behavior and goes in its state machine too, or the machine no longer describes the brush. `preview.machine` gives it: `nodeId` the node whose code emits it (a brush node with a machine; one without gets one, its first new state the initial one), `transitions` (1–4) with trigger `\"event\"`, a new lowercase id with `-` and a short Korean `label` naming what happens (e.g. `\"하트끼리 겹침 → 합치기\"`), and `afterMs` 1000. Prefer a transition from each state it can happen in BACK TO THE SAME STATE (an instant reaction: the code's own checks of its state keep working); add a new state (`states`: `id`, `label`, `description`, `like` the existing state whose values it starts with) only when the brush then behaves differently for a while, with an `\"after\"` transition back. The edits emit it with `m.emit(\"<node id as the code uses it>\", \"<transition id>\")` AT THE MOMENT IT HAPPENS: once per happening (e.g. when a new pair starts to overlap, remembered in `m.store`), never every frame while it lasts. Each emit becomes a recorded step the user can inspect. `preview.machine` is `null` when the recommendation changes no behavior (only how something looks, or a value).\n\n## marks — show at a glance what changes\n\n`marks` (1–3; `[]` only when the change is everywhere at once, e.g. every item's color) are simple shapes the panel draws OVER the preview, so the user sees WHERE it differs from the brush as it is now and WHAT changed there. Each is an overlay without link or handle: `id`, `kind` (`\"rect\"`, `\"ellipse\"`, `\"line\"`, `\"label\"`), `x`, `y`, `w`, `h` as expressions in canvas pixels, a `label` of a few Korean words naming the change there (about 12 characters, e.g. \"윤곽 하나로\", \"새로 생김\", \"더 짧아짐\"), `color` (one clear color, e.g. `#e0457b`), `name` (the legend, the same few words), `when` `\"\"`, `each` `\"\"` or a store list.\n- They use the overlay expression language (`p(\"…\")`, `s(root, path)`, `item(…)` with `each`, `len`, `min`, `max`, …) and read the stores AS THE PREVIEW DRAWS THEM: the edited code's own `m.store` at the held step (fields your edits add to it can be read too). Put each mark on the changed part, e.g. an ellipse around the items the edits now draw differently, a rect around where something new appears, a line from where a thing was to where it is now.\n- Few and plain: no numbers, no internal ids, no repetition of the caption.\n\n## handles — let the user correct what the recommendation assumes\n\n`handles` (0–3) are overlays WITH a `handle` (exactly as the inspection's overlay handles: `id`, `kind`, `x`, `y`, `w`, `h`, `label`, `color`, `link`, `when`, `each`, `name`, `handle` with `key`, `gesture`, `x`, `y`, `pivotX`, `pivotY`, `value`, `hint`), drawn on the preview. Dragging one redraws the preview with the value (nothing is applied). Give one for each quantity the recommendation HINGES ON that the user may see differently: the amount, threshold, distance, size or direction it chooses for the concern (how much bigger, from how close things count as overlapping, how far a new part reaches). Your choice of that quantity is your understanding of the concern; the handle lets the user show the right one by hand, and it is sent back when the recommendation is revised.\n- `key`: a key of `constraints` (number or toggle) or `\"<node id>/<id>\"` of a value in `values` (the ones the edits read). Never the running state (`@input`, `@store`).\n- The grip sits ON the thing the quantity shapes and follows it (its `x`, `y` read the key with `p(\"…\")`), and the gesture moves it the way the quantity changes it (the edge of a size, the reach of a distance, around a pivot for an angle).\n- Only quantities related to the concern; `[]` when the recommendation has none worth adjusting (e.g. it only removes something).\n\n## Output JSON\n\nReturn exactly one object matching `prompts/schemas/revise-recommendation.json`.",
+  "input": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "{\"request\":\"\",\"concern\":\"\",\"inspectionSummary\":\"\",\"recommendation\":{\"kind\":\"add-transformation\",\"nodeId\":\"tree\",\"targetId\":\"\",\"targetIds\":[],\"title\":\"굵게\",\"detail\":\"획을 굵게\",\"changes\":[],\"preview\":null},\"brush\":\"Tree\",\"brushNodes\":[{\"id\":\"tree\",\"kind\":\"collection\",\"parentId\":null,\"name\":\"Tree\",\"description\":\"가지가 갈라지는 나무\",\"primitive\":\"group\",\"region\":{\"x\":0.3,\"y\":0.05,\"w\":0.4,\"h\":0.9},\"transformations\":[{\"id\":\"branching-growth\",\"label\":\"Branching growth\",\"description\":\"재귀 분기\",\"properties\":[{\"id\":\"structure\",\"label\":\"Branching\",\"effect\":\"spatial\",\"description\":\"가지 구조\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"recursive-branch\",\"args\":[{\"id\":\"depth\",\"value\":{\"type\":\"number\",\"value\":5,\"min\":1,\"max\":9,\"step\":1,\"unit\":\"\"}},{\"id\":\"length\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"power-decay\",\"args\":[{\"id\":\"base\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]}}]}}]},{\"id\":\"ink-wash\",\"label\":\"Ink wash\",\"description\":\"먹색\",\"properties\":[{\"id\":\"ink\",\"label\":\"Ink\",\"effect\":\"stylistic\",\"description\":\"가지 색\",\"value\":{\"type\":\"color\",\"value\":\"#75664e\"}}]}],\"visible\":true,\"machine\":null},{\"id\":\"orb\",\"kind\":\"object\",\"parentId\":\"tree\",\"name\":\"Orb\",\"description\":\"누르면 움직이는 원\",\"primitive\":\"ellipse\",\"region\":{\"x\":0.45,\"y\":0.2,\"w\":0.1,\"h\":0.1},\"transformations\":[{\"id\":\"pulse\",\"label\":\"Pulse\",\"description\":\"크기와 이동\",\"properties\":[{\"id\":\"radius\",\"label\":\"Radius\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":24,\"min\":10,\"max\":140,\"step\":1,\"unit\":\"px\"}},{\"id\":\"speed\",\"label\":\"Speed\",\"effect\":\"temporal\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":0,\"min\":0,\"max\":120,\"step\":1,\"unit\":\"px/s\"}}]}],\"visible\":true,\"machine\":{\"initialState\":\"idle\",\"states\":[{\"id\":\"idle\",\"label\":\"대기\",\"description\":\"클릭을 기다립니다\",\"values\":[]},{\"id\":\"moving\",\"label\":\"이동\",\"description\":\"오른쪽으로 이동\",\"values\":[{\"propertyId\":\"radius\",\"value\":{\"type\":\"number\",\"value\":80,\"min\":10,\"max\":140,\"step\":1,\"unit\":\"px\"}},{\"propertyId\":\"speed\",\"value\":{\"type\":\"number\",\"value\":40,\"min\":0,\"max\":120,\"step\":1,\"unit\":\"px/s\"}}]}],\"transitions\":[{\"id\":\"press\",\"from\":\"idle\",\"to\":\"moving\",\"label\":\"원 클릭\",\"trigger\":\"event\",\"afterMs\":1000},{\"id\":\"settle\",\"from\":\"moving\",\"to\":\"idle\",\"label\":\"정착 후 대기\",\"trigger\":\"after\",\"afterMs\":1200}]}}],\"algorithms\":[{\"id\":\"power-decay\",\"name\":\"Power decay\",\"description\":\"값 = base * ratio^depth\",\"params\":[{\"id\":\"base\",\"label\":\"Base\",\"description\":\"첫 세대 길이\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"label\":\"Ratio\",\"description\":\"감소 비율\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]},{\"id\":\"recursive-branch\",\"name\":\"Recursive branch\",\"description\":\"depth 세대까지 둘로 갈라지고 length로 길이를 정합니다.\",\"params\":[{\"id\":\"depth\",\"label\":\"Depth\",\"description\":\"세대 수\",\"value\":{\"type\":\"number\",\"value\":6,\"min\":1,\"max\":9,\"step\":1,\"unit\":\"\"}},{\"id\":\"length\",\"label\":\"Length\",\"description\":\"세대별 길이\",\"value\":{\"type\":\"algorithm\",\"algorithmId\":\"power-decay\",\"args\":[{\"id\":\"base\",\"value\":{\"type\":\"number\",\"value\":140,\"min\":20,\"max\":300,\"step\":1,\"unit\":\"px\"}},{\"id\":\"ratio\",\"value\":{\"type\":\"number\",\"value\":0.7,\"min\":0.3,\"max\":0.95,\"step\":0.01,\"unit\":\"\"}}]}}]},{\"id\":\"sine-wave\",\"name\":\"Sine wave\",\"description\":\"amplitude*sin(t*cycles)\",\"params\":[{\"id\":\"amplitude\",\"label\":\"Amplitude\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":20,\"min\":0,\"max\":80,\"step\":1,\"unit\":\"px\"}}]}],\"constraints\":[{\"key\":\"tree/structure/depth\",\"nodeId\":\"tree\",\"transformationId\":\"branching-growth\",\"transformation\":\"Branching growth\",\"propertyId\":\"structure\",\"property\":\"Branching\",\"path\":\"depth\",\"type\":\"number\"},{\"key\":\"tree/structure/length/base\",\"nodeId\":\"tree\",\"transformationId\":\"branching-growth\",\"transformation\":\"Branching growth\",\"propertyId\":\"structure\",\"property\":\"Branching\",\"path\":\"length › base\",\"type\":\"number\"},{\"key\":\"tree/structure/length/ratio\",\"nodeId\":\"tree\",\"transformationId\":\"branching-growth\",\"transformation\":\"Branching growth\",\"propertyId\":\"structure\",\"property\":\"Branching\",\"path\":\"length › ratio\",\"type\":\"number\"},{\"key\":\"tree/ink\",\"nodeId\":\"tree\",\"transformationId\":\"ink-wash\",\"transformation\":\"Ink wash\",\"propertyId\":\"ink\",\"property\":\"Ink\",\"path\":\"\",\"type\":\"color\"},{\"key\":\"orb/radius\",\"nodeId\":\"orb\",\"transformationId\":\"pulse\",\"transformation\":\"Pulse\",\"propertyId\":\"radius\",\"property\":\"Radius\",\"path\":\"\",\"type\":\"number\"},{\"key\":\"orb/speed\",\"nodeId\":\"orb\",\"transformationId\":\"pulse\",\"transformation\":\"Pulse\",\"propertyId\":\"speed\",\"property\":\"Speed\",\"path\":\"\",\"type\":\"number\"}],\"step\":{\"id\":1,\"nodeId\":null,\"from\":null,\"to\":null,\"transitionId\":null,\"values\":{},\"runtime\":{\"states\":{},\"stores\":{\"tree\":{\"ball\":{\"x\":10}}}}},\"annotationMarks\":[],\"annotationMarkStyles\":[],\"manipulations\":[{\"object\":\"tree:items.0\",\"label\":\"items #1\",\"box\":{\"x\":10,\"y\":10,\"w\":40,\"h\":40},\"dx\":20,\"dy\":0,\"scale\":1.5,\"rotate\":30}],\"adjusted\":[],\"canvas\":{\"width\":900,\"height\":600},\"code\":{\"tree\":\"// @rulegen-module \\\"tree\\\"\\nrulegenModule(\\\"tree\\\", function (m) {\\n  function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }\\n  return {\\n    draw() {\\n      const box = m.box(\\\"tree\\\"), x = box.x + box.w / 2, bottom = box.y + box.h;\\n      const depth = m.v(\\\"tree/structure/depth\\\");\\n      const base = m.v(\\\"tree/structure/length/base\\\"), ratio = m.v(\\\"tree/structure/length/ratio\\\");\\n      p.stroke(m.v(\\\"tree/ink\\\"));\\n      for (let i = 0; i < depth; i++) p.line(x, bottom - i * 10, x, bottom - i * 10 - algo_power_decay(base, ratio, i));\\n      const speed = m.v(\\\"orb/speed\\\");\\n      p.circle(m.box(\\\"orb\\\").x + speed * m.state(\\\"orb\\\").elapsed / 1000, 300, m.v(\\\"orb/radius\\\") * 2);\\n    },\\n    mousePressed() { if (m.state(\\\"orb\\\").id === \\\"idle\\\") m.emit(\\\"orb\\\", \\\"press\\\"); },\\n  };\\n});\\n// @rulegen-module-end\"}}"
+        },
+        {
+          "type": "input_image",
+          "image_url": {
+            "file": "image-1.png",
+            "mimeType": "image/png"
+          },
+          "detail": "high"
+        }
+      ]
+    }
+  ],
+  "max_output_tokens": 16000,
+  "reasoning": {
+    "effort": "medium"
+  },
+  "text": {
+    "format": {
+      "type": "json_schema",
+      "name": "rulegen_revise-recommendation",
+      "strict": true,
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "value",
+              "transformation",
+              "add-transformation",
+              "state",
+              "transition"
+            ]
+          },
+          "nodeId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "targetId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "targetIds": {
+            "default": [],
+            "maxItems": 6,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 80
+            }
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 800
+          },
+          "changes": {
+            "maxItems": 12,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "maxLength": 1200
+                },
+                "stateId": {
+                  "type": "string",
+                  "maxLength": 80
+                },
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "stateId",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "caption": {
+                    "type": "string",
+                    "maxLength": 160
+                  },
+                  "edits": {
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "nodeId": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "find": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 1500
+                        },
+                        "replace": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        }
+                      },
+                      "required": [
+                        "nodeId",
+                        "find",
+                        "replace"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "values": {
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "nodeId": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "number"
+                                },
+                                "value": {
+                                  "type": "number"
+                                },
+                                "min": {
+                                  "type": "number"
+                                },
+                                "max": {
+                                  "type": "number"
+                                },
+                                "step": {
+                                  "type": "number",
+                                  "minimum": 1e-8
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "maxLength": 20
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value",
+                                "min",
+                                "max",
+                                "step",
+                                "unit"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "toggle"
+                                },
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "nodeId",
+                        "id",
+                        "label",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "machine": {
+                    "default": null,
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "nodeId": {
+                            "type": "string",
+                            "maxLength": 80
+                          },
+                          "states": {
+                            "maxItems": 3,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 60
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 100
+                                },
+                                "description": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "like": {
+                                  "type": "string",
+                                  "maxLength": 60
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "label",
+                                "description",
+                                "like"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "transitions": {
+                            "maxItems": 4,
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string",
+                                  "maxLength": 60
+                                },
+                                "from": {
+                                  "type": "string",
+                                  "maxLength": 60
+                                },
+                                "to": {
+                                  "type": "string",
+                                  "maxLength": 60
+                                },
+                                "label": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 100
+                                },
+                                "trigger": {
+                                  "type": "string",
+                                  "enum": [
+                                    "after",
+                                    "event"
+                                  ]
+                                },
+                                "afterMs": {
+                                  "type": "integer",
+                                  "minimum": 100,
+                                  "maximum": 60000
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "from",
+                                "to",
+                                "label",
+                                "trigger",
+                                "afterMs"
+                              ],
+                              "additionalProperties": false
+                            }
+                          }
+                        },
+                        "required": [
+                          "nodeId",
+                          "states",
+                          "transitions"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "marks": {
+                    "default": [],
+                    "maxItems": 4,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "rect",
+                            "ellipse",
+                            "line",
+                            "label"
+                          ]
+                        },
+                        "name": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 60
+                        },
+                        "x": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "y": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "w": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "h": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 300
+                        },
+                        "color": {
+                          "type": "string",
+                          "pattern": "^#[0-9a-fA-F]{6}$"
+                        },
+                        "when": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "each": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 200
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "w",
+                        "h",
+                        "label",
+                        "color",
+                        "when",
+                        "each"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "handles": {
+                    "default": [],
+                    "maxItems": 3,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "rect",
+                            "ellipse",
+                            "line",
+                            "label"
+                          ]
+                        },
+                        "name": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 60
+                        },
+                        "x": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "y": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "w": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "h": {
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "label": {
+                          "type": "string",
+                          "maxLength": 300
+                        },
+                        "color": {
+                          "type": "string",
+                          "pattern": "^#[0-9a-fA-F]{6}$"
+                        },
+                        "link": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "constraint",
+                                "state",
+                                "transition",
+                                "parameter"
+                              ]
+                            },
+                            "nodeId": {
+                              "type": "string",
+                              "maxLength": 80
+                            },
+                            "id": {
+                              "type": "string",
+                              "maxLength": 80
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "nodeId",
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "when": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 400
+                        },
+                        "each": {
+                          "default": "",
+                          "type": "string",
+                          "maxLength": 200
+                        },
+                        "handle": {
+                          "default": null,
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "key": {
+                                  "type": "string",
+                                  "maxLength": 1200
+                                },
+                                "gesture": {
+                                  "type": "string",
+                                  "enum": [
+                                    "drag",
+                                    "rotate",
+                                    "slide",
+                                    "move"
+                                  ]
+                                },
+                                "x": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "y": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "pivotX": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "pivotY": {
+                                  "type": "string",
+                                  "maxLength": 400
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "maxLength": 600
+                                },
+                                "hint": {
+                                  "type": "string",
+                                  "maxLength": 80
+                                }
+                              },
+                              "required": [
+                                "key",
+                                "gesture",
+                                "x",
+                                "y",
+                                "pivotX",
+                                "pivotY",
+                                "value",
+                                "hint"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "name",
+                        "x",
+                        "y",
+                        "w",
+                        "h",
+                        "label",
+                        "color",
+                        "link",
+                        "when",
+                        "each",
+                        "handle"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "caption",
+                  "edits",
+                  "values",
+                  "machine",
+                  "marks",
+                  "handles"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reply": {
+            "type": "string",
+            "maxLength": 400
+          }
+        },
+        "required": [
+          "kind",
+          "nodeId",
+          "targetId",
+          "targetIds",
+          "title",
+          "detail",
+          "changes",
+          "preview",
+          "reply"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

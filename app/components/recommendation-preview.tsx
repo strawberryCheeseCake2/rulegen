@@ -42,7 +42,7 @@ export function RecommendationPreview({ code, scene, runtime, values, recommenda
   useEffect(() => {
     if (!source) return;
     let live = true; setExecutable(""); setError("");
-    prepareProgram(source).then(prepared => { if (live) setExecutable(prepared); }, failure => { if (live) setError(failure instanceof Error ? failure.message : "미리보기를 실행하지 못했습니다."); });
+    prepareProgram(source).then(prepared => { if (live) setExecutable(prepared); }, failure => { if (live) setError(failure instanceof Error ? failure.message : "Couldn't run the preview."); });
     return () => { live = false; };
   }, [source]);
   const restoreId = useMemo(() => `preview:${source.length}:${JSON.stringify(params)}`, [source, params]);
@@ -58,13 +58,13 @@ export function RecommendationPreview({ code, scene, runtime, values, recommenda
   if (!program) return null;
   return <figure className={`recommendation-preview ${large ? "large" : ""}`}>
     <div className="recommendation-preview-view">
-      {"error" in program || error ? <span className="recommendation-preview-status">미리보기를 그리지 못했습니다{"error" in program ? `: ${program.error}` : ""}</span>
+      {"error" in program || error ? <span className="recommendation-preview-status">Couldn't draw the preview{"error" in program ? `: ${program.error}` : ""}</span>
         : executable ? <div className="recommendation-preview-stage"><CodePreview executable={executable} onError={setError} restore={{ id: restoreId, runtime, params }} onCapture={onCapture}
             onDrawn={(restore, stores) => { setDrawn({ restore, stores }); onDrawn?.(stores); }} />
           {shown && drawn?.restore === restoreId && <InspectionOverlay state={state} marks={[]} result={shown} drawn={drawn.stores} liveValues={{}} clickable={handles.length > 0} focusable={false} zoom={zoom ?? (large ? 1 : 240 / 900)} onFocus={() => {}} plain specs={allSpecs}
             onHandle={(phase, key, to) => { if (phase !== "start" && to !== null && typeof to !== "string") onAdjust?.(key, to); }} />}</div>
-        : <span className="recommendation-preview-status"><span className="loading-spinner" />미리보기 준비 중…</span>}
+        : <span className="recommendation-preview-status"><span className="loading-spinner" />Preparing preview…</span>}
     </div>
-    <figcaption><b>PREVIEW</b>{preview?.caption || (value ? "이 값으로 그린 모습" : "")}{shown ? <i className="recommendation-preview-legend">{marks.map(mark => mark.name || mark.label).filter(Boolean).slice(0, 3).join(" · ")}</i> : null}</figcaption>
+    <figcaption><b>PREVIEW</b>{preview?.caption || (value ? "Drawn with this value" : "")}{shown ? <i className="recommendation-preview-legend">{marks.map(mark => mark.name || mark.label).filter(Boolean).slice(0, 3).join(" · ")}</i> : null}</figcaption>
   </figure>;
 }

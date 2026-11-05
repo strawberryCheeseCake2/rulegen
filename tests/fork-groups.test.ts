@@ -33,7 +33,7 @@ test("a fork is made without AI from a recommendation's preview: its code runs, 
   const growth = changed.scene.nodes.find(node => node.id === "tree")!.transformations.find(item => item.id === "branching-growth")!;
   assert.match(growth.description, /기울기: 기울여 자랍니다/); assert.ok(growth.properties.some(property => property.id === "lean"));
   assert.equal(changed.scene.nodes.find(node => node.id === "tree")!.transformations.length, scene.nodes.find(node => node.id === "tree")!.transformations.length, "no new transformation");
-  assert.deepEqual(previewFork(scene, generated, { kind: "transformation", nodeId: "tree", targetId: "branching-growth", title: "t", detail: "d" }, { ...preview, edits: [{ ...preview.edits[0], find: "not in the code" }] }), { error: "바꿀 코드 부분을 찾지 못했습니다" });
+  assert.deepEqual(previewFork(scene, generated, { kind: "transformation", nodeId: "tree", targetId: "branching-growth", title: "t", detail: "d" }, { ...preview, edits: [{ ...preview.edits[0], find: "not in the code" }] }), { error: "Could not find the code to change" });
   assert.ok("error" in previewFork(scene, generated, { kind: "transformation", nodeId: "tree", targetId: "branching-growth", title: "t", detail: "d" }, { edits: [], values: [] }));
 });
 
@@ -71,9 +71,9 @@ test("a group is drawn behind its frames with a title to drag it by and a delete
     paused, onContinue: noop, edit: emptySlotEdit(), onEdit: noop, onRevise: noop, onCancelRevise: noop }));
   const accept = (html: string) => html.match(/<button class="primary"[^>]*><svg[^]*?<\/svg>Accept/)![0];
   assert.match(accept(slot("waiting")), /disabled=""/); assert.doesNotMatch(accept(slot("ready")), /disabled=""/);
-  assert.match(slot("ready"), /Accept · 이 버전으로 fork 만들기/);
+  assert.match(slot("ready"), /Accept · Fork with this version/);
   // Its frames only placed: the slot makes them when asked; the menu sits under the preview, with the ways to revise it.
-  assert.doesNotMatch(slot("ready"), /마저 생성/); assert.match(slot("paused", true), /▶ 마저 생성/);
+  assert.doesNotMatch(slot("ready"), /Continue generating/); assert.match(slot("paused", true), /▶ Continue generating/);
   assert.ok(slot("ready").indexOf("fork-slot-view") < slot("ready").indexOf("fork-slot-bar"));
-  assert.match(slot("ready"), /Annotation/); assert.match(slot("ready"), /class="active" aria-pressed="true"[^>]*>[^]*?크롭 · 이동 · 크기 · 회전/, "cropping is the tool at hand from the start"); assert.match(slot("ready"), /Revise recommendation/);
+  assert.match(slot("ready"), /Annotation/); assert.match(slot("ready"), /class="active" aria-pressed="true"[^>]*>[^]*?Crop · Move · Scale · Rotate/, "cropping is the tool at hand from the start"); assert.match(slot("ready"), /Revise recommendation/);
 });

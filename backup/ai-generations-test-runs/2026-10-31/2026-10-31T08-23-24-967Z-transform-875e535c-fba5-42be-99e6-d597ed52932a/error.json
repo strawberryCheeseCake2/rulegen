@@ -1,0 +1,5 @@
+{
+  "name": "Error",
+  "message": "Could not find the target Collection or Object.",
+  "stack": "Error: Could not find the target Collection or Object.\n    at runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:74:22)\n    at runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:26)\n    at async tryit (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:6:75)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/_tmp_probe_ai.ts:14:3)"
+}

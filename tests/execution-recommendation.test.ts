@@ -41,10 +41,10 @@ test("a recommendation is made from what the user showed on an Execution frame: 
   });
   // A preview that does not apply: nothing is added (an error to retry).
   await withMockedAI(() => ({ ...output, preview: { ...output.preview, edits: [{ ...edit, find: "nowhere();" }] } }), async () => {
-    await assert.rejects(runAI(request(scene, { summary: "", execution: moment, manipulations: [crop] }), signal()), /만든 미리보기 코드를 적용하지 못했습니다/);
+    await assert.rejects(runAI(request(scene, { summary: "", execution: moment, manipulations: [crop] }), signal()), /Could not apply the preview code of the new recommendation/);
   });
   // Nothing shown: nothing to make it from.
-  await assert.rejects(runAI(request(scene, { summary: "", execution: moment }), signal()), /annotation을 그리거나 크롭/);
+  await assert.rejects(runAI(request(scene, { summary: "", execution: moment }), signal()), /Draw an annotation on the Execution picture, crop/);
 });
 
 test("an Execution frame lets the user crop (move, scale, rotate) and annotate its picture at one moment, and make a recommendation from it", () => {
@@ -55,20 +55,23 @@ test("an Execution frame lets the user crop (move, scale, rotate) and annotate i
   const noop = () => {};
   const render = (item: ExploreFrame, edits = true) => renderToStaticMarkup(createElement(ExploreFrameView, { frame: item, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: noop, onValue: noop, onRetry: noop, onActivate: noop,
     ...(edits ? { onEdit: noop, onRecommend: noop, onCancelRecommend: noop } : {}) }));
+  // Folded until asked for (the bar stays short); it opens by itself once something is shown or asked.
   const html = render(frame);
-  assert.match(html, /aria-pressed="true"[^>]*>.*?실행 손잡이/, "the execution handles work first");
-  assert.match(html, /크롭 · 이동 · 크기 · 회전/); assert.match(html, /Annotation/);
-  assert.match(html, /<button class="primary" disabled="">.*?Recommendation 만들기/, "nothing shown yet");
-  assert.doesNotMatch(render(frame, false), /Recommendation 만들기/, "only where it can be asked for");
+  assert.match(html, /class="explore-recommend-open"/); assert.doesNotMatch(html, /Make recommendation/);
+  assert.doesNotMatch(render(frame, false), /Show how it should be at this moment/, "only where it can be asked for");
+  const noted = render({ ...frame, edit: { ...emptyExploreEdit(), note: "more" } });
+  assert.match(noted, /aria-pressed="true"[^>]*>.*?Execution handles/, "the execution handles work first");
+  assert.match(noted, /Crop · Move · Scale · Rotate/); assert.match(noted, /Annotation/);
+  assert.match(noted, /<button class="primary">.*?Make recommendation/, "a note is enough to ask");
   const key = `${frame.id}:${exploreStep(frame).key}`, at = { key, progress: .5, moment: { ...moment, axis: "input" as const, done: null, count: null, stage: null } };
   const marked = render({ ...frame, edit: { ...emptyExploreEdit(), mode: "select", manipulations: [crop], image: "data:image/png;base64,AAAA", at } });
-  assert.match(marked, /class="explore-edit-sheet"/); assert.match(marked, /크롭 #1/); assert.match(marked, /크기 ×1\.80 · 회전 20°/);
-  assert.doesNotMatch(marked, /<button class="primary" disabled="">.*?Recommendation 만들기/, "a crop moved: it can be asked for");
+  assert.match(marked, /class="explore-edit-sheet"/); assert.match(marked, /크롭 #1/); assert.match(marked, /Scale ×1\.80 · Rotate 20°/);
+  assert.doesNotMatch(marked, /<button class="primary" disabled="">.*?Make recommendation/, "a crop moved: it can be asked for");
   // Shown at another moment: not drawn here, and that moment can be gone back to.
   const elsewhere = render({ ...frame, edit: { ...emptyExploreEdit(), manipulations: [crop], at: { ...at, key: "other", progress: .2 } } });
-  assert.doesNotMatch(elsewhere, /explore-edit-sheet/); assert.match(elsewhere, /20%에서 표시한 내용이 있습니다/); assert.match(elsewhere, /그 순간으로/);
+  assert.doesNotMatch(elsewhere, /explore-edit-sheet/); assert.match(elsewhere, /There are marks made at 20%/); assert.match(elsewhere, /Go to that moment/);
   const making = render({ ...frame, edit: { ...emptyExploreEdit(), note: "더 크게", making: true } });
-  assert.match(making, /AI가 보여준 대로 recommendation과 preview를 만들고 있습니다/);
+  assert.match(making, /The AI is making a recommendation and preview from what you showed/);
 });
 
 test("a recommendation made from an Execution frame joins the targeted tool with its own frame group", () => {
@@ -82,6 +85,6 @@ test("a targeted inspection of a frame with no step recorded (steps are not save
   const home = readFileSync("app/routes/home.tsx", "utf8"), preview = readFileSync("app/components/code-preview.tsx", "utf8");
   assert.match(home, /const stepped = await recordNow\(frame, brush\.id\);\n    const state = inspectionFor/, "before the inspection reads its steps");
   assert.match(home, /preview\.snapshot\(\);/);
-  assert.match(home, /기록된 단계가 없어 원인 Execution 프레임과 recommendation 프레임 그룹은 만들지 못했습니다/, "else it says why no frames were made");
+  assert.match(home, /No steps were recorded, so the Cause Execution frame and recommendation frame groups could not be made/, "else it says why no frames were made");
   assert.match(preview, /event\.data\.type==='snapshot'\)\{traceQueue\.push\(\{nodeId:null[^}]*\}\);flushTrace\(\);return;\}/, "the running sketch reports itself as a step");
 });

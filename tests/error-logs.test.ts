@@ -37,7 +37,7 @@ test("a persistent 503 fails with a clear message and is written to error-logs w
   let calls = 0;
   globalThis.fetch = async () => { calls++; return overloaded(); };
   const before = errorFiles().length;
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /과부하/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /server is overloaded/);
   assert.equal(calls, 4, "first try + 3 retries");
   const entry = read(errorFiles().at(-1)!);
   assert.equal(errorFiles().length, before + 1);
@@ -50,7 +50,7 @@ test("an exhausted quota is not retried", async () => {
   const { runAI } = await import("../app/server/ai.server");
   let calls = 0;
   globalThis.fetch = async () => { calls++; return Response.json({ error: { code: "insufficient_quota" } }, { status: 429 }); };
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /사용 한도/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /usage quota has been reached/);
   assert.equal(calls, 1);
 });
 
@@ -61,7 +61,7 @@ test("code-check failures and browser-reported errors are logged; images and key
   const bad = "p.setup=()=>{p.createCanvas(900,600);p['top'];};";
   const response = await generate.action({ request: post("/api/generate", { intent: "prepare", code: bad }) } as never);
   const body = await response.json();
-  assert.match(body.error, /동적 API/); assert.ok(body.logged, "the client is told it was logged");
+  assert.match(body.error, /dynamic API/); assert.ok(body.logged, "the client is told it was logged");
   const prepare = read(errorFiles().find(file => file.includes("-prepare-"))!);
   assert.equal(prepare.code, bad);
   const reported = await errors.action({ request: post("/api/errors", { source: "runtime", message: "ReferenceError: x is not defined sk-test-secret-key-123456", owner: "sketch-a", frame: "Sketch 2", code: `const img = "${image}";` }) } as never);

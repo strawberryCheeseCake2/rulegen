@@ -1,0 +1,11 @@
+{
+  "id": "2026-11-01T17-05-09-269Z-execution-recommendation-4a479cca-78b2-45d4-80dd-8aaa3000b7ef",
+  "intent": "execution-recommendation",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-11-01T17:05:09.269Z",
+  "status": "failed",
+  "httpStatus": 200,
+  "openaiRequestId": null,
+  "finishedAt": "2026-11-01T17:05:09.390Z",
+  "durationMs": 121
+}

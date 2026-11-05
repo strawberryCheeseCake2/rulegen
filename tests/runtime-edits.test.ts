@@ -57,8 +57,8 @@ test("a move handle is valid without a value; a non-move handle cannot move the 
   assert.equal(handleProblem({ ...move, key: "@input:-1:${item(\"t\")}" }, undefined), null);
   assert.match(handleProblem({ ...move, gesture: "drag", value: "start + dx" }, undefined) ?? "", /move/);
   assert.equal(handleProblem({ ...move, key: "@store:trail:speed", gesture: "slide", value: "start + dx / 10" }, undefined), null);
-  assert.match(handleProblem({ ...move, key: "trail/size" }, { type: "number" }) ?? "", /실행 상태/);
-  assert.match(handleProblem({ ...move, key: "@input:nope" }, undefined) ?? "", /실행 상태/);
+  assert.match(handleProblem({ ...move, key: "trail/size" }, { type: "number" }) ?? "", /Execution state/);
+  assert.match(handleProblem({ ...move, key: "@input:nope" }, undefined) ?? "", /Execution state/);
 });
 
 test("the step is looked at with its moved state: move grips sit on their point (per item with ${…} keys) and a drag adds to the offset it had", () => {
@@ -85,7 +85,7 @@ test("an exploration frame is drawn from its moved input and lists it as a moved
     result: { summary: "", axis: "run", from: 0, to: 1, edits: [], values: [], machine: null, overlays: [overlay({ key: "@input:-1:10" })], stages: [], sketches: [], of: [] },
     request: { concern: "c", inspection: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), recommendation: null } };
   const html = renderToStaticMarkup(createElement(ExploreFrameView, { frame, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: () => {}, onValue: () => {}, onRetry: () => {}, onActivate: () => {} }));
-  assert.match(html, /옮긴 입력 경로 <b>12, -3px<\/b>/);
+  assert.match(html, /Moved input path <b>12, -3px<\/b>/);
   assert.match(html, /gesture-move/);
   assert.match(html, /cx="212"/, "the grip on the moved point");
 });

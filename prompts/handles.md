@@ -51,12 +51,12 @@ Return exactly one object matching `prompts/schemas/handles.json`: `handles`, on
 
 - `propertyId`.
 - `paths`: the scalar paths this widget sets (arrays of argument ids; `[]` = the property's own value). Include every path you call `h.set` with.
-- `hint`: a short Korean phrase (at most about 18 characters) saying what to grab and what it does, in everyday words of the picture, e.g. `"가지 끝을 끌어 벌리기"`, `"꽃잎을 돌려 개수 바꾸기"`, `"물결 꼭대기를 끌어 높이기"`. No ids or code names.
+- `hint`: a short English phrase (at most about 5 words / 30 characters) saying what to grab and what it does, in everyday words of the picture, e.g. `"Drag branch tips to spread"`, `"Turn petals to change count"`, `"Drag wave crest to raise"`. No ids or code names.
 - `code`: the widget source, starting with `rulegenHandle(`.
 
 Example (a property `spread` = angle between two branches, `[]` = number 10..80 °, plus `length` 20..200 px):
 
 ```json
-{ "handles": [ { "propertyId": "spread", "paths": [[], ["length"]], "hint": "가지 끝을 끌어 벌리기",
+{ "handles": [ { "propertyId": "spread", "paths": [[], ["length"]], "hint": "Drag branch tips to spread",
   "code": "rulegenHandle(function (h) {\n  const base = () => ({ x: h.w / 2, y: h.h - 16 });\n  const reach = () => Math.min(h.w * 0.42, h.h - 36) * (0.35 + 0.65 * h.ratio('length'));\n  let side = 0;\n  function tip(sign) { const b = base(), a = -Math.PI / 2 + sign * h.v('') * Math.PI / 360; return { x: b.x + Math.cos(a) * reach(), y: b.y + Math.sin(a) * reach() }; }\n  return {\n    draw() {\n      const b = base();\n      p.stroke(120); p.strokeWeight(3); p.line(b.x, b.y + 12, b.x, b.y);\n      for (const sign of [-1, 1]) { const t = tip(sign); p.stroke(h.color); p.strokeWeight(2); p.line(b.x, b.y, t.x, t.y); p.noStroke(); p.fill(h.pressed && side === sign ? h.color : 255); p.stroke(h.color); p.ellipse(t.x, t.y, 14, 14); }\n      p.noStroke(); p.fill(90); p.textSize(11); p.textAlign(p.CENTER); p.text(Math.round(h.v('')) + '° · ' + Math.round(h.v('length')) + 'px', b.x, 14);\n    },\n    pressed() { const l = tip(-1), r = tip(1); side = p.dist(h.mouseX, h.mouseY, l.x, l.y) < p.dist(h.mouseX, h.mouseY, r.x, r.y) ? -1 : 1; },\n    dragged() {\n      const b = base(), dx = h.mouseX - b.x, dy = h.mouseY - b.y;\n      const half = Math.abs(Math.atan2(dx, -dy)) * 180 / Math.PI;\n      h.set('', half * 2);\n      const max = Math.min(h.w * 0.42, h.h - 36), d = Math.hypot(dx, dy) / max;\n      h.setRatio('length', (d - 0.35) / 0.65);\n    },\n  };\n});" } ] }
 ```

@@ -13,11 +13,13 @@ import { parse } from "@babel/parser";
 import { connectScene } from "./scene-code.server";
 import { applyParameterEdits, guardSuggestedReads, moduleKeyOf, parameterProblem, recordingProblem, suggestionKey } from "../lib/hidden-parameters";
 import { readsPerItem } from "../lib/item-values";
-import { concernSuggestionsSchema, evaluate, handleProblem, inspectPreviewResultSchema, inspectResultSchema, revisedRecommendationSchema, type RecommendationPreview, type RevisedRecommendation, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
+import { concernSuggestionsSchema, handleProblem, inspectPreviewResultSchema, inspectResultSchema, revisedRecommendationSchema, type RecommendationPreview, type RevisedRecommendation, overlayKeys, overlayStoreFields, type ConcernSuggestions, type InspectResult } from "../lib/inspection";
 import { isRuntimeKey } from "../lib/runtime-edits";
 import { cleanMachineChange } from "../lib/machine-change";
+import { aiCompositionPromptSchema, aiTagRevisionSchema, settleComposeTags, settleTransformation, tagRevisionSchema, tagsForAI, tagsForCompose } from "../lib/compose-tags";
 import { EXEC_KEY, exploreProgram, exploreResultSchema, previewKey, traceOnly, type ExploreResult } from "../lib/explore";
-import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxyCells, settleHandles, type AIHandles } from "../lib/scene/handles";
+import { fieldHookProblem } from "../lib/fields";
+import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxySections, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
 
 // One entry per AI intent: its structured output schema, prompt file, budget,
@@ -67,42 +69,49 @@ function keptPreview(input: AIInput, nodes: Map<string, unknown>, item: { kind: 
 }
 /**
  * A recommendation AI wrote for one brush (revised, or made from an Execution frame): its target exists in the brush and
- * its preview runs; else an error (nothing changes). `what` says which in the error ("고친", "만든").
+ * its preview runs; else an error (nothing changes). `what` says which in the error ("revised", "new").
  */
 function settledRecommendation(input: AIInput, output: RevisedRecommendation, what: string) {
   const scene = input.scene!, inspection = input.inspection!, nodes = new Map(scene.nodes.filter(node => inspection.nodeIds.includes(node.id)).map(node => [node.id, node]));
   const node = nodes.get(output.nodeId);
-  if (!node) throw new Error(`${what} recommendation이 이 brush의 노드를 가리키지 않습니다. 다시 시도해주세요.`);
+  if (!node) throw new Error(`The ${what} recommendation does not point at a node of this brush. Please try again.`);
   const keys = new Set(inspection.constraints.map(row => row.key)), has = (kind: string, id: string) => kind === "transformation" ? node.transformations.some(item => item.id === id)
     : Boolean((kind === "state" ? node.machine?.states : node.machine?.transitions)?.some(item => item.id === id));
   const changes = output.changes.filter(item => keys.has(item.key) && (!item.stateId || [...nodes.values()].some(other => other.machine?.states.some(state => state.id === item.stateId))));
-  if (output.kind === "value" ? !changes.length : output.kind === "add-transformation" ? node.transformations.length >= MAX_TRANSFORMATIONS : !has(output.kind, output.targetId)) throw new Error(`${what} recommendation을 이 brush에 적용할 수 없습니다. 다시 시도해주세요.`);
+  if (output.kind === "value" ? !changes.length : output.kind === "add-transformation" ? node.transformations.length >= MAX_TRANSFORMATIONS : !has(output.kind, output.targetId)) throw new Error(`The ${what} recommendation cannot be applied to this brush. Please try again.`);
   const preview = output.kind === "value" ? null : keptPreview(input, nodes, output);
-  if (output.kind !== "value" && !preview) throw new Error(`${what} 미리보기 코드를 적용하지 못했습니다. 다시 시도해주세요.`);
+  if (output.kind !== "value" && !preview) throw new Error(`Could not apply the preview code of the ${what} recommendation. Please try again.`);
   return { ...output, targetId: output.kind === "add-transformation" ? "" : output.targetId, changes: output.kind === "value" ? changes : [],
     targetIds: output.kind === "transformation" ? [...new Set(output.targetIds.filter(id => id !== output.targetId && has("transformation", id)))] : [], preview };
 }
-const needsTarget = (input: AIInput) => !targetNode(input) ? "대상 Collection 또는 Object를 찾지 못했습니다." : undefined;
+const needsTarget = (input: AIInput) => !targetNode(input) ? "Could not find the target Collection or Object." : undefined;
 /** The modules the code must define: one per root node, with the node ids it draws. */
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
-const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "먼저 스케치에서 collection과 object를 추출해주세요." : undefined;
+const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "Extract collections and objects from the sketch first." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision" | "split" | "revise-recommendation" | "execution-recommendation", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "inspect" | "handles" | "concern" | "explore" | "code" | "compose-prompt" | "clarification" | "revision" | "split" | "revise-recommendation" | "execution-recommendation" | "tag-revise", Intent> = {
+  "tag-revise": {
+    schema: aiTagRevisionSchema, maxTokens: () => 3000, strokes: true,
+    check: input => { const target = input.tagTarget, tag = target && input.composeTags.find(item => item.id === target.tagId);
+      return !input.image ? "A sketch image is needed to change the tag." : !tag?.transformations[target!.index] ? "Could not find the tag's transformation to change." : !input.instruction.trim() ? "Say how to change it." : undefined; },
+    context: input => ({ request: input.instruction, target: input.tagTarget, tags: tagsForAI(input.composeTags, input.compositionPens) }),
+    finalize: (input, output: z.infer<typeof aiTagRevisionSchema>) => tagRevisionSchema.parse({ ...input.tagTarget!, transformation: settleTransformation(output.transformation, input.compositionPens), note: output.note }),
+  },
   extract: {
     schema: aiSceneSchema, maxTokens: () => 40000, strokes: true,
-    check: input => !input.image ? "분석할 이미지가 없습니다." : undefined,
+    check: input => !input.image ? "There is no image to analyze." : undefined,
     context: input => ({ instruction: input.instruction }),
     finalize: (_input, output) => convertScene(output),
   },
   compose: {
     schema: aiSceneSchema, maxTokens: () => 44000, strokes: true,
-    check: input => !input.image || !input.instruction.trim() ? "스케치와 Compose prompt가 필요합니다." : undefined,
-    context: input => ({ instruction: input.instruction, ...strokeContext(input) }),
+    check: input => !input.image || (!input.instruction.trim() && !input.composeTags.length) ? "A sketch and a Compose prompt (or its tags on the sketch) are needed." : undefined,
+    context: input => ({ instruction: input.instruction, ...(input.composeTags.length ? { tags: tagsForCompose(input.composeTags) } : {}), ...strokeContext(input) }),
     finalize: (_input, output) => convertScene(output),
   },
   transform: {
     schema: aiTransformSchema, maxTokens: () => 10000,
-    check: input => needsTarget(input) || (!input.targetPropertyId && !input.targetTransformationId && !canAddTransformation(targetNode(input)!) ? "이 노드에는 더 이상 semantic transformation을 추가할 수 없습니다." : undefined),
+    check: input => needsTarget(input) || (!input.targetPropertyId && !input.targetTransformationId && !canAddTransformation(targetNode(input)!) ? "No more semantic transformations can be added to this node." : undefined),
     context: input => ({ scene: input.scene, targetNodeId: input.targetNodeId, targetTransformationId: input.targetTransformationId, targetPropertyId: input.targetPropertyId,
       mode: input.targetPropertyId ? "property" : input.targetTransformationId ? "replace" : "add", alternative: input.alternative, instruction: input.instruction, annotationMarks: input.transformMarks, canvas }),
     finalize: (input, output: z.infer<typeof aiTransformSchema>) => {
@@ -115,7 +124,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   /** Decompose again: one transformation (of a minimal example) into the meaningful algorithms its code runs, each its own transformation. */
   split: {
     schema: aiSplitSchema, maxTokens: () => 16000, effort: "medium",
-    check: input => needsTarget(input) || (!targetNode(input)!.transformations.some(item => item.id === input.targetTransformationId) ? "나눌 transformation을 찾지 못했습니다." : undefined),
+    check: input => needsTarget(input) || (!targetNode(input)!.transformations.some(item => item.id === input.targetTransformationId) ? "Could not find the transformation to divide." : undefined),
     context: input => { const node = targetNode(input)!, key = moduleKeyOf(input.scene!, node.id), code = key && input.previous ? programModules(input.previous).get(key) ?? "" : "";
       return { scene: input.scene, targetNodeId: input.targetNodeId, targetTransformationId: input.targetTransformationId, code: code.slice(0, 40000), instruction: input.instruction }; },
     finalize: (input, output: z.infer<typeof aiSplitSchema>) => {
@@ -125,7 +134,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const parts = convertTransformations(output.parts, library, ids).map(part => { let id = part.id, n = 2; while (taken.has(id)) id = `${part.id}-${n++}`; taken.add(id); return { ...part, id }; })
         .filter(part => part.properties.length);
       const divisible = output.divisible && parts.length >= 2;
-      return { divisible, reason: (divisible ? output.reason : output.reason || "더 나눌 의미 있는 내부 알고리즘이 없습니다.").slice(0, 400), algorithms: divisible ? library : [], parts: divisible ? parts : [] };
+      return { divisible, reason: (divisible ? output.reason : output.reason || "There are no meaningful inner algorithms to divide it into.").slice(0, 400), algorithms: divisible ? library : [], parts: divisible ? parts : [] };
     },
   },
   "state-machine": {
@@ -142,10 +151,10 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     schema: aiMachineRefineSchema, maxTokens: () => 32000, effort: "medium", strokes: true,
     check: input => {
       const node = targetNode(input), target = input.machineTarget, machine = node ? node.machine : null;
-      if (!node) return "대상 Collection 또는 Object를 찾지 못했습니다.";
-      if (!machine) return "먼저 이 노드의 상태 머신을 만들어주세요.";
-      if (target && !(target.kind === "state" ? machine.states : machine.transitions).some(item => item.id === target.id)) return "첨부한 state 또는 transition을 찾지 못했습니다.";
-      if (!input.instruction.trim() && !input.machineMarks.length) return "어떻게 바꿀지 적거나 상태 머신 위에 annotation을 그려주세요.";
+      if (!node) return "Could not find the target Collection or Object.";
+      if (!machine) return "Create a state machine for this node first.";
+      if (target && !(target.kind === "state" ? machine.states : machine.transitions).some(item => item.id === target.id)) return "Could not find the attached state or transition.";
+      if (!input.instruction.trim() && !input.machineMarks.length) return "Describe how to change it, or draw an annotation on the state machine.";
     },
     context: input => {
       const machine = targetNode(input)!.machine!, target = input.machineTarget;
@@ -162,7 +171,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   inspect: {
     schema: inspectResultSchema, maxTokens: input => input.inspection?.previews ? 24000 : 16000, effort: "medium",
     variant: input => input.inspection?.previews && !input.inspection.update ? { schema: inspectPreviewResultSchema, prompts: ["inspect-preview"] } : null,
-    check: input => !input.scene || !input.inspection ? "검사할 brush와 기록이 필요합니다." : !input.instruction.trim() && !input.inspection.marks.length ? "알고 싶은 점을 적거나 Inspection annotation으로 표시해주세요." : undefined,
+    check: input => !input.scene || !input.inspection ? "A brush to inspect and its records are needed." : !input.instruction.trim() && !input.inspection.marks.length ? "Write what you want to know, or mark it with an Inspection annotation." : undefined,
     context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
       algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
       // The modules that draw the brush, to find constants the concern depends on (hidden parameters).
@@ -211,11 +220,15 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       // The running state (an input point, a store value) is the step's, not an item's value: any grip on it is kept.
       const perItem = (key: string) => { if (isRuntimeKey(key)) return true; const suggestion = parameters.find(item => suggestionKey(item) === key); return readsPerItem(suggestion ? patched(recorded, suggestion.nodeId, suggestion.edits) : recorded, key); };
       const gripped = overlays.map(handled), shared = gripped.filter(item => item.each && item.handle && !perItem(item.handle.key)).length;
-      const note = (overlays.length < drawable.length ? ` (항목 기록을 추가하는 코드가 올바르지 않아 오버레이 ${drawable.length - overlays.length}개를 표시하지 못했습니다. Inspect again으로 다시 시도해주세요.)` : "")
-        + (shared ? ` (손잡이 ${shared}개는 코드가 그 값을 항목마다 따로 읽지 않아 뺐습니다. Inspect again으로 다시 시도해주세요.)` : "");
+      // Fields the concern is about: kept only when the code declares them, or the edits declare them and stay valid (after the records).
+      const fields = (output.fields ?? []).filter((item, i, all) => all.findIndex(other => other.id === item.id) === i && nodes.has(item.nodeId) && !fieldHookProblem(input.scene!, recorded, item, parsesModule));
+      const lostFields = (output.fields ?? []).length - fields.length;
+      const note = (overlays.length < drawable.length ? ` (The code that adds item records was invalid, so ${drawable.length - overlays.length} overlay(s) could not be shown. Please try again with Inspect again.)` : "")
+        + (shared ? ` (${shared} handle(s) were left out because the code does not read that value per item. Please try again with Inspect again.)` : "")
+        + (lostFields ? ` (${lostFields} field(s) could not be hooked into the code to show them. Please try again with Inspect again.)` : "");
       const previewOf = (item: InspectResult["recommendations"][number] & { preview?: RecommendationPreview | null }) => keptPreview(input, nodes, item);
       return { ...output, summary: output.summary.slice(0, 1500 - note.length) + note, overlays: gripped.map(item => item.each && item.handle && !perItem(item.handle.key) ? { ...item, handle: null } : item), valueFixes: output.valueFixes.filter(change),
-        parameters, records,
+        parameters, records, fields,
         recommendations: output.recommendations.filter(item => item.kind === "value" ? item.changes.length > 0 : item.kind === "add-transformation" ? (nodes.get(item.nodeId)?.transformations.length ?? MAX_TRANSFORMATIONS) < MAX_TRANSFORMATIONS : linked(item.kind, item.nodeId, item.targetId)).map(item => ({ ...item, changes: item.changes.filter(change),
           targetIds: item.kind === "transformation" ? [...new Set(item.targetIds.filter(id => id !== item.targetId && linked("transformation", item.nodeId, id)))] : [],
           ...("preview" in item ? { preview: previewOf(item) } : {}) })) };
@@ -223,8 +236,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   },
   "revise-recommendation": {
     schema: revisedRecommendationSchema, maxTokens: () => 16000, effort: "medium",
-    check: input => !input.scene || !input.inspection?.revise ? "고칠 recommendation이 필요합니다."
-      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.revise.manipulations.length && !input.inspection.revise.adjusted.length ? "preview 위에 annotation을 그리거나 물체나 손잡이를 옮기거나, 어떻게 고칠지 적어주세요." : undefined,
+    check: input => !input.scene || !input.inspection?.revise ? "A recommendation to revise is needed."
+      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.revise.manipulations.length && !input.inspection.revise.adjusted.length ? "Draw an annotation on the preview, move an object or handle, or describe how to revise it." : undefined,
     context: input => {
       const inspection = input.inspection!, revise = inspection.revise!, held = inspection.cursor ?? inspection.steps.length - 1;
       return { request: input.instruction, concern: revise.concern, inspectionSummary: revise.summary, recommendation: revise.recommendation, brush: inspection.brushName,
@@ -233,13 +246,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         step: inspection.steps[held] ?? null, annotationMarks: inspection.marks, annotationMarkStyles: inspection.markStyles, manipulations: revise.manipulations, adjusted: revise.adjusted, canvas, code: brushModules(input) };
     },
     /** The revised recommendation stays one of this brush (its target exists) with a preview that runs; else nothing changes. */
-    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "고친"),
+    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "revised"),
   },
   /** A new recommendation from what the user showed on an Execution frame (annotation, crops moved, scaled or rotated) at one moment of execution. */
   "execution-recommendation": {
     schema: revisedRecommendationSchema, maxTokens: () => 16000, effort: "medium",
-    check: input => !input.scene || !input.inspection?.fromExecution ? "Execution 프레임과 그 brush가 필요합니다."
-      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.fromExecution.manipulations.length ? "Execution 그림 위에 annotation을 그리거나 크롭해서 옮기거나, 어떻게 바뀌면 좋을지 적어주세요." : undefined,
+    check: input => !input.scene || !input.inspection?.fromExecution ? "An Execution frame and its brush are needed."
+      : !input.instruction.trim() && !input.inspection.marks.length && !input.inspection.fromExecution.manipulations.length ? "Draw an annotation on the Execution picture, crop and move part of it, or describe how it should change." : undefined,
     context: input => {
       const inspection = input.inspection!, from = inspection.fromExecution!, held = inspection.cursor ?? inspection.steps.length - 1;
       return { request: input.instruction, concern: from.concern, inspectionSummary: from.summary, execution: from.execution,
@@ -247,11 +260,11 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         brush: inspection.brushName, brushNodes: input.scene!.nodes.filter(node => inspection.nodeIds.includes(node.id)), algorithms: input.scene!.algorithms, constraints: inspection.constraints,
         step: inspection.steps[held] ?? null, annotationMarks: inspection.marks, annotationMarkStyles: inspection.markStyles, manipulations: from.manipulations, canvas, code: brushModules(input) };
     },
-    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "만든"),
+    finalize: (input, output: RevisedRecommendation) => settledRecommendation(input, output, "new"),
   },
   concern: {
     schema: concernSuggestionsSchema, maxTokens: () => 3000, effort: "low",
-    check: input => !input.scene || !input.inspection ? "검사할 brush가 필요합니다." : !input.inspection.marks.length && !input.instruction.trim() ? "Inspection annotation으로 표시하거나 concern을 적어주세요." : undefined,
+    check: input => !input.scene || !input.inspection ? "A brush to inspect is needed." : !input.inspection.marks.length && !input.instruction.trim() ? "Mark it with an Inspection annotation or write a concern." : undefined,
     context: input => ({ typed: input.instruction, brush: input.inspection!.brushName,
       brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)).map(node => ({ id: node.id, name: node.name, kind: node.kind, description: node.description, region: node.region,
         transformations: node.transformations.map(item => ({ label: item.label, description: item.description, properties: item.properties.map(property => ({ label: property.label, description: property.description })) })),
@@ -261,13 +274,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     finalize: (input, output: ConcernSuggestions) => {
       const typed = input.instruction, seen = new Set<string>();
       const items = output.suggestions.map(item => item.replace(/\s+/g, " ").trim()).filter(item => item && item !== typed.trim() && !seen.has(item) && seen.add(item));
-      if (!items.length) throw new Error("제안할 concern을 만들지 못했습니다.");
+      if (!items.length) throw new Error("Could not come up with concerns to suggest.");
       return { suggestions: [...items.filter(item => typed && item.startsWith(typed)), ...items.filter(item => !typed || !item.startsWith(typed))] };
     },
   },
   explore: {
     schema: exploreResultSchema, maxTokens: () => 16000, effort: "medium",
-    check: input => !input.scene || !input.inspection || !input.explore ? "탐색할 brush와 기록이 필요합니다." : !input.inspection.steps.length ? "먼저 brush를 움직여 단계를 기록해주세요." : undefined,
+    check: input => !input.scene || !input.inspection || !input.explore ? "A brush to explore and its records are needed." : !input.inspection.steps.length ? "Move the brush first to record steps." : undefined,
     context: input => ({ mode: input.explore!.mode, concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
       algorithms: input.scene!.algorithms, constraints: input.inspection!.constraints, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, input: input.explore!.input, canvas,
       code: brushModules(input), inspection: { summary: input.explore!.summary, overlays: input.explore!.overlays },
@@ -280,10 +293,13 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       // checkpoints of the code's execution (edits that only add m.trace calls) for running it.
       const previewing = Boolean(explore.recommendation && !explore.recommendation.applied && explore.recommendation.kind !== "value");
       const execution = explore.mode === "execution";
-      let edits = output.edits.filter(edit => nodes.has(edit.nodeId) && (previewing || (execution && traceOnly(edit))));
+      // Edits that only add checkpoints and wrappers change nothing the code does: execution keeps them; the values mode only
+      // those that keep an item's quantity in the execution state (m.runtime), for its handles to change at the moment.
+      const keepsState = (edit: { replace: string }) => edit.replace.includes("m.runtime(") && !edit.replace.includes("m.trace(");
+      let edits = output.edits.filter(edit => nodes.has(edit.nodeId) && (previewing || (traceOnly(edit) && (execution || keepsState(edit)))));
       const program = edits.length ? exploreProgram(input.previous, input.scene!, { edits, values: [] }) : null;
       const modules = (code: string) => [...new Set(edits.map(edit => moduleKeyOf(input.scene!, edit.nodeId)!))].map(key => programModules(code).get(key) ?? "");
-      if (program && ("error" in program || !modules(program.code).every(parsesModule))) { edits = []; notes.push(previewing ? "추천을 미리 적용하는 코드를 만들지 못해 지금 코드로 보여줍니다." : "실행 과정을 기록하는 코드를 넣지 못해 그리는 순서만 보여줍니다."); }
+      if (program && ("error" in program || !modules(program.code).every(parsesModule))) { edits = []; notes.push(previewing ? "Could not write code that previews the recommendation, so the current code is shown." : "Could not add code that records the execution, so only the drawing order is shown."); }
       const edited = edits.map(edit => edit.replace).join("\n");
       // A preview value is one the edits read and the node does not have yet.
       const values = output.values.filter((value, i, all) => all.findIndex(other => other.nodeId === value.nodeId && other.id === value.id) === i && nodes.has(value.nodeId)
@@ -291,7 +307,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         && (value.value.type !== "number" || (value.value.min <= value.value.value && value.value.value <= value.value.max && value.value.min < value.value.max))
         && new RegExp(`m\\.(?:v|opt)\\(\\s*(?:[^,()]*,\\s*)?["'][^"']*/${value.id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`).test(edited));
       // Code that reads a value that is not there stops: edits reading a dropped one go too.
-      if (edits.length && output.values.some(value => !values.includes(value) && edited.includes(`/${value.id}"`))) { edits = []; notes.push("미리보기 코드가 올바르지 않은 값을 읽어 지금 코드로 보여줍니다."); }
+      if (edits.length && output.values.some(value => !values.includes(value) && edited.includes(`/${value.id}"`))) { edits = []; notes.push("The preview code reads an invalid value, so the current code is shown."); }
       const kept = edits.length ? values : [];
       // A preview's states and transitions (for the behavior it adds): only with its edits, which emit its events.
       const machine = previewing && edits.length && output.machine && nodes.has(output.machine.nodeId) ? cleanMachineChange(input.scene!, output.machine, edits) : null;
@@ -308,13 +324,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
         ? handle.key === EXEC_KEY && !handleProblem(handle, { type: "number" })
         : handle.key !== EXEC_KEY && !handleProblem(handle, specs.get(handle.key));
       const overlays = output.overlays.filter(item => linked(item.link.kind, item.link.nodeId, item.link.id)).map(item => item.handle && usable(item.handle) ? item : { ...item, handle: null });
-      // A sketched mark for an operation of the run: its area must be readable (the same readers as a handle's).
-      const readable = (source: string) => { try { evaluate(source || "0", { values: {}, stores: {}, states: {}, step: 0, steps: 1, item: {}, itemIndex: 0 }); return true; } catch { return false; } };
-      // A trace needs the path it follows, a custom mark its shape.
-      const sketched = execution && output.axis === "run" ? output.sketches.filter((sketch, i, all) => all.findIndex(other => other.op === sketch.op) === i
-        && [sketch.x, sketch.y, sketch.w, sketch.h, sketch.toX, sketch.toY].every(readable)
-        && (sketch.shape !== "trace" || /^[^:]+:/.test(sketch.path)) && (sketch.shape !== "custom" || sketch.template.length >= 4)) : [];
-      if (!overlays.some(item => item.handle) && !sketched.length) throw new Error(execution ? "execution을 조절할 손잡이를 만들지 못했습니다. 다시 시도해주세요." : "조절할 핵심 값의 손잡이를 만들지 못했습니다. 다시 시도해주세요.");
+      // An execution with its steps recorded runs without a handle of its own too (the buttons, the keys and a plain grip on each step).
+      if (!overlays.some(item => item.handle) && !(execution && edits.length)) throw new Error(execution ? "Could not create a handle to control the execution. Please try again." : "Could not create handles for the key parameters. Please try again.");
       // Steps only when there are steps to move between; a range too narrow to move in is the whole.
       const axis = output.axis === "steps" && input.inspection!.steps.length < 2 ? "input" : output.axis;
       const [from, to] = output.to - output.from >= .02 ? [output.from, output.to] : [0, 1];
@@ -322,8 +333,9 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       const ops = new Set(edits.flatMap(edit => [...edit.replace.matchAll(/\bop\s*:\s*(\d+)/g)].map(match => Number(match[1]))));
       const named = execution && axis === "run" ? output.stages.filter((stage, i, all) => all.findIndex(other => other.op === stage.op) === i) : [];
       const stages = named.filter(stage => ops.has(stage.op)), lost = named.filter(stage => !ops.has(stage.op));
-      const sketches = sketched.filter(sketch => ops.has(sketch.op));
-      if (lost.length) notes.push(`${lost.map(stage => `「${stage.name}」`).join(", ")} 단계는 코드에 넣지 못해 빠졌습니다. 다시 만들면 들어갈 수 있습니다.`);
+      // Steps are run with handles (and the buttons), never by drawing marks.
+      const sketches: ExploreResult["sketches"] = [];
+      if (lost.length) notes.push(`Step(s) ${lost.map(stage => `“${stage.name}”`).join(", ")} could not be added to the code and were left out. Generating again may include them.`);
       // What the execution and each operation are part of: only transformations, states and transitions the brush has (or the preview brings), each once.
       const parts = (list: ExploreResult["of"]) => list.filter((part, i, all) => all.findIndex(other => other.kind === part.kind && other.nodeId === part.nodeId && other.id === part.id) === i
         && (part.kind === "transformation" ? Boolean(nodes.get(part.nodeId)?.transformations.some(item => item.id === part.id)) : linked(part.kind, part.nodeId, part.id)));
@@ -335,15 +347,17 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   },
   handles: {
     schema: aiHandlesSchema, maxTokens: () => 32000, effort: "medium",
-    check: input => needsTarget(input) || (!input.targetPropertyId && !input.targetTransformationId ? "direct manipulation handle은 property 하나나 transformation 하나에 대해 만듭니다." : undefined) || (!handleTargets(targetNode(input)!, input.scene!.algorithms, handleTarget(input)).length ? "direct manipulation handle로 조절할 수 있는 property가 없습니다." : undefined),
+    check: input => needsTarget(input) || (!input.targetPropertyId && !input.targetTransformationId ? "Direct manipulation handles are made for one property or one transformation." : undefined) || (!handleTargets(targetNode(input)!, input.scene!.algorithms, handleTarget(input)).length ? "There is no property that a direct manipulation handle can control." : undefined),
     context: input => { const node = targetNode(input)!, r = node.region, properties = handleTargets(node, input.scene!.algorithms, handleTarget(input));
       // The widget area each will get in the proxy frame, given how many the node will show.
-      const shown = new Set([...node.transformations.flatMap(item => item.properties).filter(item => item.handle).map(item => item.id), ...properties.map(item => item.propertyId)]).size, cell = proxyCells(shown)[0];
+      // Each transformation has its own proxy frame: the cell this request's first property gets there once its widgets are in.
+      const designed = new Set(properties.map(item => item.propertyId)), owner = node.transformations.find(item => item.properties.some(property => designed.has(property.id)));
+      const cell = proxySections([owner ? owner.properties.filter(property => property.handle || designed.has(property.id)).length : 1])[0].cells[0];
       return { targetNodeId: node.id, node: { name: node.name, kind: node.kind, description: node.description, primitive: node.primitive, region: { x: r.x * canvas.width, y: r.y * canvas.height, w: r.w * canvas.width, h: r.h * canvas.height } },
         properties, widgetArea: { w: Math.round(cell.w), h: Math.round(cell.h - CELL_HEADER) }, instruction: input.instruction, canvas }; },
     finalize: (input, output: AIHandles) => {
       const settled = settleHandles(targetNode(input)!, output, handleTarget(input), prepareHandle);
-      if (!settled.handles.length) throw new Error(settled.skipped.length ? `handle 코드를 실행할 수 없습니다: ${settled.skipped[0].reason}` : "만들어진 handle이 없습니다. 다시 시도해주세요.");
+      if (!settled.handles.length) throw new Error(settled.skipped.length ? `Could not run the handle code: ${settled.skipped[0].reason}` : "No handles were created. Please try again.");
       return settled;
     },
   },
@@ -359,18 +373,19 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     },
   },
   "compose-prompt": {
-    schema: compositionPromptSchema, maxTokens: () => 2000,
-    check: input => !input.image ? "프롬프트를 만들 스케치 이미지가 필요합니다." : undefined,
+    schema: aiCompositionPromptSchema, maxTokens: () => 6000,
+    check: input => !input.image ? "A sketch image is needed to write the prompt." : undefined,
     context: input => ({ instruction: input.instruction, ...strokeContext(input) }),
+    finalize: (input, output: z.infer<typeof aiCompositionPromptSchema>) => compositionPromptSchema.parse({ prompt: output.prompt, tags: settleComposeTags(output.tags, input.compositionStrokes, input.compositionPens) }),
   },
   clarification: {
     schema: clarificationSchema, maxTokens: () => 2000,
-    check: input => !input.image || !input.resultImage || !input.previous || !input.annotations.length ? "설명을 만들 결과 이미지와 annotation 스케치가 필요합니다." : undefined,
+    check: input => !input.image || !input.resultImage || !input.previous || !input.annotations.length ? "A result image and an annotation sketch are needed to write the description." : undefined,
     context: input => ({ scene: input.scene, previous: input.previous, instruction: input.instruction, annotations: input.annotations }),
   },
   revision: {
     schema: aiRevisionSchema, maxTokens: () => 40000,
-    check: input => needsScene(input) || (!input.image || !input.previous || !input.annotations.length || !input.instruction.trim() ? "결과 위의 스케치와 text clarification을 입력해주세요." : undefined),
+    check: input => needsScene(input) || (!input.image || !input.previous || !input.annotations.length || !input.instruction.trim() ? "Provide a sketch over the result and a text clarification." : undefined),
     context: input => ({ scene: input.scene, previous: input.previous, instruction: input.instruction, annotations: input.annotations }),
     finalize: (input, output: z.infer<typeof aiRevisionSchema>) => {
       const current = input.scene!, proposed = settleProposal(current, convertScene(output, current.algorithms));

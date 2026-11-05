@@ -97,12 +97,12 @@
                   "find": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 1500
+                    "maxLength": 3000
                   },
                   "replace": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 4000
+                    "maxLength": 12000
                   }
                 },
                 "required": [

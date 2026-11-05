@@ -1,0 +1,11 @@
+{
+  "id": "2026-11-01T17-04-53-430Z-inspect-240d0dd3-9de6-4fb4-817a-6e79b2477a5e",
+  "intent": "inspect",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-11-01T17:04:53.430Z",
+  "status": "success",
+  "httpStatus": 200,
+  "openaiRequestId": null,
+  "finishedAt": "2026-11-01T17:04:53.550Z",
+  "durationMs": 120
+}

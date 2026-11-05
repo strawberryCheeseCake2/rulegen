@@ -86,8 +86,8 @@ export function EditSheet({ edit, onEdit, shot, editable, selected, onSelect, cl
         {on && (() => { const corner = boxPoint(item, 1, 1), top = boxPoint(item, 0, -1), turn = rotateGrip(item);
           return <>
             <line className="fork-slot-grip-line" x1={top.x} y1={top.y} x2={turn.x} y2={turn.y} vectorEffect="non-scaling-stroke" />
-            <circle className="fork-slot-grip rotate" cx={turn.x} cy={turn.y} r={8} vectorEffect="non-scaling-stroke"><title>돌려서 회전</title></circle>
-            <rect className="fork-slot-grip scale" x={corner.x - 7} y={corner.y - 7} width={14} height={14} vectorEffect="non-scaling-stroke"><title>끌어서 크기 조절</title></rect>
+            <circle className="fork-slot-grip rotate" cx={turn.x} cy={turn.y} r={8} vectorEffect="non-scaling-stroke"><title>Turn to rotate</title></circle>
+            <rect className="fork-slot-grip scale" x={corner.x - 7} y={corner.y - 7} width={14} height={14} vectorEffect="non-scaling-stroke"><title>Drag to scale</title></rect>
           </>; })()}
       </g>;
     })}
@@ -111,12 +111,12 @@ export function EditTools({ edit, onEdit, editable, busy, selected, onSelect, ru
   return <>
     <div className="fork-slot-tools" role="group" aria-label="Edit the picture">
       {run && <button className={edit.mode === "run" ? "active" : ""} aria-pressed={edit.mode === "run"} disabled={!editable} onClick={() => setMode("run")}><Icon name="play" size={12} />{run}</button>}
-      <button className={edit.mode === "select" ? "active" : ""} aria-pressed={edit.mode === "select"} disabled={!editable} onClick={() => setMode(run && edit.mode === "select" ? "run" : "select")}><Icon name="lasso" size={13} />크롭 · 이동 · 크기 · 회전</button>
+      <button className={edit.mode === "select" ? "active" : ""} aria-pressed={edit.mode === "select"} disabled={!editable} onClick={() => setMode(run && edit.mode === "select" ? "run" : "select")}><Icon name="lasso" size={13} />Crop · Move · Scale · Rotate</button>
       <button className={edit.mode === "annotate" ? "active" : ""} aria-pressed={edit.mode === "annotate"} disabled={!editable} onClick={() => setMode(edit.mode === "annotate" ? back : "annotate")}><Icon name="pen" size={13} />Annotation</button>
-      <button disabled={busy || (!edit.marks.length && !edit.manipulations.length)} onClick={() => { onSelect(null); onEdit({ marks: [], manipulations: [], image: "" }); }}>지우기</button>
+      <button disabled={busy || (!edit.marks.length && !edit.manipulations.length)} onClick={() => { onSelect(null); onEdit({ marks: [], manipulations: [], image: "" }); }}>Clear</button>
     </div>
-    <span className="fork-slot-hint-line">{edit.mode === "select" ? "바꿀 부분을 자유롭게 둘러 그려 크롭 · 크롭을 끌어서 옮기기 · 모서리 □로 크기 · 위의 ○로 회전 · Esc로 선택 해제"
-      : edit.mode === "annotate" ? `그림 위에 그려 표시합니다 · 다 그리면 ${run ? `「${run}」` : "선택"}으로 돌아가세요` : "그림 위의 손잡이로 실행합니다 · 보여줄 게 있으면 크롭이나 Annotation을 고르세요"}</span>
+    <span className="fork-slot-hint-line">{edit.mode === "select" ? "Draw freely around the part to change to crop · drag a crop to move · □ corner to scale · ○ above to rotate · Esc to deselect"
+      : edit.mode === "annotate" ? `Draw on the picture to mark it · when done, go back to ${run ? `“${run}”` : "Select"}` : "Execute with the handles on the picture · to show something, pick crop or Annotation"}</span>
     {edit.manipulations.length > 0 && <ul className="fork-slot-manipulations">
       {edit.manipulations.map((item, i) => <li key={`${item.object}-${i}`} className={selected === i ? "on" : ""}><button onClick={() => { if (edit.mode !== "select") onEdit({ mode: "select" }); onSelect(i); }}>{item.label}</button><span>{manipulationText(item)}</span>
         <button aria-label="Remove" disabled={busy} onClick={() => { onSelect(null); onEdit({ manipulations: edit.manipulations.filter((_, j) => j !== i) }); }}>×</button></li>)}

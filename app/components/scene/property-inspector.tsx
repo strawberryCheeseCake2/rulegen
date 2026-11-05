@@ -101,13 +101,13 @@ function RegenerateComposer({ props, what }: { props: PropertyInspectorProps; wh
   const kind = draft.target.propertyId ? "Property" : draft.target.transformationId ? "Transformation" : "New transformation";
   return <form className="regenerate-composer" aria-label="Regenerate with AI" onSubmit={e => { e.preventDefault(); props.onDraftSubmit?.(); }}>
     <span className="section-kicker">REGENERATE WITH AI</span>
-    <div className="inspection-chips"><span className="machine-attachment"><Icon name="spark" size={12} /><b>{kind}</b>{what} 첨부됨</span></div>
-    <textarea aria-label="How to regenerate" maxLength={2000} rows={3} autoFocus placeholder={draft.target.transformationId || draft.target.propertyId ? "어떻게 바꿀지 적어주세요. 예: 가지가 위로 갈수록 더 가늘어지게" : "어떤 transformation을 더할지 적어주세요. 예: 바람에 흔들리게"}
+    <div className="inspection-chips"><span className="machine-attachment"><Icon name="spark" size={12} /><b>{kind}</b>{what} attached</span></div>
+    <textarea aria-label="How to regenerate" maxLength={2000} rows={3} autoFocus placeholder={draft.target.transformationId || draft.target.propertyId ? "Describe how to change it. e.g. branches get thinner toward the top" : "Describe which transformation to add. e.g. sway in the wind"}
       value={draft.instruction} onChange={e => props.onDraftChange?.({ instruction: e.target.value })} />
     <div className="regenerate-annotation">
-      {draft.marks.length > 0 ? <span className="machine-attachment machine-attachment-annotation"><Icon name="pen" size={12} /><b>Annotation</b>{draft.marks.length}획 첨부됨
+      {draft.marks.length > 0 ? <span className="machine-attachment machine-attachment-annotation"><Icon name="pen" size={12} /><b>Annotation</b>{draft.marks.length} stroke{draft.marks.length === 1 ? "" : "s"} attached
         <button type="button" aria-label="Clear annotation" onClick={() => props.onDraftChange?.({ marks: [] })}><Icon name="close" size={11} /></button></span>
-        : <span className="inspection-muted">프레임에 그려서 바꿀 곳을 짚어줄 수 있어요.</span>}
+        : <span className="inspection-muted">You can draw on the frame to point at what to change.</span>}
       <button type="button" className={draft.annotating ? "active" : ""} aria-pressed={draft.annotating} onClick={() => props.onDraftChange?.({ annotating: !draft.annotating })}>
         <Icon name="pen" size={12} />{draft.annotating ? "Done drawing" : "Draw on frame"}</button>
     </div>
@@ -142,11 +142,11 @@ function HandleEditor({ property, props }: { property: Property; props: Property
       {props.onOpenProxy && <button type="button" title="Open the proxy frame where this handle runs" onClick={props.onOpenProxy}>Open proxy</button>}
       <button type="button" className="remove-control" aria-label={`Remove ${property.label} handle`} title="Remove this handle" onClick={() => props.onHandle?.(property.id, null)}><Icon name="close" size={11} /></button>
     </div>
-    <input aria-label={`${property.label} handle hint`} maxLength={120} placeholder="What the gesture does, e.g. 끌어서 가지를 벌리기" value={handle.hint} onChange={e => props.onHandle?.(property.id, { ...handle, hint: e.target.value })} />
-    {!fits && <p className="handle-editor-error">값의 구조가 바뀌어 이 handle이 조절하던 값이 없습니다. 다시 만들어주세요.</p>}
+    <input aria-label={`${property.label} handle hint`} maxLength={120} placeholder="What the gesture does, e.g. drag to spread the branches" value={handle.hint} onChange={e => props.onHandle?.(property.id, { ...handle, hint: e.target.value })} />
+    {!fits && <p className="handle-editor-error">The value structure changed, so the value this handle adjusted is gone. Please regenerate it.</p>}
     {error && <p className="handle-editor-error" role="alert">⚠ {error}</p>}
     <form className="handle-editor-row" onSubmit={e => { e.preventDefault(); redesign(instruction); }}>
-      <input aria-label={`How to change the ${property.label} handle`} maxLength={600} placeholder="어떻게 바꿀지 (선택) 예: 꽃잎을 직접 잡아 돌리게" value={instruction} onChange={e => setInstruction(e.target.value)} />
+      <input aria-label={`How to change the ${property.label} handle`} maxLength={600} placeholder="How to change it (optional) e.g. grab the petals directly to rotate them" value={instruction} onChange={e => setInstruction(e.target.value)} />
       <button type="submit" disabled={props.busy}><Icon name="spark" size={11} />{error || !fits ? "Fix with AI" : "Redesign"}</button>
     </form>
     <details className="handle-code"><summary>Widget code</summary><pre>{handle.code}</pre></details>
@@ -180,17 +180,17 @@ function PropertyCard({ property, props, openMenu }: { property: Property; props
  */
 function SuggestedCard({ item, index, props }: { item: SuggestedProperty; index: number; props: PropertyInspectorProps }) {
   const value = item.value, scale = item.form === "scale" && value.type === "number";
-  const shown = value.type === "number" ? `${scale ? "×" : ""}${Math.round(value.value * 1000) / 1000}${scale ? "" : value.unit}` : value.type === "toggle" ? (value.value ? "켜짐" : "꺼짐") : String(value.value);
+  const shown = value.type === "number" ? `${scale ? "×" : ""}${Math.round(value.value * 1000) / 1000}${scale ? "" : value.unit}` : value.type === "toggle" ? (value.value ? "On" : "Off") : String(value.value);
   return <article className={`property-card suggested-property effect-${item.effect} ${props.highlightPropertyId === item.id ? "inspection-highlight" : ""}`} data-property-id={item.id} aria-label={`Suggested parameter ${item.label}`}>
     <div className="property-card-title">
-      <b>{item.label}</b><em className="suggested-tag" title="Targeted inspection suggests exposing this hard-coded value">제안</em>
+      <b>{item.label}</b><em className="suggested-tag" title="Targeted inspection suggests exposing this hard-coded value">Suggested</em>
       <span className="effect-select">{item.effect}</span>
     </div>
     {item.description && <p className="property-description">{item.description}</p>}
     {item.reason && <p className="property-description suggested-reason">{item.reason}</p>}
     <div className="suggested-value">
       {value.type === "number" && <input type="range" aria-label={`${item.label} (suggested)`} min={value.min} max={value.max} step={value.step} value={value.value} disabled readOnly />}
-      <output>{scale ? "배율 " : "지금 코드의 값 "}{shown}</output>
+      <output>{scale ? "Scale " : "Current code value "}{shown}</output>
     </div>
     <div className="suggested-actions">
       <button type="button" className="accept" disabled={props.busy || !props.onAcceptSuggestion} title="Expose it as a property of this transformation (no code regeneration)" onClick={() => props.onAcceptSuggestion?.(index)}><Icon name="plus" size={11} />Accept</button>

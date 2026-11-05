@@ -1,0 +1,11 @@
+{
+  "id": "2026-11-01T13-09-19-514Z-revise-recommendation-8b58e365-4016-4f9e-864f-3c1f0d90c605",
+  "intent": "revise-recommendation",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-11-01T13:09:19.514Z",
+  "status": "failed",
+  "httpStatus": 200,
+  "openaiRequestId": null,
+  "finishedAt": "2026-11-01T13:09:19.661Z",
+  "durationMs": 147
+}

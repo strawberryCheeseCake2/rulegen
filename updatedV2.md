@@ -1,6 +1,6 @@
 # Rulegen 요구사항 V2 (최신본)
 
-최종 갱신: 2026-10-22 (시작 시 프레임 배치 유지, Live 없앰, overlay handle, 숨은 값의 overlay, property 패널의 제안 파라미터)
+최종 갱신: 2026-11-04 (AI prompt의 스케치 tag, 시작 시 프레임 배치 유지, Live 없앰, overlay handle, 숨은 값의 overlay, property 패널의 제안 파라미터)
 
 `init.md` 원문과 이후 대화에서 요청한 내용을 현재 동작 기준으로 하나로 정리한 문서입니다. 예전 요청 중 지금의 동작과 맞지 않는 내용(visual feature 태그, subfeature·rule widget, Features/Rules/Code/Brush 탭, 프레임 단위 state machine, procedural brush 생성, 스케치와 분리된 generated result 프레임)은 지우고 최신 요구사항으로 덮어썼습니다. 이전 형식 호환은 지원하지 않습니다(19절).
 
@@ -86,6 +86,316 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
     - 고친 recommendation은 targeted 도구의 그 항목을 바꾸고(shared id로 저장), fork 자리의 제목·그룹 이름이 바뀐다. Execution·핵심 파라미터 프레임은 옛 recommendation을 읽고 있었으므로 다시 "만들지 않음" 상태가 된다.
     - preview 코드가 적용되지 않거나 대상이 brush 밖이면 아무것도 바꾸지 않고 오류를 보인다. 요청 중에는 취소할 수 있다.
 - **Execution이 속한 곳 표시 (2026-10-31)**: Execution 프레임을 만들 때 AI가 그 execution 전체(`of`)와 연산 종류(`stages[].of`)마다 brush의 어느 semantic transformation · state · transition에 속하는지 함께 적는다(`prompts/explore.md`). 서버는 brush에 없는 것을 빼고(미리보기가 가져오는 state·transition은 둠), 전체 목록에 연산들 것을 합쳐 중복을 없앤다. 프레임 아래 메뉴에 "이 execution이 속한 곳: Transformation 「…」 · State 「…」"가, 방금 실행/다음 단계 줄에는 그 연산이 속한 곳이 작은 칩으로 보인다. 연산 버튼의 툴팁에도 나온다.
+- **Inspection에서 field 보고 빗질하기 (2026-11-01)**
+  - field는 concern과 관련 있을 때만 보인다. targeted inspection AI가 concern이 brush가 따르는 field에 관한 것인지 판단해, 그럴 때만 결과의 `fields`에 넣는다(최대 2개; `prompts/inspect.md`의 fields 절). 예: 선이 모이고 갈라지는 곳, 흐름 방향, 소용돌이, 어디에 몰리는지. 선 두께·색·개수·크기·타이밍 concern이면 `fields: []`이다.
+  - 각 항목은 `id`, 계산하는 모듈의 root `nodeId`, 이름, 이유, 그리고 코드가 아직 그 field를 `m.field`로 선언하지 않았으면 그 계산을 감싸는 정확한 수정(edits)으로 이뤄진다. 예: `const flow = m.field("flow", (x, y) => 코드의 방향식); … flow(x, y)`. 캔버스 픽셀을 받고 코드와 같은 값을 돌려주므로 그림은 바뀌지 않는다.
+  - 서버는 records를 적용한 코드 위에서 그 수정이 맞는지 확인한다(찾는 문자열, field 선언, 문법; `fieldHookProblem`). 안 맞으면 빼고 요약에 알린다. 결과가 오면 records처럼 프레임 코드에 바로 적용한다(`applyFieldHook`, Undo apply 가능).
+  - 생성 코드는 더 이상 `m.field`를 스스로 넣지 않는다(`contracts/scene-code.md`: 있으면 유지만). 런타임의 `m.field`, 샘플링, 빗질은 그대로다. 그래서 이미 만든 코드도 다시 생성하지 않고 inspection만으로 field를 볼 수 있다.
+  - 화면: targeted inspection 도구로 단계를 잡았고 결과에 field가 있을 때만, 그 field들만 36×24 화살표로 그린다. 프레임 왼쪽 위 FIELD 도구에서 Arrows·Comb·Radius·Strength·되돌리기·Reset을 쓴다. 이름에 마우스를 올리면 이유가 보인다. 빗질은 잡은 단계에만 적용되는 what-if이고, 빗질한 field로 계산한 결과는 `m.memo` 캐시에서 따로 둔다.
+- **실행 해보기: 변화 색칠 끔, overlay 좌표 어긋남 (2026-11-02)**
+  - "drawn by this step" 파란색·주황색 변화 표시를 기본으로 껐다(바의 **Show change**로 켬, 브라우저에 기억). 꺼져 있으면 그림 차이도 계산하지 않는다.
+  - overlay 좌표가 어긋나 보이던 원인:
+    - AI의 설명 overlay(판정 범위 타원, 상대 범위, 고르는지 선, 합쳐질 모양)는 다음 단계(`@next`)를 기준으로 그려졌다. 반면 파란 단계 표시, 판정 문구, 설명 글은 방금 실행한 단계(`@last`) 기준이라, overlay가 설명과 다른 항목에 붙었다.
+    - 상대가 없을 때 AI가 `x + 48` 같은 대신 좌표를 지어내 빈 곳에 범위가 그려졌다.
+  - 수정(prompt, 일반 규칙):
+    - 실행 해보기의 설명 overlay는 방금 실행한 단계(`@last`)를 읽는다. 다음 단계(`@next`)는 실행 손잡이와 다음 자리 표시 하나만 읽는다.
+    - 실행 해보기·inspection 둘 다 "좌표를 지어내지 않는다": 없는 대상은 대신 좌표 없이 플래그를 기록하고 `when`으로 끈다.
+  - 이미 만든 frame은 Regenerate로 다시 만들어야 overlay가 바뀐다.
+- **Layers에 constraint 목록, 드래그 앤 드롭, 삭제 (2026-11-04)**
+  - 왼쪽 Layers 패널의 각 collection·object 줄 아래에 그 노드의 semantic transformation(constraint)이 적용 순서대로 들여 써서 나온다. 순서 번호, 이름, property 개수가 보이고, 마우스를 올리면 설명과 property 이름이 보인다.
+  - 누르기: 그 노드가 선택되고, 오른쪽 inspector가 그 transformation 카드로 스크롤해 강조한다.
+  - 드래그 앤 드롭:
+    - 다른 transformation 위에 놓으면 그 앞에 들어간다. 같은 노드면 순서만 바뀐다.
+    - 노드 줄에 놓으면 그 노드의 맨 끝에 들어간다.
+    - 다른 노드로 옮기면 property·블록 값도 함께 간다. 그 노드에 이미 같은 id가 있으면 transformation id와 property id에 `-2` 같은 꼬리를 붙인다(state 값과 live key가 property id로 찾기 때문). 원래 노드의 state machine에서 옮겨 간 property 값은 뺀다(`relocateTransformation`, `takeTransformation`).
+    - 옮길 노드가 가득 차 있으면(transformation 12개, property 32개) 옮기지 않고 오류를 띄운다. 제자리에 놓으면 아무것도 바뀌지 않는다.
+    - 드래그 데이터는 노드 드래그(`text/rulegen-node`)와 다른 타입이라, 노드를 옮기거나 다른 프레임에 복사하는 동작과 섞이지 않는다.
+  - 삭제: 줄에 마우스를 올리면 나오는 ×로 그 transformation과 property를 지운다(오른쪽 inspector의 삭제와 같은 동작).
+  - 오른쪽 inspector와 연동: 둘 다 같은 장면을 고치기 때문에 한쪽에서 옮기거나 지우거나 이름을 바꾸면 다른 쪽도 바로 바뀐다. Layers의 Undo/Redo로 되돌린다. 구조가 바뀌므로 Update code가 필요하다.
+  - Brush instance에서는 다른 구조 변경처럼 먼저 detach 안내 창이 뜬다(옮길 때는 출발 노드와 도착 노드 둘 다 본다).
+  - **복사와 붙여넣기**:
+    - 복사: transformation 줄에 마우스를 올리면 나오는 복사 버튼을 누르거나, transformation을 골라 둔 채 ⌘C를 누른다. 스튜디오 전체 클립보드에 들어가서 다른 스케치 프레임에도 붙여 넣을 수 있다.
+    - 붙여넣기:
+      - ⌘V: transformation을 골라 둔 상태면 그 바로 뒤에, 레이어만 선택돼 있으면 그 레이어의 맨 끝에 들어간다.
+      - 복사해 둔 것이 있으면 노드 줄에 **Paste** 버튼이 생긴다(마우스를 올리거나 선택했을 때). 누르면 그 노드의 맨 끝에 들어간다.
+    - 붙여 넣은 것은 사본이다. property·블록 값이 그대로 가고, 같은 노드나 다른 노드에 이미 있는 id에는 `-2` 같은 꼬리를 붙인다.
+    - 다른 스케치에 붙이면 쓰는 algorithm 정의도 함께 가져온다. 같은 id가 다른 정의로 이미 있으면 이름을 바꿔 들여오고 값이 새 이름을 가리키게 한다(`copyTransformation`, `pasteTransformation`).
+    - 노드가 가득 차 있으면 붙이지 않고 오류를 띄운다. Undo로 되돌리고, Update code가 필요하다. Brush instance에 붙이면 detach 안내 창이 먼저 뜬다.
+    - 복사할 때 시스템 클립보드에도 "Transformation: 이름"이라는 글이 들어간다. 그래서 전에 복사해 둔 이미지가 다음 ⌘V를 가로채지 않는다. 그 뒤에 이미지를 새로 복사하면 ⌘V는 예전처럼 이미지를 붙인다.
+    - ⌘C는 골라 둔 transformation의 레이어가 지금도 선택돼 있을 때만 동작한다. 글을 선택하고 있거나 입력칸 안이면 원래 복사 동작이 된다.
+- **반복은 collection, object는 단위 하나 (2026-11-04)**
+  - 문제: "Swirling sky strokes"가 object로 추출됐다. 그 안에 `stroke-count`(약 2900)와 흐름 배치(`current-field`)가 들어 있었다. `contracts/scene-model.md`가 이렇게 지시했기 때문이다.
+    - "같은 primitive를 공유하면 아무리 커도 object 하나(KEEP OBJECTS WHOLE)"
+    - 반복을 그 node의 transformation으로 만든다.
+    - 예시도 "꽃잎 7개 → object `petals`에 count·layout"이었다.
+  - 바꾼 규칙(scene-model, extract, compose):
+    - **복사본을 만드는 것은 collection의 일**이다. 몇 개인지, 각각 어디에 놓이는지(배치·경로·흐름·흩뿌림·재귀), 복사본마다 어떻게 다른지(순서별 크기, 색 흐름, 노이즈 회전)는 collection의 transformation이다.
+    - 같은 primitive가 여러 번 나오면 그 묶음은 **collection 하나 + 그 안의 단위 object 하나**가 된다(획 하나, 가지 하나, 꽃잎 하나). object의 transformation은 복사본 하나의 모습(모양, 질감, 색, 자기 움직임)이다. object에 개수나 배치를 넣지 않는다.
+    - 하나로 이어진 형태(윤곽 하나, 바탕 채움, 초승달 하나)는 계속 object 하나다.
+    - 예시를 "collection `petals`(Radial repetition, 크기 변화) + object `petal`(모양)"로 바꿨다.
+  - compose-prompt tag도 같은 규칙을 따른다. 복사본 하나의 모습이 나오면 단위 object tag를 collection 안에 하나 두고, 개수·배치·복사본 간 변화는 collection tag에 둔다.
+  - 추가 수정: compose-prompt tag에서 여전히 반복이 object로 나왔다.
+    - 증상 1: 같은 pen으로 그린 띠 두 개가 같은 transformation("Warm color progression")을 단 형제 object 두 개(`Diagonal warm band`, `Horizontal warm band`)로 나왔다.
+    - 증상 2: 다른 생성에서는 띠 두 개가 획 11개짜리 object 하나(`Color-ramp strip`)로 나왔다.
+    - 원인: tag 규칙에서 단위 object를 "복사본 하나의 모습을 prompt가 말할 때만" 두게 했다. 출력 예시도 단위 object 없는 collection이었다.
+    - 바꾼 규칙: object는 primitive 하나, 즉 복사본 하나다. **두 번 이상 나오는 것은 절대 object가 아니다.** 크기, 각도, 색, 위치가 달라도 collection tag 하나와 그 안의 단위 object tag 하나다.
+    - 복사본마다 형제 object를 만들거나, object 하나가 여러 복사본을 덮으면 안 된다.
+    - collection에는 반드시 단위 object(또는 부분이 있으면 하위 collection)가 들어간다. collection은 만들고, 배치하고, 복사본마다 바꾸는 transformation을 갖는다. 단위 object는 복사본 하나의 모습과 동작을 갖는다.
+    - 반환 전에 형제 tag를 비교한다. 같은 종류의 형태이거나 같은 transformation을 가진 object들은 한 collection의 복사본으로 합친다.
+    - bullet도 같은 방식으로 쓴다. 복사본마다 따로 쓰지 않고 "반복 + 단위 하나"로 쓴다.
+    - 예시를 collection `Dots along the path`(배치·크기 증가) + 단위 object `Dot`(hover grow)으로 바꿨다. 테스트는 예시의 모든 collection이 단위 object를 담는지 확인한다.
+  - 추가 수정: collection 안에 넣은 object 대신 AI가 만든 단위가 복제됐다.
+    - 증상: 사용자가 "Warm color band" object를 "Current strokes" collection 안으로 옮기고 원래 단위(short stroke)를 지웠다. 그런데 Compose가 만든 장면은 short stroke를 복제했다. 장면 설명에는 band가 "따로 tag된 한 개, 반복 안 함"으로 적혔다.
+    - 원인 1: `compose.md`가 collection의 `members` 글로 단위를 정하게 했다("tag가 없으면 단위를 추가"). collection 안의 tag는 "다른 멤버와 다른 것"이라고 했다. 그래서 구조를 바꿔도 예전 글("Many equal-length short strokes")이 이겼다.
+    - 원인 2: `compose-prompt.md`에도 "다른 멤버와 다를 때만 자기 tag"라는 규칙이 남아 있었다. 코드 계약("count가 있는 collection은 자식 subtree를 반복")과도 어긋났다.
+    - 바꾼 규칙(`compose.md`):
+      - **collection이 담은 것이 반복되는 것이다.** 담은 object가 단위다. 그 옆에 AI가 단위를 따로 만들지 않고, 담긴 tag를 반복 안 하는 덤으로 다루지 않는다. 아무것도 담지 않은 collection만 `members`로 단위를 만든다.
+      - **구조가 글보다 우선이다.** 사용자가 tag를 옮기거나 지웠으면 collection의 label, summary, members, transformation의 how가 예전 단위를 말할 수 있다. 개수·배치·복사본 간 차이는 그대로 두고 지금 담은 것에 적용한다.
+      - 획도, transformation도, 안에 든 것도 없는 tag는 그릴 것이 없다고 적었다.
+    - `compose-prompt.md`: **collection 안의 것은 모두 반복되는 것이다.** 반복되지 않는 것은 collection 밖에 둔다. 일부 복사본만 다른 점은 collection의 transformation이다.
+    - 서버(코드): Compose와 tag-revise에 보내는 각 collection tag에 `holds`(안에 든 tag의 id·종류·이름)를 붙인다(`tagsForCompose`, `tagsForAI`). `parentId`만으로 흩어져 있던 구조를 바로 보이게 한 것이다.
+    - 테스트: tag를 옮기고 지운 뒤 collection의 `holds`가 지금 담은 것인지, 프롬프트에 새 규칙이 있고 예전 규칙이 없는지 확인한다.
+  - 이미 추출한 장면은 그대로다. 다시 Extract해야 새 규칙이 적용된다. 코드 쪽 계약은 이미 "count가 있는 collection은 자식 subtree를 반복"이라 바꿀 것이 없다.
+- **AI prompt의 스케치 tag (2026-11-04)**
+  - **AI prompt 만들기**를 하면 AI가 prompt와 함께 `tags`를 돌려준다(`prompts/compose-prompt.md`의 "Tags on the sketch" 절). tag 하나는 prompt가 말하는 **collection 또는 object** 하나다.
+  - 각 tag에는 다음이 들어 있다.
+    - 그려진 획 id(`strokeIds`)
+    - 속한 collection(`parentId`)
+    - 요약
+    - collection이면 무엇이 몇 개쯤 반복되는지(`members`)
+    - transformation 목록. 각 transformation은 이름, spatial/stylistic/temporal, 어떻게 바뀌는지, 그 변화를 실은 펜, property(이름·값·하는 일)로 이뤄진다.
+  - **위치는 AI가 쓰지 않는다.** 서버는 AI가 고른 획의 bbox로 tag 자리를 정한다(`settleComposeTags`, `app/lib/compose-tags.ts`). 서버가 tag를 정리하는 규칙:
+    - 지우개 획과 없는 획 id는 뺀다. 남는 획이 없는 tag는 버린다.
+    - 중복 id는 버린다.
+    - parent는 다른 collection일 때만 남기고, 순환은 끊는다.
+    - collection의 박스는 멤버 박스까지 포함한다.
+    - 펜 id는 펜 이름·색으로 바꾼다.
+  - 같은 내용을 반복하기만 하는 멤버는 tag를 따로 만들지 않고, 다른 멤버와 다를 때만 자기 tag를 갖는다. 인터랙션 모습(hover·press 등)은 그 요소 tag의 temporal transformation으로 넣는다.
+  - 화면:
+    - 스케치 프레임 위, 해당 획 위쪽에 칩이 뜬다. collection은 파란 ▦, object는 주황 ●이고, 숫자는 transformation 개수다.
+    - 칩에 마우스를 올리거나 누르면 그 획 범위가 점선 박스로 보인다.
+    - 칩을 누르면 카드가 열린다. 카드에는 종류, 요약, Members, In(속한 collection), Contains(안의 tag), Transformations(펜·property 표)가 있다. In·Contains 칩을 누르면 그 tag로 넘어간다.
+    - 칩은 board zoom과 관계없이 같은 크기로 보인다.
+    - 카드의 글은 모두 그 자리에서 고칠 수 있다: 이름, 요약, Members, transformation 이름·설명, property 이름·값·하는 일. 평소엔 글처럼 보이고 올리거나 누르면 입력창이 된다. 고친 내용은 바로 프레임의 tag에 저장되고(칩 이름도 바뀜), Esc는 입력창에서 나간다.
+    - 고친 tag는 Compose에 간다. 텍스트를 끈 상태면 tag만, 켠 상태면 텍스트와 함께 보낸다. `compose.md`: tag는 자기가 말하는 부분(이름, 멤버, transformation, property 값)을 정하고, 텍스트는 tag가 말하지 않는 것(전체 구성, 부분 사이 관계)을 더한다. AI prompt/tag를 다시 만들면 고친 내용은 새 tag로 바뀐다.
+    - **transformation마다 "이렇게 바꿔줘" 칸**: 각 transformation 아래 입력칸에 바꾸고 싶은 것을 적고 **Change**(또는 Enter)를 누르면 AI가 그 transformation 하나를 요청대로 다시 쓴다(`tag-revise` intent, `prompts/tag-revise.md`).
+      - 다시 쓰는 것: 이름, 종류, 설명, property(값 바꾸기·추가·빼기), 펜.
+      - 결과는 그 tag의 그 자리에 들어가 카드 내용이 바로 바뀐다. 다른 transformation·tag는 그대로다.
+      - 무엇이 바뀌었는지는 토스트로 보인다. **Undo**로 바꾸기 전으로 돌린다.
+      - AI에는 스케치 이미지, 획·펜, 전체 tag(펜은 id로), 대상(tag id, 몇 번째)과 요청을 보낸다. 서버는 결과의 펜 id를 펜과 그 출처로 바꾼다.
+      - 바뀐 tag는 Compose에 그대로 간다. AI history에서 복원해도 tag가 바뀐 채로 돌아온다.
+    - **포함 관계 보기**:
+      - 스케치 위: collection 칩에서 그 안의 tag 칩으로 꺾인 점선이 이어진다. collection에 마우스를 올리거나 카드를 열면 그 선이 진해지고, 안에 든 tag들(중첩까지)의 범위도 점선 박스로 같이 보인다.
+      - Compose 패널: **TAGS · WHAT CONTAINS WHAT** 트리가 collection 아래에 안의 tag를 들여 써서 보여준다(종류, 안에 든 개수, transformation 개수). 줄에 마우스를 올리면 스케치에서 그 tag와 안의 것이 표시되고, 누르면 그 tag 카드가 열린다(tag 표시가 꺼져 있으면 켬).
+      - `compose-prompt.md`: collection의 일부(다른 멤버, 그 안의 묶음)는 어느 깊이든 그 collection을 `parentId`로 두고, 근처에 있을 뿐인 것은 따로 둔다.
+    - **구조 바꾸기(드래그 앤 드롭), 삭제, 추가**:
+      - 옮기기: Compose 패널 tag 트리의 줄이나 스케치 위 칩을 끌어 collection에 놓으면 그 안으로 들어간다. object에 놓으면 그 object와 같은 collection으로 간다. 트리 아래 "Drop here to put it at the top level"에 놓으면 최상위로 간다. 카드의 In 줄 **Take out**은 한 단계 밖으로 뺀다.
+      - 옮길 수 없는 곳(자기 자신, 자기 안의 것, object 안)은 드롭 표시가 뜨지 않는다(`canMoveTag`).
+      - 구조가 바뀌면 박스를 스케치 획으로 다시 맞춘다. collection은 안에 든 것까지 감싼다(`moveTag`). tag가 스케치보다 오래됐으면 획 대신 지금 박스를 그대로 쓴다.
+      - 종류 바꾸기: 카드의 **Collection ⇄ / Object ⇄** 배지를 누른다. collection을 object로 바꾸면 안에 있던 tag는 한 단계 위로 올라간다(`setTagKind`).
+      - 삭제: 트리 줄의 ×나 카드의 **Delete**로 tag를 지운다. 안에 있던 tag는 한 단계 위로 올라간다(`deleteTag`). 카드에서 transformation(×)과 property(×)도 하나씩 지운다.
+      - 추가: 트리의 **+ Collection / + Object**로 새 tag를 만든다. 열린 카드가 collection이면 그 안에, 아니면 최상위에 생긴다(`addTag`, 최대 16). 새 tag는 획이 없어 그 collection 범위 안쪽(최상위면 가운데)에 놓이고 카드가 열린다. 카드의 **+ Transformation**(최대 6), transformation마다 **+ Property**(최대 6)도 있다. 빈 transformation은 직접 채우거나 아래 "이렇게 바꿔줘" 칸에 적어 AI로 채운다.
+      - 텍스트 끔 상태에서는 tag가 없어도 트리(추가 버튼)가 보여, tag를 처음부터 직접 만들 수 있다.
+    - **트리에 constraint 표시**: Compose 패널 tag 트리의 각 tag 줄 아래에 그 tag의 transformation이 들여 써서 나온다.
+      - 각 transformation은 effect 색 점(spatial 초록, stylistic 보라, temporal 주황), 이름, 이어진 펜 이름(펜 색)을 보여준다.
+      - 그 아래에 property가 `이름 값` 칩으로 나온다. 값이 없으면 이름만 나온다.
+      - 마우스를 올리면 설명(`how`)이 보이고 스케치에서 그 tag가 표시된다. 누르면 그 tag 카드가 열린다.
+      - 카드에서 고치거나 AI로 바꾸면 트리도 같이 바뀐다. 줄 오른쪽의 transformation 개수 표시는 뺐다.
+    - **transformation 드래그 앤 드롭**: transformation을 다른 tag로 옮기거나 같은 tag 안에서 순서를 바꾼다.
+      - 잡는 곳: Compose 패널 tag 트리의 transformation 줄, 또는 tag 카드의 각 transformation 앞 **⠿** 손잡이(입력칸이 있어서 손잡이로만 끈다).
+      - 놓는 곳:
+        - tag 칩(스케치 위)이나 트리의 tag 줄에 놓으면 그 tag의 맨 끝에 들어간다.
+        - 다른 transformation(카드나 트리) 위에 놓으면 그 앞에 들어간다. 같은 tag면 순서만 바뀐다.
+      - 트리에서 끌어 스케치 칩에 놓는 것, 카드에서 끌어 트리에 놓는 것도 된다. 드래그 데이터 타입(`TAG_TRANSFORMATION_DRAG`)으로 tag 드래그와 구분한다.
+      - property와 펜은 transformation과 함께 간다. 옮겨 갈 tag에 이미 6개가 있으면 안 들어가고 토스트가 뜬다. 같은 자리에 놓으면 아무것도 바뀌지 않는다(`moveTransformation`).
+      - 옮기면 그 프레임의 tag 카드가 새로 그려진다. 카드의 "이렇게 바꿔줘" 입력과 Undo는 자리(몇 번째)로 기억하기 때문에, 옮긴 뒤 다른 transformation에 잘못 붙지 않게 한다.
+    - 카드는 프레임에 잘리지 않는다. 페이지 위(body)에 띄워 칩 옆을 따라다니고(보드를 움직여도), 칩 아래에 놓되 아래 공간이 모자라고 위가 더 넓으면 위에 놓는다. 창 안에 들어오게 좌우를 당기고, 남은 높이보다 길면 카드 안에서 스크롤된다. Esc로 닫는다.
+  - tag는 프레임에 저장된다(`composeTags`, `composeTagsRevision`). AI history 복원에도 돌아온다.
+    - tag를 만든 뒤 스케치가 바뀌면 카드에 "Regenerate the AI prompt" 안내가 뜬다.
+    - Compose 패널의 **Show tags on the sketch (n)**로 끄고 켠다(브라우저에 기억).
+    - brush로 interaction 중이거나, inspection·annotation·regeneration annotation 중에는 tag를 숨긴다.
+- **tag 카드의 minimal example 썸네일, 텍스트 없이 Compose (2026-11-04)**
+  - **minimal example 썸네일**: tag 카드의 transformation이 Decompose로 만든 minimal example frame과 이어지면, 그 frame의 썸네일(3:2, 결과에서 example node 범위를 자름)과 이름이 보인다.
+    - 연결은 그 변화를 실은 펜으로 찾는다(`penExamples`). tag의 펜에 만든 곳(frame·node)과 transformation 이름 또는 algorithm id를 같이 저장한다.
+      - example frame에서 만든 transformation pen이면 그 example frame이다.
+      - 일반 frame의 펜이면 그 node에서 같은 이름의 transformation(transformation pen) 또는 그 algorithm을 쓰는 transformation(algorithm pen)의 example frame들이다.
+    - 썸네일은 카드를 열 때 실행 중인 example 결과에서 찍는다. 숨겼거나 아직 결과가 없으면 "hidden"/"no picture yet"으로 보인다.
+    - 썸네일을 누르면 그 example frame으로 간다(숨겨져 있으면 다시 보이게 한 뒤).
+    - 펜 없이 연필로만 그린 부분의 transformation은 example과 이을 근거가 없어서 썸네일이 없다.
+    - 펜의 출처를 저장하기 전에 만든 tag(이름·색만 있음)는 그 프레임 획에 저장된 펜에서 이름·색으로 찾아 출처를 채운다(`placedPen`). 그래서 다시 만들지 않아도 썸네일이 나온다.
+  - **텍스트 프롬프트 끄기**: Compose 패널의 **Use the text prompt**를 끄면 Compose가 텍스트 없이 스케치 tag만으로 장면을 만든다.
+    - 이 설정은 프레임마다 저장된다(`composeWithText`). 끄면 tag 표시도 켠다. 꺼져 있으면:
+      - textarea가 사라진다.
+      - 버튼은 **Generate/Regenerate tags**가 된다.
+      - 안내 문구가 바뀐다.
+    - Compose 요청에 `instruction: ""`와 `composeTags`를 보낸다. 박스 좌표는 빼고, 펜은 이름·색만 보낸다.
+    - `compose.md`의 "Tags on the sketch" 절에 따라 tag 하나를 node 하나로 만든다.
+      - collection은 procedural 하나로 만든다.
+      - `parentId`는 nesting이다.
+      - transformation·property는 그대로 semantic transformation이 되고, temporal은 machine으로 간다.
+    - 이어지는 코드 생성에도 텍스트를 보내지 않는다. 만들어진 frame도 텍스트 끔 상태를 이어받는다.
+    - tag가 하나도 없을 때만 Compose가 먼저 tag를 만들고 멈춘다(tag를 확인한 뒤 다시 Compose).
+    - 수정(2026-11-04): 예전에는 tag를 만든 뒤 스케치가 바뀌었으면 Compose가 tag를 다시 만들고 멈췄다. 그러면 손으로 고친 tag 구조와 constraint가 사라지고 장면도 안 만들어졌다.
+      - 이제 Compose는 지금 있는 tag(손으로 고친 것 포함)로 바로 장면을 만든다. 텍스트를 켠 상태에서도 스케치가 바뀐 뒤의 tag를 같이 보낸다.
+      - 지금 스케치에 없는 획(지운 획)의 id는 보내기 전에 tag에서 뺀다.
+      - 스케치를 다시 읽는 건 사용자가 **Regenerate tags / Regenerate AI prompt**를 누를 때만 한다. 카드와 패널의 안내 문구도 이에 맞게 바꿨다.
+- **recommendation frame 생성 실패, 실행 해보기 정리, Regenerate (2026-11-02)**
+  - **recommendation frame이 안 만들어지던 원인**: recommendation(예: 실제 모양이 겹치면 합치기)의 Execution·key parameter frame은 그 규칙을 코드로 미리 써 봐야 한다.
+    - 그런데 수정 한도(`find` 1500자, `replace` 4000자)에 AI 출력이 정확히 잘렸다. `replace`가 4000자에서 끊기고 `find`가 깨진 채 끝났다.
+    - 잘린 뒤 overlay와 단계가 0개로 나와 서버가 "손잡이를 만들 수 없다"로 실패시켰다(18:38 두 건).
+  - 수정:
+    - 실행 해보기와 recommendation 미리보기 수정 한도를 `find` 3000자, `replace` 12000자로 올렸다(`explore.ts`, `inspection.ts`).
+    - prompt에 "`find`는 위치를 가리키는 가장 짧은 고유 조각, 긴 재작성은 여러 수정으로"를 넣었다.
+    - Execution frame은 단계 기록(checkpoint)이 있으면 AI 손잡이가 없어도 만든다. 버튼, 키, 단계 위 기본 grip으로 실행된다. 기록도 손잡이도 없을 때만 실패다.
+  - **실행 해보기가 읽기 어렵던 것**:
+    - 판정은 단계마다 하나만 그린다: 통과한 첫 판정, 없으면 첫 판정. 비교가 몇 개 더 있었는지는 글로 말한다. 다음 단계의 판정과 데이터 미리 그리기는 없앴다.
+    - prompt: 단계마다 판정 하나(짝 비교 루프에서는 결정한 짝만), 한 단계에 overlay 최대 3개, 모든 항목에 라벨 다는 `each` overlay 금지.
+  - **설명 다시 보이기**: 그림 구석 설명에 다시 글을 넣었다(글씨 크기 조절을 따름).
+    - 방금 단계가 한 일(단계 label)
+    - 왜(그 연산의 `explain`)
+    - 판정(✓/✗ 문구 + "N more compared")
+    - 다음 단계
+  - **Regenerate**: Execution·key parameter frame 바에 "무엇을 바꿀지(선택)" 입력과 **Regenerate** 버튼을 넣었다. 적은 내용은 concern에 "Make this frame again. What to change: …"로 붙어 AI에 간다.
+- **인터랙티브 overlay = 그 순간의 runtime 실행 상태 바꿔 보기 (2026-11-02)**
+  - 원칙: 인터랙티브 overlay는 잡은 단계에서 특정 runtime execution state 하나를 바꾸는 what-if다. 예: 그 하트의 충돌 판정 범위. 그 상태만 바뀌고, 프로그램은 거기서 이어서 돌며, visual과 behavior가 그에 따라 달라진다. 다른 항목, 다른 상태, brush의 값은 그대로다.
+  - 이전 문제:
+    - 손잡이가 brush의 값(파라미터)을 바꿨다. 모든 항목에 함께 바꾸면 이것저것 다 커졌다.
+    - 항목별로 바꾸면 판정이 그 값을 한쪽에서만 읽어서, 문제의 하트가 닿아도 합쳐지지 않았다.
+    - 두 번의 중간 수정(전부 같이 바꾸기, 짝 대칭 규칙)은 모두 되돌렸다.
+  - **`m.runtime(name, id, value)`** (일반 런타임 기능):
+    - 코드가 항목마다 계산하지만 보관하지 않던 양(판정 범위, 판정·그리기 크기, 회전량 등)을 감싼다. 그 값을 모듈 store의 실행 상태(`@runtime.<name>.<id>` = `{ base, value }`)에 둔다.
+    - 평소에는 값을 그대로 돌려준다. 그 순간 그 항목의 상태를 바꾸면(`"@store:<root>:@runtime.<name>.<id>.value"` 손잡이), 그 항목만 바뀐 값으로 이어서 계산된다. 그 항목을 읽는 모든 계산이 같은 상태를 읽으니, 판정의 양쪽 어디서 보든 같다.
+    - 계산의 근원(예: brush 값)이 바뀌면 다시 계산값을 따른다.
+    - 단계 snapshot에 포함되므로 잡은 단계에서 바꾸고, 놓으면 그 상태로 이어서 실행된다(Play on).
+    - 생성 코드 검사가 허용한다(이름은 짧은 소문자 리터럴, 인자 3개). 실행 해보기 edit에서도 표현식을 그대로 감쌀 때만 받는다(`withoutRuntime`, `traceOnly`). values 모드는 `m.runtime`만 더하는 edit를 받는다.
+  - prompt(inspect.md·explore.md, 일반 규칙):
+    - 손잡이는 그 순간의 runtime 실행 상태에 건다. 기준은 다음 순서다.
+      - 모듈이 보관하고 다시 읽는 값: `@store`
+      - 항목마다 계산만 하는 양: records edits로 `m.runtime`을 계산되는 모든 곳에 감싸고, 항목 기록에도 남긴다. 손잡이 key는 `@runtime.<name>.${item("id")}.value`.
+      - 입력: `@input`
+    - brush 값 손잡이는 brush 전체에 관한 concern에만 쓴다.
+    - 두 대상 사이 판정은 각자 자기 상태로 된 자기 도형으로 그려서, 통과하는 순간 정확히 닿게 한다.
+  - 확인: 이번 AI 결과의 타원은 코드 판정식으로 계산된 실제 범위였다. 다만 "상대 중심이 들어갈 영역" 방식이라 닿는 순간이 임계값은 아니었다.
+  - 일반화 정리: 이번 사례 단어로 된 prompt 예시(merged!, 하트 등)를 여러 분야 예시로 바꿨다.
+  - 테스트(`tests/runtime-state.test.ts`): 실제 런타임에서 항목 b의 상태만 바꾸면 a–b만 합쳐지고 c–d는 그대로, 이어서 돌아도 유지, 근원 값이 바뀌면 따라감, 기록된 순간은 안 바뀜. 코드 검사, 감싸기 검사, prompt 규칙 확인. 전체 258개 통과.
+- **AI history가 테스트 기록으로 덮이던 문제 (2026-11-02)**
+  - 원인: 일부 테스트 파일이 로그 폴더를 따로 정하지 않아, 가짜 AI 응답으로 돈 생성이 실제 `ai-generations/`에 쌓였다. History 목록은 최신 50개만 보여서 그 50개가 전부 테스트 기록(Tree/Orb 장면)이 됐다. 실패 케이스 기록은 "Only completed AI generations can be restored.", 성공 기록은 가짜 프로젝트로 복원됐다. 실제 생성의 복원 기능 자체는 고장 나지 않았다(최근 3일 실제 생성 82개 모두 서버에서 복원됨).
+  - 수정: `tests/setup.ts`가 모든 테스트 파일의 AI·오류 로그를 실행마다 만든 임시 폴더로 보내고, 끝나면 지운다. 테스트를 돌려도 `ai-generations`·`error-logs`는 늘지 않는다.
+  - 정리: 이미 쌓인 테스트 기록 546개(요청 ID 없음 + 테스트 장면 `tree`/`orb`만)를 `backup/ai-generations-test-runs/`로 옮겼다. 지우지 않았으니 되돌릴 수 있다. 사용자 본인의 취소·실패 기록(요청 ID 없음, 다른 장면)은 그대로 뒀다.
+- **실행 해보기: 판정을 그림으로, 글씨 크기, 스케치 실행 없앰 (2026-11-02)**
+  - **스케치로 단계 넘기기 없앰**: Execution frame에서 표시(scribble 등)를 그려야 단계가 넘어가던 방식을 지웠다.
+    - prompt에서 sketched marks 절을 뺐고, `sketches`는 항상 `[]`이다. 서버는 AI가 준 표시를 버린다.
+    - 화면의 그리기 층, 제출 바, Enter/Esc 처리를 없앴다. 단계는 연산 손잡이, 버튼, 키로 넘긴다.
+  - **그림 위 글씨 크기 조절**: 바의 **A− / A+** (10–36, 기본 17, 브라우저에 기억됨).
+    - overlay label, 단계 번호, 데이터 이름, 항 화살표와 막대, 판정 문구, 구석 단계 표시가 함께 커진다(`--explore-text`).
+    - 항 막대 상자도 글씨에 맞춰 커진다.
+  - **판정을 그림으로 (`m.test`)**: 일반 런타임 기능이라 어떤 brush에도 쓰인다.
+    - 형식: `m.test(name, condition, shape, [참일 때, 거짓일 때])`. 조건을 그대로 돌려준다.
+    - Execution frame에서는 그 판정을 한 단계에 기록한다: 무엇을 판정했는지, 검사한 기하, 결과.
+    - 앱이 그리는 것:
+      - 검사한 범위: 원(`{x,y,r}`), 영역(`{x,y,w,h}`), 거리선(`{x1,y1,x2,y2}`), 점, 또는 최대 3개(두 항목의 reach 등).
+      - 결과: 참이면 초록 실선, 거짓이면 빨간 점선. 그 위에 큰 판정 문구("✓ merged!", "✗ not merged").
+      - 다음 단계의 판정은 회색 점선과 "overlap?"으로 미리 보인다.
+    - 한 항목의 단계에는 그 항목의 판정만 붙는다(최대 8개, `testGlyphs`).
+    - `explore.md`의 "decisions" 절이 AI에게 다음을 시킨다.
+      - concern이 걸린 조건(겹침, reach 안 거리, 임계값, 경계, 확률)을 그대로 `m.test`로 감싼다.
+      - 코드가 실제로 쓰는 크기의 기하와, 그림에서 일어나는 일을 짧은 판정으로 붙인다.
+    - 서버는 `m.test`를 풀어서 원래 조건과 같아야만 받는다(`withoutTests`, `traceOnly`).
+  - **인스펙션 손잡이는 결과를 바꾸는 것에** (`inspect.md`, 일반 규칙):
+    - 손잡이는 concern의 결과(합쳐짐/안 합쳐짐, 휨, 나타남/빠짐)를 바꾸는 것에 둔다: 판정의 임계값·reach·거리·확률(하드코딩이면 parameters로 제안), 또는 판정이 재는 실행 상태(위치).
+    - 결과가 일어난 뒤 모양만 바꾸는 값(합쳐진 하트 크기, 색, 굵기)에는 두지 않는다. "왜 안 ~하지?" 같은 concern은 언제나 그 조건에 관한 것이다.
+    - 검사 기하를 실제 크기로 그리고(각 항목의 reach 원, 두 항목 사이 거리선), 항목마다 판정 문구("merged!", "not merged · 14px > 9px")를 결과별 색으로 단다. 필요한 필드는 records로 기록한다.
+    - 계기: "why not merge?" inspection이 합쳐진 하트 크기(merge-scale)에 손잡이를 줘서, 끌어도 크기만 바뀌었다.
+    - parameters 모드 Execution frame에도 같은 "검사와 판정" 규칙을 넣었다.
+  - **놓으면 이어서 실행 (Play on from here)**:
+    - 문제: 잡은 단계는 그때 상태로 한 번만 그려지고 다시 돌아가서, 값을 바꿔도 그 뒤 behavior(state 전이, 시간에 따라 쌓이는 merge 같은 store 변화)가 반응하지 않았다.
+    - 이제 인스펙션 손잡이를 놓으면 잡은 단계가 그 값으로 3초 동안 이어서 실행된다. machine이 전이하고, 코드가 가진 상태가 바뀌고, overlay는 4프레임마다 그 store를 따라 다시 계산된다.
+    - 프레임 오른쪽 위 **▶ Play on from here** 버튼으로 다시 돌릴 수 있고, **after each drag** 체크로 자동 실행을 끈다(브라우저에 기억됨).
+    - 이어서 실행하는 동안의 전이는 단계로 기록하지 않는다. 다른 단계를 잡거나 값을 다시 바꾸면 잡은 단계가 기록된 그대로 돌아온다.
+    - 구현: `RestorePoint.playOn`(`{ id, ms }`, id당 한 번)이 restore 메시지에 실려 값과 같은 메시지로 가서 순서가 보장된다. iframe의 `startPlayOn` / `endPlayOn`.
+  - 테스트: `tests/execution-decisions.test.ts`(기록, 감싸기 검사, 그리기), `tests/overlay-handles.test.ts`(이어서 실행), 스케치 제거와 글씨 크기 확인. 전체 254개 통과, 빌드 통과. 실제 AI와 브라우저로는 아직 확인하지 않았다.
+- **실행 해보기: 글 대신 그림으로 (2026-11-01, 이어서)**
+  - 구석 설명 박스는 단계 번호, 연산 이름, 변화 색 범례만 남겼다. 이 단계가 한 일, 읽은 값, 다음 단계 같은 글은 아래 바에만 있다.
+  - **단계가 다룬 것을 그대로 그림**(`dataShapes`): checkpoint 데이터 안의 점(`{x, y}`)은 점으로, 점 목록은 경로로, 그 단계가 일하는 자리에 그 필드 이름과 함께 그린다. 방금 단계는 파랑 실선, 다음 단계는 회색 점선이다. 단계 자신의 위치나 숫자, 캔버스 밖 점은 빼고 그린다.
+  - **결과를 만든 항을 그림**(`termGlyphs`): 그 단계의 안쪽 항(`m.term`) 중 벡터는 각자 색의 화살표로 그린다(가장 큰 것에 맞춘 길이, 합친 방향 "together"는 굵은 점선). 숫자는 부호가 있는 막대 차트(+는 오른쪽, −는 왼쪽)로 그 자리 옆에 그린다. 영향 패널에서 항을 고르면 나머지는 흐려진다.
+  - 모두 run 기록만으로 그리니 어떤 brush든 같다. `explore.md`에는 "앱이 데이터의 점·경로와 항을 그림에 그리니, 단계가 다루고 만드는 기하를 데이터에 넣어라"를 넣었다.
+  - **case 전용 표현 정리**: `explore.md`의 `m.term` 예시(이번 코드의 attract/broad/fan, `pull-to-channel`)를 여러 분야 예시로 바꿨다. `inspect.md` field 절의 `attractors` 키 예시는 일반 control point 목록(`<controls>`)으로 바꿨다. UI의 "Measure what bends it"는 "what shapes it"으로, Extract 입력칸 예시 문구는 중립 문구로 바꿨다.
+- **실행 해보기를 그림만 봐도 알 수 있게 (2026-11-01)**
+  - **그림 위 설명**("Explain on picture", 기본 켜짐):
+    - 방금 실행한 단계가 일한 곳은 파란 상자나 원에 단계 번호로, 다음 단계가 일할 곳은 회색 점선에 번호로 그린다.
+    - 그 위치의 반대쪽 구석에 설명 박스를 띄운다. 내용은 "Step n / N"과 연산 이름, 이 단계가 한 일, 읽은 값(최대 4개), 변화 색 범례(파랑: 이 단계가 그림, 주황: 사라짐), 다음 단계다.
+    - 모두 run 기록만으로 그리니 어떤 brush든 같다.
+  - **제스처로 실행 넘기기 끄기**("Step by gesture" 체크, 브라우저에 기억됨): 끄면 실행 손잡이와 다음 단계 grip, 그려서 실행하는 mark가 사라지고 버튼과 키로만 넘어간다. overlay 그림 자체는 남는다.
+  - **글씨 크게**: Execution frame의 바와 패널 글씨를 모두 4px 키웠다. 그림 위 overlay 라벨은 12px에서 17px이 됐다(`InspectionOverlay`의 `textSize`).
+  - **AI overlay를 시각적으로**(`explore.md`):
+    - 단계를 글이 아니라 모양으로 보여 준다. 방향·힘·당김은 line, 그려지는 경로는 점 목록을 따라 그은 line, 반경·문턱은 원, 다루는 영역은 rect로 그린다.
+    - 방금 단계는 진하게 한 색으로, 다음 단계는 점선이나 흐리게, 제거는 빨강으로 그리고, 매 단계 같은 색을 쓴다.
+    - 라벨은 짧게(단어 한두 개와 숫자) 그 물체 위에 둔다. 약한 표시를 여러 개 두지 않고 강한 표시 몇 개만 둔다.
+- **Extract에 추가 텍스트 (2026-11-01)**: 아무것도 추출하지 않은 프레임의 "No brush stamps yet" 영역에 **EXTRACTION DIRECTION** 입력칸을 넣었다(Extract 버튼 위, 선택 사항). 예전에는 이 입력칸(YOUR DIRECTION, `panel.instruction`)이 장면이 생긴 뒤에만 보여서, 처음 Extract할 때는 텍스트를 넣을 수 없었다. 입력한 내용은 Extract 요청에 함께 가고, 추출된 프레임의 코드 생성 방향으로도 이어진다. Re-extract는 아래 YOUR DIRECTION을 쓴다. `extract.md`에는 이 지시를 따르라는 규칙을 넣었다: 무엇을 추출할지, 어떻게 묶을지, 어떤 기법인지. 이미지만으로는 안 나올 것을 요구하면 그 부분만은 FIDELITY보다 지시가 우선한다.
+- **annotation으로 그린 모양은 근사가 해결이 아님 (2026-11-01)**: flow 방향을 보라색 화살표로 그렸는데, AI가 전역 물결 수식의 값만 바꾸는 recommendation("approximates…")만 줬다. 적용해도 그린 모양과 전혀 맞지 않았다. `inspect.md`에 두 규칙을 넣었다.
+  - annotation이 원하는 모양(경로, 방향, 곡선, 배치)을 직접 그렸으면, 값 변경(valueFixes나 value recommendation)은 그 모양을 실제로 만들 때만 낸다. "비슷하게", "근사"는 해결이 아니다.
+  - 값으로 안 되면 첫 번째 recommendation은 반드시 그 모양을 만드는 구조 변경(transformation, add-transformation, state, transition)이어야 한다.
+- **실행 해보기: 선 하나 따라가기, 바뀐 것 보이기, 넘치지 않는 바 (2026-11-01)**
+  - 문제: (1) 프레임 아래 정보 바가 높이 제한 없이 아래로 길어져서 화면 밖으로 튀어나왔다. 보드가 휠을 모두 가져가서 스크롤도 안 됐다. (2) 선 400개가 빽빽한 그림에서 한 단계에 선 하나가 바뀌면 거의 안 보였다. (3) 비교 그림을 CSS 필터로 보라색으로 칠했는데 검은 선은 필터로 색이 안 바뀌어서 차이가 안 보였다. (4) 그림 전체가 바뀌니 무엇이 무엇인지 알 수 없었다.
+  - **선 하나 따라가기** (어떤 brush든):
+    - 런타임 `m.focus(item, 대표 조건)`: Execution frame의 item별 checkpoint guard로 쓴다(`if (m.focus(i, i === 0 || i === k)) m.trace(…)`, explore 프롬프트). 평소에는 대표 조건을 돌려준다. 사용자가 한 mark를 따라가면 그 item만 참이라서 **그 item의 단계들이 기록**된다. 또 그 뒤의 모든 그리기 호출에 item이 붙는다.
+    - mark를 누르거나(◎) "follow the mark this step drew"를 누르면 따라가기가 시작된다. 그 item으로 run을 다시 기록하고, 그 mark의 첫 단계 바로 앞으로 간다.
+    - ◀ ▶와 재생은 그 mark가 바뀌는 단계에서만 멈춘다(`markSteps`). 단계 표시는 "This mark's step i / K"가 된다.
+    - "Dim the rest"(기본 켜짐): 다른 item의 그리기 호출을 그리기 호출 단위로 흐리게(투명도 12%) 그린다. 그래서 그 선 하나가 어떻게 변하는지 선명하게 보인다.
+    - item이 없는 예전 프레임은 누른 그리기 호출 하나만 진하게 보인다. 이런 프레임은 다시 Generate하면 item별 단계가 생긴다.
+    - 영향 측정도 그 item의 모든 그리기 호출을 기준으로 잰다.
+  - **바뀐 것 보이기**:
+    - 단계(또는 값)를 바꿀 때마다 직전 그림과 지금 그림을 픽셀로 비교한다(`pictureDiff`, 1px 두껍게). 새로 그려진 곳은 파랑, 사라진 곳은 주황으로 그림 위에 겹친다. 범례도 함께 나오고, "Show change"로 켜고 끈다.
+    - 영향 비교도 같은 방식으로 보여 준다(그렇게 바꾸면 생길 곳은 보라, 지금 있는 곳은 주황).
+  - **바**: 최대 420px까지고, 넘치면 안에서 스크롤된다(`board-scroll`). 보드는 그 안에서는 휠을 놓아 준다. 요약은 두 줄로 접히고 눌러서 펼친다. "Recommendation 만들기" 영역은 접혀 있다가 버튼을 누르거나 내용이 있으면 열린다.
+  - 전체 243개 테스트와 빌드 통과. 실제 브라우저와 AI로는 아직 확인하지 않았다.
+- **화면 전체를 덮는 flow field가 brush가 안 되던 문제 (2026-11-01)**
+  - 원인: brush는 compose/extract 결과의 root 노드마다 만든다. 다만 "캔버스를 거의 다 덮고(95% 이상) state machine이 없는 object"는 배경으로 보고 뺐다(`isBackdrop`). flow field compose 결과는 root가 `paper`(흰 바탕)와 `flowing-ink`(선들) 두 개였는데, 둘 다 캔버스 전체를 덮어서 둘 다 배경으로 빠졌고, 그래서 brush가 하나도 안 생겼다.
+  - 이제 배경은 캔버스를 덮으면서 **알고리즘으로 그리는 property가 하나도 없는** 것만이다(색 같은 상수만). 분포·경로 추적 같은 알고리즘을 쓰는 `flowing-ink`는 그림 자체라서 brush가 된다. `paper`는 여전히 배경이다.
+  - 이미 만든 프레임처럼 brush가 안 생긴 root 노드에는 레이어 패널에 **+ Brush** 버튼이 생긴다(코드가 있는 프레임, 배경 아님, 아직 brush 아님). 누르면 그 노드로 brush를 만들고 툴바에 넣는다. AI는 쓰지 않는다.
+- **실행 해보기: 핵심 단계만, 그리고 무엇이 이 mark를 만들었나 (2026-11-01)**
+  - **핵심 단계만**:
+    - 예전에는 프롬프트가 "item마다 연산마다 checkpoint"를 요구해서 선 400개면 단계가 500개씩 나왔다. 이제 `explore.md`는 한 run을 8–24단계로 만들라고 한다.
+    - item이 많으면 대표 item 1–3개만 모든 연산을 보여 준다(concern이 가리키는 것, 첫 번째, 결과가 다른 것). 나머지는 "나머지 N개, 같은 연산" 한 단계로 한꺼번에 그린다.
+    - 안쪽 루프(한 선을 따라가는 걸음)는 한 단계로 묶거나, 그 루프가 핵심이면 최대 8개만 띄엄띄엄 보여 준다.
+    - 이미 만든 프레임도 앱에서 줄인다(`keySteps`, AI 없음). 단계가 24개를 넘으면 기본으로 **핵심 단계**에서만 멈춘다. 첫 바퀴(한 item이 모든 연산을 도는 것)는 한 단계씩, 나머지는 바퀴가 끝나는 곳에서 고르게 덩어리로, 끝, 그리고 점프한 단계에서 멈춘다.
+    - ▶/◀, 재생, 키보드, 실행 손잡이 한 번 끌기는 다음/이전 핵심 단계로 간다. "All N steps"를 누르면 전부 하나씩 본다.
+    - 단계 표시 아래 **타임라인**에 핵심 단계, 지금 위치, (고른 영향이 있으면) 그것이 바꾸는 단계가 표시된다. 누르면 그 단계로 간다.
+  - **단계가 읽은 값**: 방금 실행한 단계의 checkpoint 데이터(숫자·벡터)와 그 단계에서 계산된 안쪽 항(`m.term`)의 값이 "Read" 줄에 보인다. 추가 실행은 없다.
+  - **안쪽 항 `m.term(name, value)`** (`m.field`처럼 일반 런타임 기능):
+    - 값을 그대로 돌려준다. 실행 기록에서는 그 값을 계산한 단계에 마지막 값·평균 크기·횟수를 남긴다. 잡은 단계에서는 배율(0 = 그 항 없이)로 바꿔 그릴 수 있다.
+    - explore AI가 checkpoint와 같은 edits로 2–8개를 감싼다(당김, 오프셋, noise 기여, jitter 등). 서버는 `m.trace`를 빼고 `m.term`을 풀면 원래 코드와 같은지 확인한다(`traceOnly`/`withoutTerms`). 생성 코드 검사(`scene-code.server`)도 `m.term("이름", 값)`을 허용한다.
+  - **이 mark는 무엇이 만들었나** (mark를 볼 때만 뜸):
+    - ◎ Jump to pressed로 mark를 누르거나 "look at the mark this step drew"를 누르면 패널이 뜬다. **Measure what bends it**를 누르면, 그 프레임의 iframe이 잡은 단계를 변수 하나씩 바꿔 다시 실행한다(최대 20개). 대상은 brush 값(범위의 10%), 안쪽 항(0으로), 손잡이가 움직이는 실행 상태 `@store`(점은 약 20px, 숫자는 20%)다.
+    - 그 mark가 얼마나 움직였는지(점 몇 개의 평균 거리)와 사라졌는지, 어떤 단계의 데이터나 그림이 달라졌는지를 잰다(`rulegenCompareRuns`). 다시 그릴 때는 그림·보고를 내보내지 않는다(quiet). 영향이 큰 순서로 막대와 px가 보인다.
+    - 하나를 고르면:
+      - 그 변수를 크게 바꾼 그림(항은 없이, 값은 범위 끝, 상태는 더 멀리)이 **지금 실행 위치까지만** 보라색 반투명으로 겹친다.
+      - 타임라인에 그 변수가 바꾸는 단계들이 표시된다.
+      - Read 줄에서 그 항이 강조되고, 벡터 항은 그 단계 위치에 화살표로 그린다.
+      - 항은 배율 슬라이더로, 값은 범위 슬라이더로 직접 바꿔 볼 수 있다. 값은 "Show in properties"로 오른쪽 패널의 그 property로 간다. 상태는 그 손잡이로 옮기라고 안내한다.
+  - **Comb이 다시 그리지 않던 버그**: `CodePreview`가 잡은 단계를 다시 보내는 조건에 field 빗질이 빠져 있어서, 빗질해도 그림이 안 바뀌었다. 이제 빗질과 항 배율이 바뀌면 다시 그린다.
+  - 테스트(`tests/execution-influence.test.ts`): `m.term` 기록·배율·생성 코드 검사, run 비교(움직인 거리·바뀐 단계), 항 감싸기 edit 검사, 핵심 단계 줄이기, 화면·프롬프트 연결. 전체 241개 통과, 빌드 통과. 실제 AI와 브라우저로는 아직 확인하지 않았다.
+- **Field가 선 방향과 맞고, 실행 상태 손잡이로 조절되게 (2026-11-01)**
+  - 문제: flow field 프레임에서 화살표가 그림의 선 방향과 전혀 맞지 않았고, 조절해도 선이 거의 안 바뀌었다. 원인은 세 가지였다. (1) 그 코드는 방향을 따라 선을 그리지 않고, 세로선을 옆으로 미는 방식이었다. AI는 그 "옆으로 미는 양"을 `[push, 0]`으로 field에 감쌌다. 그래서 화살표가 전부 옆을 향했다. (2) 코드는 x 성분만 읽어서 방향을 돌려도 선이 거의 안 변했다. (3) `m.field`가 선마다(선별 값과 바뀌는 변수를 품은 채) 선언되어 화살표에는 마지막 선의 field만 보였다.
+  - 프롬프트(`inspect.md` fields 절):
+    - field는 **선이 실제로 가는 방향**이다. 밀기 양, noise 값, 한 성분 같은 중간값은 안 된다.
+    - 선은 그 field를 **따라 한 걸음씩 그린다**. 코드가 다른 방식(옆으로 밀기, 곡선 수식, offset)이면 hook의 edits가 그 계산을 field를 따라 그리는 방식으로 바꾼다. 이때 방향은 지금 선의 접선이고, 시작점·길이·단계 수는 유지한다.
+    - field는 **draw당 한 번** 선언한다. 루프·`m.memo`·선별 함수 밖이고, (x, y)와 모든 선에 같은 값만 읽는다.
+    - 이미 잘못 선언돼 있으면 edits로 고친다.
+  - **실행 상태로 field 모양 조절**: field를 만드는 것(attractor·repeller 위치, 소용돌이 중심, 채널이 지나는 점, 세기·반경)은 모듈이 `m.store`에 두고 다시 읽는 실행 상태가 된다(예: `m.store.attractors ??= [...]`, 지금 값으로 시작하니 그림은 그대로). inspection은 각 점에 `"@store:<root>:attractors.${i}"` move 손잡이를, 세기에는 slide 손잡이를 단 overlay를 준다. 손잡이를 끌면 잡은 단계가 다시 그려지고 화살표와 선이 함께 바뀐다. Comb은 그대로 두었다(기본 꺼짐).
+  - hook 검사(`fieldHookProblem`, AI 추가 호출 없음): 한 번만 선언했는지, 돌려받은 함수를 쓰는지 본다. 이미 선언돼 있어도 edits가 있으면 적용하고, 이미 적용된 edits(replace가 이미 있음)는 건너뛴다. 런타임은 한 프레임에 같은 field가 여러 번 선언되면 횟수를 보고하고, FIELD 도구에 "Declared per mark · arrows may not match"를 띄운다.
+  - hook 전에 기록된 단계는 attractor 값이 없어서 손잡이로 옮길 수 없었다. 이제 잡은 단계를 처음 (수정 없이) 그릴 때, 없던 store 값을 그려진 상태에서 한 번 채운다(`backfillStores`).
+  - 이미 잘못 hook된 프레임은 같은 concern으로 targeted inspection을 다시 하면 고쳐진다. 전체 237개 테스트 통과. 실제 AI와 브라우저로는 아직 확인하지 않았다.
+- **이미지에 최대한 비슷하게 (2026-11-01)**: flow field 그림을 sin 몇 개로 맞춘 등고선 수식으로 뽑아 전혀 다르게 나온 일이 있었다. 이에 extract에 FIDELITY 절을 넣었다.
+  - 렌더링한 결과가 이미지와 나란히 놓고 봐도 같아 보여야 하고, 이것이 가장 중요한 목표다.
+  - 먼저 이런 그림이 실제로 어떤 생성 기법·시뮬레이션으로 만들어지는지 알아내고 그 기법을 알고리즘으로 쓴다.
+  - 보이는 모양에 맞춘 수식(sin의 합, 주기적인 띠 등)은 쓰지 않는다.
+  - 모티프만이 아니라 보이는 통계를 맞춘다: 밀도와 그 변화, 간격, 대비, 모이고 퍼지는 곳, 불규칙함, 굵기, 질감.
+  - 결과가 과정에서 생기는 모양이면(선이 모여 어두워지는 곳 등) 결과를 따로 칠하지 말고 그 과정을 쓴다.
+  - 지시문 안의 이름·프리미티브·알고리즘·예시는 고르는 목록이 아니라 예시일 뿐이다.
+
+  `contracts/scene-model.md`에서는 알고리즘 설명을 "모양에 맞춘 수식이 아니라 그 모양을 만드는 실제 기법"으로 바꿨다. 배치 알고리즘 목록도 예시일 뿐이라고 적고, 벡터장 streamline, packing, relaxation, 성장 시뮬레이션 등을 예로 더했다. `code.md`는 원본 이미지와 최대한 같아 보이게(밀도·간격·굵기·대비·불규칙함·질감) 하고, 설명된 기법을 싼 대체물이 아니라 충분한 해상도와 단계로 구현하게 했다.
+- **UI 텍스트 영어로 (2026-10-31)**: `app/` 안의 화면에 보이는 문구를 모두 영어로 바꿨다. 버튼, 라벨, 툴팁, 토스트, 상태·오류 메시지, 서버 오류, AI에 덧붙이는 지시문이 대상이다. 이름을 감싸던 「」는 “ ”로 바꿨다. 오류 문구로 재시도를 판단하던 곳은 영어 문구에 맞췄다: 서버가 바쁠 때 `/request is in progress/i`, 캔버스·사진 준비 중 `/canvas to be ready|photo is still loading/`. 테스트의 기대 문구도 영어로 바꿨다. 이어서 `prompts/`도 영어로 바꿨다(원본은 `prompts-ko-backup/`). AI가 쓰는 내용(요약, recommendation 제목·설명, 단계 이름, 손잡이 힌트, 캡션, 답 등)은 이제 영어로 나온다. 프롬프트의 예시도 영어로 옮겼다. 한국어 글자 수 제한은 영어 단어 수로 바꿨다(약 20자 → 약 6단어, 약 12자 → 약 3단어). 사용자 입력(concern, 손글씨, 예전 장면의 한국어 설명·compose prompt)은 어떤 언어든 읽는다. concern 제안은 사용자가 다른 언어로 치고 있으면 그 언어로 이어 쓴다. 231개 테스트 통과.
 - **속한 곳 칩을 누르면 패널에서 보기 (2026-10-31)**: Execution 프레임의 "이 execution이 속한 곳"·단계 줄의 칩은 버튼이다. 누르면 그 프레임과 targeted 도구가 현재 것이 되고, 그 노드가 선택된다. Transformation이면 오른쪽 properties 패널에서 그 transformation 카드가 강조되고 그 자리로 스크롤된다. State·Transition이면 아래 state machine 패널에서 강조(첨부)되고, 그래프가 그 state(transition이면 양 끝 state)가 보이게 이동한다.
 - **확대해도 선명하게 (2026-10-31)**: 보드(`.world-layer`)에 늘 걸려 있던 `will-change: transform` 때문에 브라우저가 보드를 한 장의 그림으로 굳혀 확대할 때 늘렸다. 그래서 글자·버튼·선이 흐려졌다. 이제 보드를 끄는 동안에만 걸어서, 멈추면 그 배율로 다시 선명하게 그린다. state machine 그래프도 같은 이유로 뺐다. p5 결과 그림 자체는 900×600 캔버스(화면 배율만큼)라 크게 확대하면 여전히 부드러워진다.
 - **탐색 프레임·fork 자리·프레임 그룹 저장 (2026-10-31)**: Execution · 핵심 파라미터 프레임과 recommendation의 fork 자리를 프로젝트와 함께 저장한다(`exploreFrames`, `forkSlots`; 위치와 프레임 그룹도). 예전에는 저장하지 않아 새로고침하면 그룹이 fork만 남기고 사라졌다.
@@ -494,7 +804,8 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
       - 칠하기: 경로를 따라 긋기
       - 제거될 부분은 미리 빨간 점선으로 보이고, 지운 뒤에는 흐리게 남는다.
       - 이 동사별 제스처와 data 항목은 예시일 뿐 고르는 목록이 아니다. AI는 brush가 그리는 것과 그 연산의 의미에 맞는 metaphor를 직접 만든다. 예: 불꽃을 부채질해 키우기, 수풀 가지를 가로질러 잘라 다듬기, 잉크를 눌러 번지게 하기. 그 제스처에 필요한 점들은 data에 원하는 이름으로 담는다.
-    - **스케치로 단계 실행(`sketches`)**: 손잡이를 끄는 대신, 다음 단계가 다루는 자리(점선 영역)에 펜으로 표시를 그리고 **제출**(Enter)하면 그 단계가 실행된다. 인식은 `app/lib/sketch-gestures.ts`가 한다.
+    - **(2026-11-02 없앰)** 아래 스케치 실행은 더 이상 쓰지 않는다. AI는 `sketches`를 항상 `[]`로 내고, 서버도 받은 표시를 버린다. 단계는 손잡이와 버튼·키로만 넘긴다. 손잡이가 없는 연산은 단계 위의 기본 grip으로 넘긴다.
+    - ~~스케치로 단계 실행(`sketches`)~~: 손잡이를 끄는 대신, 다음 단계가 다루는 자리(점선 영역)에 펜으로 표시를 그리고 **제출**(Enter)하면 그 단계가 실행된다. 인식은 `app/lib/sketch-gestures.ts`가 한다.
       - 표시 종류:
         - `x`: 지우기, 빼기
         - `circle`: 남기기, 고르기, 묶기
@@ -550,13 +861,41 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 Semantic transformation의 property마다 그 property에 맞게 **직접 만든 direct manipulation 인터페이스**(handle)를 두고, 그것을 **proxy frame**에서 조작한다. 정해진 metaphor 몇 개를 고르는 방식이 아니라, AI가 property마다 새 widget을 만든다.
 
 - **Proxy frame**
-  - 대상 프레임 옆에 생기는 별도 프레임이다. 한 노드의 handle들을 grid로 나란히 보여준다.
+  - **Transformation마다 proxy frame 하나** (2026-11-02): 대상 프레임 옆에 생기는 별도 프레임이다. 한 transformation의 widget들이 900×600 프레임 전체를 쓴다. 한 프레임에 노드의 모든 transformation을 넣으면 widget이 찌그러져서 이렇게 바꿨다.
+    - 한 노드의 proxy frame들은 **프레임 그룹** "◎ <노드> · proxy"로 묶여 대상 프레임 옆에 한 줄로 놓인다. 그룹 제목을 끌면 함께 움직인다.
+      - 그룹은 노드의 첫 프레임(handle 없는 노드 프레임 포함)부터 만들어진다. 새 그룹은 대상 프레임 오른쪽, 다른 프레임·그룹과 겹치지 않는 줄에 놓인다.
+      - 나중에 만든 transformation 프레임은 그룹의 가장 오른쪽 프레임 다음에 붙고, 자리가 차 있으면 그 아래로 간다. 노드가 다르면 그룹도 따로다.
+      - 숨긴 프레임도 그룹에 남아 있다가 다시 보이면 그 자리로 돌아온다. 배치는 `placeProxyGroup`이 한다.
+    - 프레임 제목은 "◎ <번호> · <transformation>"이다. 안쪽 구역의 색과 번호는 노드의 widget 있는 transformation 순서로 정해지고, 모든 프레임과 칩에서 같다.
+    - 아직 handle이 없는 노드는 노드용 프레임 하나에서 시작한다. Handle이 생기면 그 자리를 첫 transformation 프레임이 이어받는다.
+    - 예전에 노드 하나에 모든 transformation을 넣어 만든 proxy frame은 보드에 보이면 transformation별 프레임으로 자동으로 나뉜다(화면은 옮기지 않는다).
+    - 프레임 안 widget grid는 구역 모양에 맞춘다(`proxySections`).
+    - 서버가 AI에게 알려주는 widget 크기(`widgetArea`)는 그 transformation 프레임에서 받을 칸 크기다.
+    - Proxy frame은 최대 60개다.
   - 여기서 widget을 조작하면 대상 프레임의 그 노드 값이 바뀌고, 결과가 실시간으로 따라 바뀐다. 거꾸로 슬라이더나 state 선택으로 값이 바뀌면 widget도 그 값으로 다시 그려진다. State를 편집 중이면 그 state의 값이 바뀐다.
   - 헤더에는 handle 수와 편집 중인 state가 표시된다.
+  - **헤더의 transformation 칩** (2026-11-02): 같은 노드의 proxy frame마다 칩이 하나씩 있다. 칩은 그 transformation의 색과 번호를 쓰고, 지금 프레임의 칩은 테두리로 표시된다.
+    - 칩을 누르면 그 proxy frame을 보드에서 숨기거나 다시 보인다. 숨겨도 handle과 자리, 그룹은 남는다(`proxyFrames[].hidden`).
+    - Widget이 없는 transformation은 점선 **+ <이름>** 칩으로 나오고, 누르면 바로 디자인한다.
+    - **Hide all**은 그 노드의 proxy frame을 모두 숨긴다.
+  - 대상 프레임 헤더 (2026-11-02):
+    - **Hide all handles / Show all handles (n)**는 그 프레임을 조작하는 모든 proxy frame을 한 번에 숨기거나 다시 보인다.
+    - 노드마다 **◎ <노드> n proxies** 칩이 하나 있다. 숨겨졌으면 "· hidden"이 붙고, 누르면 다시 보이며 그곳으로 이동한다.
   - AI 디자인·redesign은 **property 하나 또는 transformation 하나**에만 한다. 노드 전체를 한 번에 만드는 요청은 없다(서버도 대상 없는 `handles` 요청을 거부한다).
     - property 카드의 ◎, PROXY HANDLE 줄의 Redesign / Fix with AI → 그 property 하나.
     - transformation 카드의 Design with AI / Redesign with AI → 그 transformation의 property들.
     - 빈 proxy frame에는 조절할 수 있는 transformation마다 **Design <transformation>** 버튼이 있다.
+    - **Handles for all** (2026-11-02): 프레임 헤더 버튼이다. 그 프레임 모든 노드(배경 제외, 자식 포함)의 base state semantic transformation 가운데, handle 없는 property가 남은 것마다 요청을 하나씩 보낸다.
+      - 요청은 transformation 하나당 하나이고, 한 번에 2개씩 보낸다. 결과는 오는 대로 장면에 넣는다. 하나가 실패해도 나머지는 계속하고, 실패한 transformation 이름을 알려준다.
+      - 끝나면 handle이 생긴 노드마다 proxy frame 그룹을 연다. 진행 상황은 "(n/N)"으로 보인다. Cancel하면 남은 요청은 보내지 않고, 이미 보낸 요청의 결과도 버린다.
+      - 이미 handle이 다 있는 transformation은 건너뛴다. 다시 만들려면 그 transformation의 Design / Redesign을 쓴다.
+      - 모든 transformation에 handle이 있으면 버튼 이름이 **Open all handles**로 바뀐다. 누르면 AI 요청 없이 handle 있는 노드마다 proxy frame 그룹을 열고, 숨긴 프레임도 다시 보인다. 끝까지 만든 뒤에도 handle 있는 노드의 그룹을 모두 연다.
+    - **Redesign all handles** (2026-11-02): 프레임 헤더 버튼이다. Handle이 있는 노드가 있으면 보인다.
+      - 그 프레임 모든 노드(base state)에서 handle이 있는 transformation마다 다시 만든다. 요청은 transformation 하나당 하나이고, AI는 지금 widget(`current`)을 보고 다시 디자인한다. 한 번에 2개씩 보내고 진행률이 보인다.
+      - 결과는 하나씩 undo 기록에 들어간다. 마음에 안 들면 Undo로 하나씩 되돌린다.
+      - 끝나면 노드별 proxy frame 그룹을 연다.
+      - Proxy frame 헤더의 **Redesign all**은 그 노드만 대상으로 한다.
+      - Proxy frame에서도 할 수 있다. 헤더의 **Design all (n)**과 빈 proxy frame의 **Design all**은 그 노드만 대상으로 한다.
   - Inspector의 **Open proxy frame**, transformation 카드와 handle의 **Open proxy**로 연다. 노드마다 하나씩 있고, 이미 있으면 그 프레임으로 이동한다.
   - Proxy frame을 지워도 handle은 property에 남는다. 대상 프레임을 지우면 그 proxy frame도 함께 지워진다. 프로젝트에 저장된다(`proxyFrames`).
 - **조작이 대상에 반영되는 방식**
@@ -733,6 +1072,8 @@ Semantic transformation의 property마다 그 property에 맞게 **직접 만든
 ## 25. Brush 패널 스크롤
 
 Brush 패널 위쪽 brush 목록은 최대 150px(창 높이의 22%까지)이고, 아래쪽 고른 brush의 도구·옵션 영역은 높이가 고정된다(최대 190px, 창이 작으면 그에 맞춰 줄어듦, 최소 80px). Targeted inspection 도구, sub brush, master, 이름 같은 내용이 많아지면 각자 그 안에서 스크롤해 내린다.
+
+Brush 패널은 제목 줄("Brushes")을 끌어서 옮길 수 있다(창 밖으로는 나가지 않음). 닫았다 열어도 옮긴 자리에 그대로 있고, 제목 줄을 더블클릭하면 원래 자리(Brush 버튼 옆)로 돌아간다. 옮긴 동안에는 버튼을 가리키는 꼭지를 숨긴다.
 
 ## 주요 사용 흐름
 

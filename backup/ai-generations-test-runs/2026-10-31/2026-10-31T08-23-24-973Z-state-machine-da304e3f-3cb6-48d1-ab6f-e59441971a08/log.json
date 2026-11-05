@@ -1,0 +1,11 @@
+{
+  "id": "2026-10-31T08-23-24-973Z-state-machine-da304e3f-3cb6-48d1-ab6f-e59441971a08",
+  "intent": "state-machine",
+  "model": "gpt-6.1-sol",
+  "startedAt": "2026-10-31T08:23:24.973Z",
+  "status": "failed",
+  "httpStatus": 200,
+  "openaiRequestId": null,
+  "finishedAt": "2026-10-31T08:23:24.979Z",
+  "durationMs": 6
+}

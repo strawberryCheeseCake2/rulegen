@@ -40,9 +40,9 @@ test("every scalar leaf becomes a live binding, plus optional node layout and vi
 
 test("invalid scenes are rejected: dangling algorithms, self-referencing defaults, object parents and bad slider ranges", () => {
   const bad = (edit: (scene: typeof aiScene) => void) => { const copy = structuredClone(aiScene); edit(copy); return () => convertScene(copy); };
-  assert.throws(bad(s => { (s.nodes[0].transformations[0].properties[0].value as { algorithmId: string }).algorithmId = "missing"; }), /찾지 못했습니다/);
-  assert.throws(bad(s => { s.algorithms[0].params[0].value = { type: "algorithm-ref", algorithmId: "power-decay" }; }), /자기 자신|중첩/);
-  assert.throws(bad(s => { s.nodes[1].transformations[0].properties[0].value = num(500, 10, 140); }), /범위/);
+  assert.throws(bad(s => { (s.nodes[0].transformations[0].properties[0].value as { algorithmId: string }).algorithmId = "missing"; }), /Could not find algorithm missing/);
+  assert.throws(bad(s => { s.algorithms[0].params[0].value = { type: "algorithm-ref", algorithmId: "power-decay" }; }), /refers to itself|nested at most/);
+  assert.throws(bad(s => { s.nodes[1].transformations[0].properties[0].value = num(500, 10, 140); }), /slider range is invalid/);
   // A state value whose structure differs from the base property is dropped, not allowed to break bindings.
   const mismatched = bad(s => { s.nodes[1].machine!.states[1].values[0].value = { type: "color", value: "#ffffff" }; })();
   assert.deepEqual(mismatched.nodes[1].machine!.states[1].values.map(item => item.propertyId), ["speed"]);
@@ -99,7 +99,7 @@ test("algorithms are reusable: plugged into other properties, imported across sk
   const pen = makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "structure" }, "source", "pen", "#3b73c4");
   assert.deepEqual(pen.algorithm!.library.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
   assert.equal(pen.source.label, "Tree · Branching");
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /알고리즘/);
+  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /property that contains an algorithm/);
   const other = importAlgorithmCall({ nodes: [], algorithms: [] }, penAlgorithm(pen)!);
   assert.deepEqual(other.scene.algorithms.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
   assert.deepEqual(other.call, pen.algorithm!.call);
@@ -181,6 +181,6 @@ test("collections nest up to five levels: deeper model output is flattened into 
   assert.deepEqual(scene.nodes.map(node => [node.id, nodeLevel(scene, node.id)]), [["level-1", 1], ["level-2", 2], ["level-3", 3], ["level-4", 4], ["level-5", 5], ["level-6", 5], ["level-7", 5]]);
   assert.equal(scene.nodes.find(node => node.id === "level-7")!.parentId, "level-4", "extra levels attach to the level-4 ancestor");
   const tooDeep = { ...scene, nodes: scene.nodes.map(node => node.id === "level-7" ? { ...node, parentId: "level-6" } : node) };
-  assert.throws(() => sceneSchema.parse(tooDeep), /5단계/);
+  assert.throws(() => sceneSchema.parse(tooDeep), /nested at most 5 levels/);
 });
 

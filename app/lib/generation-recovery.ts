@@ -4,6 +4,7 @@ import { projectSchema } from "./project";
 import { annotationSchema, imageSchema, requestSchema, generatedSchema, compositionPromptSchema, clarificationSchema, machineRefineResultSchema } from "./schema";
 import { showWorkspaceFrame } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
+import { reviseTag, tagRevisionSchema } from "./compose-tags";
 import { sceneProposalSchema, sceneSchema } from "./scene/validate";
 
 export const recoveryContextSchema = z.object({
@@ -13,7 +14,7 @@ export const recoveryContextSchema = z.object({
   revisionInstruction: z.string().max(2000).default(""),
   proposal: sceneProposalSchema.nullable().default(null),
 }).superRefine((context, ctx) => {
-  if (context.owner !== "source" && !context.project.sketchFrames.some(frame => frame.id === context.owner)) ctx.addIssue({ code: "custom", message: "복원할 스케치를 찾지 못했습니다." });
+  if (context.owner !== "source" && !context.project.sketchFrames.some(frame => frame.id === context.owner)) ctx.addIssue({ code: "custom", message: "Could not find the sketch to restore." });
 });
 export type RecoveryContext = z.infer<typeof recoveryContextSchema>;
 export const recoveredGenerationSchema = z.object({ project: projectSchema, owner: z.string(), annotations: z.array(annotationSchema).max(128).default([]), annotationImage: imageSchema.or(z.literal("")).default(""), revisionInstruction: z.string().max(2000).default(""), proposal: sceneProposalSchema.nullable().default(null) });
@@ -60,7 +61,8 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
       panel.generated = generatedSchema.parse(result); panel.codeDraft = panel.generated.code; panel.dirtyNodeIds = [];
       if (input.scene) panel.scene = context?.proposal && input.revisionSummary ? context.proposal.scene : input.scene;
       clearAnnotations(); break;
-    case "compose-prompt": panel.composePrompt = compositionPromptSchema.parse(result).prompt; break;
+    case "compose-prompt": { const drafted = compositionPromptSchema.parse(result); panel.composePrompt = drafted.prompt; panel.composeTags = drafted.tags; panel.composeTagsRevision = artwork.revision; break; }
+    case "tag-revise": panel.composeTags = reviseTag(panel.composeTags, tagRevisionSchema.parse(result)); break;
     case "clarification": recovery.revisionInstruction = clarificationSchema.parse(result).clarification; break;
     case "revision": recovery.proposal = sceneProposalSchema.parse(result); break;
     case "inspect": case "concern": break; // An inspection (or a suggested concern) does not change the project.

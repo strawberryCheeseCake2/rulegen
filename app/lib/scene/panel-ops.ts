@@ -1,5 +1,6 @@
 import type { SketchPanel } from "../sketch-panels";
 import type { NodeState, NodeTransition, Property, Scene, SceneNode, ScalarValue, SemanticTransformation, Value } from "./schema";
+import { MAX_NODE_PROPERTIES, MAX_TRANSFORMATIONS } from "./schema";
 import { findAlgorithm, instantiate, sceneAlgorithmUsage } from "./algorithms";
 import { findNode, updateNode } from "./graph";
 import { conformMachine, setStateValue, stateProperties, stateTransformations } from "./machines";
@@ -126,6 +127,23 @@ export function removeTransformation(panel: SketchPanel, nodeId: string, transfo
 }
 export function moveTransformation(panel: SketchPanel, nodeId: string, transformationId: string, offset: number): Patch {
   return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.moveTransformation(node, transformationId, offset)), [nodeId]);
+}
+/**
+ * Drag and drop in Layers: a transformation put before `beforeId` in `toNodeId` (none: at its end), in its own
+ * node (a reorder) or another one (it leaves the first, its state values with it). {} when nothing changes; an error when there is no room.
+ */
+export function relocateTransformation(panel: SketchPanel, fromNodeId: string, transformationId: string, toNodeId: string, beforeId: string | null): Patch {
+  const source = findNode(panel.scene, fromNodeId), target = findNode(panel.scene, toNodeId), moved = source && layers.findTransformation(source, transformationId);
+  if (!source || !target || !moved || beforeId === transformationId) return {};
+  if (source.id === target.id) {
+    const rest = source.transformations.filter(item => item.id !== transformationId), at = rest.findIndex(item => item.id === beforeId);
+    const transformations = [...rest]; transformations.splice(at < 0 ? rest.length : at, 0, moved);
+    if (transformations.every((item, i) => item.id === source.transformations[i].id)) return {};
+    return commitScene(panel, updateNode(panel.scene, source.id, node => ({ ...node, transformations })), [source.id]);
+  }
+  if (!layers.canTakeTransformation(target, moved)) return { error: `“${target.name}” has no room for “${moved.label || moved.id}” (at most ${MAX_TRANSFORMATIONS} transformations and ${MAX_NODE_PROPERTIES} properties a node).` };
+  const left = updateNode(panel.scene, source.id, node => layers.removeTransformation(node, transformationId));
+  return commitScene(panel, updateNode(left, target.id, node => layers.takeTransformation(node, moved, beforeId)), [source.id, target.id]);
 }
 
 /** Algorithm definitions are shared: editing one marks every node that uses it. */

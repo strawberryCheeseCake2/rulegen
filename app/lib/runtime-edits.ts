@@ -132,3 +132,23 @@ export function editRuntime<T>(runtime: T, values: Record<string, Scalar> | null
   }
   return out as T;
 }
+
+/**
+ * A step's runtime with the store values it was recorded without, from the stores as it is drawn now (unedited):
+ * values the code keeps that were patched in after the step was recorded (e.g. a field's attractors), so handles
+ * can move them at that step. Null when nothing is missing.
+ */
+export function backfillStores<T>(runtime: T, drawn: Record<string, unknown> | null | undefined): T | null {
+  const stores = runtime && typeof runtime === "object" ? (runtime as Record<string, unknown>).stores : null;
+  if (!stores || typeof stores !== "object" || !drawn) return null;
+  let changed = false;
+  const next = Object.fromEntries(Object.entries(stores as Record<string, unknown>).map(([root, own]) => {
+    const now = drawn[root];
+    if (!own || typeof own !== "object" || Array.isArray(own) || !now || typeof now !== "object" || Array.isArray(now)) return [root, own];
+    const missing = Object.keys(now).filter(key => !(key in own));
+    if (!missing.length) return [root, own];
+    changed = true;
+    return [root, { ...own, ...Object.fromEntries(missing.map(key => [key, (now as Record<string, unknown>)[key]])) }];
+  }));
+  return changed ? { ...(runtime as Record<string, unknown>), stores: next } as T : null;
+}

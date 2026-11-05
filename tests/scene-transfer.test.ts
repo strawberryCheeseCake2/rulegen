@@ -32,7 +32,7 @@ test("a copied block keeps its arguments and can be pasted into any socket, even
   assert.deepEqual(sceneBindings(nested).map(b => b.key), ["orb/size/depth", "orb/size/length/base", "orb/size/length/ratio"]);
   // Pasting deep enough to exceed the nesting limit is refused.
   const deep = copyAlgorithm(scene, branch);
-  assert.throws(() => pasteAlgorithm(scene, "tree", "structure", ["length", "base"], { ...deep, call: { ...deep.call, args: deep.call.args.map(a => a.id === "depth" ? { ...a, value: instantiate(scene.algorithms, "recursive-branch") } : a) } }), /중첩/);
+  assert.throws(() => pasteAlgorithm(scene, "tree", "structure", ["length", "base"], { ...deep, call: { ...deep.call, args: deep.call.args.map(a => a.id === "depth" ? { ...a, value: instantiate(scene.algorithms, "recursive-branch") } : a) } }), /Algorithms can be nested at most/);
 });
 
 test("dropping a block on a node's empty socket adds a property holding that block", () => {

@@ -80,7 +80,7 @@ test("every AI intent logs its final validated result and clarification retains 
     "state-machine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] } },
     "machine-refine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
     clarification: { clarification: "나무를 키워줘" },
-    "compose-prompt": { prompt: "가지를 키우고 자유롭게 그린 배치와 조합해줘" },
+    "compose-prompt": { prompt: "가지를 키우고 자유롭게 그린 배치와 조합해줘", tags: [] },
     revision: { summary: "나무를 키웁니다", ...renamed },
   };
   for (const intent of Object.keys(results)) {
@@ -127,8 +127,8 @@ test("project snapshots, image assets and generated features restore exactly wit
   assert.equal(restored.project.sketchPanels["sketch-target"].scene.nodes[0].region.x, .35);
   assert.deepEqual(restored.project.sketchPanels["sketch-other"], project.sketchPanels["sketch-other"]);
   assert.equal((await readGeneration(key)).metadata.status, "success");
-  await assert.rejects(restoreGeneration("../../.env"), /로그 ID/);
-  await assert.rejects(readGeneration(`${key}/../request.json`), /로그 ID/);
+  await assert.rejects(restoreGeneration("../../.env"), /Not a valid log ID/);
+  await assert.rejects(readGeneration(`${key}/../request.json`), /Not a valid log ID/);
 });
 
 test("failed logs remain browsable and cannot be restored as completed output", async () => {
@@ -137,24 +137,24 @@ test("failed logs remain browsable and cannot be restored as completed output", 
   const history = await listGenerations(); const key = history.entries[0].key;
   assert.equal(history.entries[0].status, "failed");
   assert.ok((await readGeneration(key)).error);
-  await assert.rejects(restoreGeneration(key), /완료된 AI 생성/);
+  await assert.rejects(restoreGeneration(key), /Only completed AI generations/);
 });
 
 test("upstream failures retain the provider response and redact keys without leaking it to the client", async () => {
   globalThis.fetch = async () => Response.json({ error: { message: `Bad key ${process.env.OPENAI_API_KEY}`, api_key: "another-secret" } }, { status: 401 });
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /API 키를 확인/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /Check your OpenAI API key/);
   const [directory] = await folders();
   assert.equal((await json(directory, "log.json")).status, "failed");
   const raw = await json(directory, "response.json");
   assert.equal(raw.error.api_key, "[REDACTED]"); assert.match(raw.error.message, /\[REDACTED\]/);
-  assert.match((await json(directory, "error.json")).message, /API 키를 확인/);
+  assert.match((await json(directory, "error.json")).message, /Check your OpenAI API key/);
   assert.equal((await readdir(directory)).includes("result.json"), false);
 });
 
 test("malformed responses and invalid structured output remain inspectable with the original parse failure", async () => {
   for (const body of ["<html>not JSON</html>", JSON.stringify({ output: [{ content: [{ type: "output_text", text: '{"algorithms":[],"nodes":[]}' }] }] })]) {
     globalThis.fetch = async () => new Response(body);
-    await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /응답을 해석/);
+    await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /Could not parse the model response/);
   }
   const directories = await folders();
   assert.equal(directories.length, 2);
@@ -169,8 +169,8 @@ test("malformed responses and invalid structured output remain inspectable with 
 test("cancelled generations and preflight failures are recorded even without a response", async () => {
   const controller = new AbortController();
   globalThis.fetch = async () => { controller.abort(); throw new DOMException("Cancelled", "AbortError"); };
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), controller.signal), /취소/);
-  await assert.rejects(runAI(requestSchema.parse({ intent: "extract" }), new AbortController().signal), /이미지가 없습니다/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), controller.signal), /The request was canceled/);
+  await assert.rejects(runAI(requestSchema.parse({ intent: "extract" }), new AbortController().signal), /There is no image/);
   const directories = await folders();
   assert.equal(directories.length, 2);
   assert.deepEqual((await Promise.all(directories.map(directory => json(directory, "log.json")))).map(log => log.status).sort(), ["cancelled", "failed"]);
@@ -181,7 +181,7 @@ test("unwritable log destination prevents an unlogged AI call", async () => {
   const blocked = path.join(tmpdir(), `rulegen-blocked-log-${Date.now()}`);
   await writeFile(blocked, "file, not directory"); process.env.RULEGEN_AI_LOG_DIR = blocked;
   let calls = 0; globalThis.fetch = async () => { calls++; return response(); };
-  try { await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /로그를 저장하지 못/); }
+  try { await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /Could not save the AI generation log/); }
   finally { await rm(blocked, { force: true }); }
   assert.equal(calls, 0);
 });

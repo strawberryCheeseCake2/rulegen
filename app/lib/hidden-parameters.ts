@@ -32,7 +32,7 @@ export const parameterSuggestionSchema = z.object({
   form: z.enum(["constant", "scale"]).default("constant"),
   /** The value the code uses now, with a sensible range. */
   value: scalarValueSchema,
-  /** Why it matters for the concern (Korean). */
+  /** Why it matters for the concern (English). */
   reason: z.string().max(400),
   edits: z.array(editSchema).min(1).max(4),
 });
@@ -58,8 +58,8 @@ export function applyParameterEdits(module: string, edits: ParameterSuggestion["
   let text = module;
   for (const edit of edits) {
     const at = text.indexOf(edit.find);
-    if (at < 0) return { error: "바꿀 코드 부분을 찾지 못했습니다" };
-    if (text.indexOf(edit.find, at + 1) >= 0) return { error: "바꿀 코드 부분이 여러 곳에 있습니다" };
+    if (at < 0) return { error: "Could not find the code to change" };
+    if (text.indexOf(edit.find, at + 1) >= 0) return { error: "The code to change appears in more than one place" };
     text = text.slice(0, at) + edit.replace + text.slice(at + edit.find.length);
   }
   return { module: text };
@@ -68,25 +68,25 @@ export function applyParameterEdits(module: string, edits: ParameterSuggestion["
 /** Why a suggestion cannot be exposed in this scene and program (null: it can). `parses` checks the edited module is valid code. */
 export function parameterProblem(scene: Scene, code: string, item: ParameterSuggestion, parses: (module: string) => boolean = () => true): string | null {
   const node = findNode(scene, item.nodeId);
-  if (!node) return "노드를 찾지 못했습니다";
+  if (!node) return "Could not find the node";
   const transformation = node.transformations.find(entry => entry.id === item.transformationId);
-  if (!transformation) return "semantic transformation을 찾지 못했습니다";
-  if (nodeProperties(node).some(property => property.id === item.id)) return "같은 id의 property가 이미 있습니다";
-  if (transformation.properties.length >= MAX_PROPERTIES || nodeProperties(node).length >= MAX_NODE_PROPERTIES) return "property를 더 넣을 수 없습니다";
+  if (!transformation) return "Could not find the semantic transformation";
+  if (nodeProperties(node).some(property => property.id === item.id)) return "A property with the same id already exists";
+  if (transformation.properties.length >= MAX_PROPERTIES || nodeProperties(node).length >= MAX_NODE_PROPERTIES) return "No more properties can be added";
   const value = item.value;
-  if (value.type === "number" && !(value.min <= value.value && value.value <= value.max && value.min < value.max)) return "값의 범위가 맞지 않습니다";
-  if (value.type === "select" && !value.options.includes(value.value)) return "선택지에 없는 값입니다";
+  if (value.type === "number" && !(value.min <= value.value && value.value <= value.max && value.min < value.max)) return "The value is out of range";
+  if (value.type === "select" && !value.options.includes(value.value)) return "The value is not one of the options";
   // A scale leaves the picture as it is at 1, and must be able to go both ways.
-  if (item.form === "scale" && !(value.type === "number" && value.value === 1 && value.min < 1 && value.max > 1)) return "배율은 지금 값 1을 사이에 둔 숫자여야 합니다";
+  if (item.form === "scale" && !(value.type === "number" && value.value === 1 && value.min < 1 && value.max > 1)) return "A scale must be a number whose range contains the current value 1";
   const key = exposedKey(node, item.id);
   // Plainly, or per drawn item (m.v("<key>", id)).
   const reads = new RegExp(`m\\.v\\(\\s*(["'])${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\1\\s*[,)]`);
-  if (!item.edits.some(edit => reads.test(edit.replace))) return `코드가 m.v("${key}")를 읽지 않습니다`;
+  if (!item.edits.some(edit => reads.test(edit.replace))) return `The code does not read m.v("${key}")`;
   const moduleKey = moduleKeyOf(scene, node.id), module = moduleKey ? programModules(code).get(moduleKey) : undefined;
-  if (!module) return "노드의 코드 모듈을 찾지 못했습니다";
+  if (!module) return "Could not find the node's code module";
   const edited = applyParameterEdits(module, item.edits);
   if ("error" in edited) return edited.error;
-  return parses(edited.module) ? null : "고친 코드가 올바르지 않습니다";
+  return parses(edited.module) ? null : "The edited code is invalid";
 }
 
 /**
@@ -103,7 +103,7 @@ export function exposeParameter(scene: Scene, generated: GeneratedCode, item: Pa
   const property = { id: item.id, label: item.label, effect: item.effect, description: item.description, value: item.value };
   const sharing = scene.nodes.filter(entry => ids.has(entry.id));
   const missing = sharing.filter(entry => !entry.transformations.some(transformation => transformation.id === item.transformationId) || nodeProperties(entry).some(existing => existing.id === item.id));
-  if (missing.length) return { error: `같은 코드를 쓰는 ${missing.map(entry => entry.name).join(", ")}에는 그 transformation이 없거나 같은 id가 있습니다` };
+  if (missing.length) return { error: `${missing.map(entry => entry.name).join(", ")}, which share the same code, lack that transformation or already have the same id` };
   const next = { ...scene, nodes: scene.nodes.map(entry => !ids.has(entry.id) ? entry : { ...entry, transformations: entry.transformations.map(transformation =>
     transformation.id === item.transformationId ? { ...transformation, properties: [...transformation.properties, property] } : transformation) }) };
   const module = programModules(generated.code).get(moduleKey)!;
@@ -131,7 +131,7 @@ export const recordingSchema = z.object({
   fields: z.array(z.string().regex(/^[A-Za-z_$][\w$]*$/).max(40)).max(6),
   /** Value keys the edits make the module read per drawn item (m.v("<key>", id)), so a handle changes one item. */
   perItem: z.array(z.string().max(200)).max(6).default([]),
-  /** Which items and why (Korean). */
+  /** Which items and why (English). */
   reason: z.string().max(400),
   edits: z.array(editSchema).min(1).max(6),
 });
@@ -153,19 +153,19 @@ export function guardSuggestedReads(item: Recording, suggestions: ParameterSugge
 
 /** Why the recording edits cannot apply to this program (null: they can). */
 export function recordingProblem(scene: Scene, code: string, item: Recording, parses: (module: string) => boolean = () => true): string | null {
-  if (!findNode(scene, item.nodeId)) return "노드를 찾지 못했습니다";
+  if (!findNode(scene, item.nodeId)) return "Could not find the node";
   // Each field is written by some edit: it is named more often after it than before.
   const count = (text: string, field: string) => text.split(new RegExp(`(?<![\\w$])${field.replace(/\$/g, "\\$")}(?![\\w$])`)).length - 1;
   const missing = item.fields.filter(field => !item.edits.some(edit => count(edit.replace, field) > count(edit.find, field)));
-  if (missing.length) return `코드가 ${missing.join(", ")}을(를) 기록하지 않습니다`;
-  if (!item.fields.length && !item.perItem?.length) return "기록할 것이 없습니다";
+  if (missing.length) return `The code does not record ${missing.join(", ")}`;
+  if (!item.fields.length && !item.perItem?.length) return "Nothing to record";
   const moduleKey = moduleKeyOf(scene, item.nodeId), module = moduleKey ? programModules(code).get(moduleKey) : undefined;
-  if (!module) return "노드의 코드 모듈을 찾지 못했습니다";
+  if (!module) return "Could not find the node's code module";
   const edited = applyParameterEdits(module, item.edits);
   if ("error" in edited) return edited.error;
   const flat = (item.perItem ?? []).filter(key => !readsPerItem(edited.module, key));
-  if (flat.length) return `코드가 ${flat.join(", ")}을(를) 항목별로 읽지 않습니다`;
-  return parses(edited.module) ? null : "고친 코드가 올바르지 않습니다";
+  if (flat.length) return `The code does not read ${flat.join(", ")} per item`;
+  return parses(edited.module) ? null : "The edited code is invalid";
 }
 /** Whether the program already records them (every edit's result is in the module). */
 export function recordingApplied(scene: Scene, code: string, item: Recording) {

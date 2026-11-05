@@ -7,7 +7,7 @@ import { liveSceneSource } from "../lib/scene/live";
 import * as ops from "../lib/scene/panel-ops";
 import type { StudioDeps } from "./deps";
 
-export const clarificationLabel = "AI가 annotation 스케치를 보고 설명 초안을 만들고 있습니다…";
+export const clarificationLabel = "AI is reading the annotation sketch and drafting a description…";
 
 export const revisionSnapshot = (panel: SketchPanel, instruction = panel.revisionInstruction) =>
   sceneRevisionSnapshot(panel.scene, liveSceneSource(panel.generated, panel.scene), panel.annotationHistory.present, instruction, panel.annotationImage);
@@ -43,7 +43,7 @@ export function revisionActions(deps: StudioDeps, owner: string) {
       const panel = current();
       if (!panel.generated || !panel.annotationImage || !panel.annotationHistory.present.length || !panel.revisionInstruction.trim()) return;
       const snapshot = revisionSnapshot(panel);
-      await deps.task("스케치와 clarification을 바탕으로 collection·property 변경안을 만들고 있습니다…", async () => {
+      await deps.task("Drafting collection and property changes from the sketch and clarification…", async () => {
         const number = deps.requestId(owner), annotations = panel.annotationHistory.present;
         const image = await annotatedResultImage(panel.annotationImage, annotations);
         if (!unchanged(number, snapshot)) return;
@@ -55,7 +55,7 @@ export function revisionActions(deps: StudioDeps, owner: string) {
     async confirmRevision() {
       const panel = current(), review = panel.revisionProposal;
       if (!review || !panel.generated || review.snapshot !== revisionSnapshot(panel)) return;
-      await deps.task("확인한 변경안을 collection과 p5.js 결과에 적용하고 있습니다…", async () => {
+      await deps.task("Applying the confirmed changes to the collection and the p5.js result…", async () => {
         const number = deps.requestId(owner), annotations = panel.annotationHistory.present;
         const image = await annotatedResultImage(panel.annotationImage, annotations);
         if (!unchanged(number, review.snapshot)) return;
@@ -65,7 +65,7 @@ export function revisionActions(deps: StudioDeps, owner: string) {
         await deps.request("prepare", { code: result.code }, owner);
         if (!unchanged(number, review.snapshot)) return;
         deps.updatePanel(owner, latest => ({ ...ops.commitScene(latest, review.proposal.scene), generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [], hovered: null, ...clearedResultAnnotations() }));
-        deps.toast("확인한 collection·property 변경안을 적용하고 결과를 업데이트했습니다.");
+        deps.toast("Applied the confirmed collection and property changes and updated the result.");
       }, owner);
     },
   };

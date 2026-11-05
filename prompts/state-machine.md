@@ -19,14 +19,14 @@ Return exactly one object matching `prompts/schemas/state-machine.json`:
   "machine": {
     "initialState": "idle",
     "states": [
-      { "id": "idle", "label": "대기", "description": "원이 작게 숨 쉬며 클릭을 기다립니다.", "values": [ { "propertyId": "radius", "value": { "type": "number", "value": 24, "min": 10, "max": 140, "step": 1, "unit": "px" } } ] },
-      { "id": "growing", "label": "성장", "description": "클릭 후 1.2초 동안 커집니다.", "values": [ { "propertyId": "radius", "value": { "type": "number", "value": 90, "min": 10, "max": 140, "step": 1, "unit": "px" } } ] },
-      { "id": "settled", "label": "정착", "description": "커진 상태로 머무르고 다시 클릭하면 대기로 돌아갑니다.", "values": [] }
+      { "id": "idle", "label": "Idle", "description": "The circle breathes gently at a small size, waiting for a click.", "values": [ { "propertyId": "radius", "value": { "type": "number", "value": 24, "min": 10, "max": 140, "step": 1, "unit": "px" } } ] },
+      { "id": "growing", "label": "Growing", "description": "Grows for 1.2 seconds after the click.", "values": [ { "propertyId": "radius", "value": { "type": "number", "value": 90, "min": 10, "max": 140, "step": 1, "unit": "px" } } ] },
+      { "id": "settled", "label": "Settled", "description": "Stays enlarged; clicking again returns it to idle.", "values": [] }
     ],
     "transitions": [
-      { "id": "press-circle", "from": "idle", "to": "growing", "label": "원 클릭", "trigger": "event", "afterMs": 1000 },
-      { "id": "growth-done", "from": "growing", "to": "settled", "label": "성장 완료", "trigger": "after", "afterMs": 1200 },
-      { "id": "press-reset", "from": "settled", "to": "idle", "label": "다시 클릭해 되돌리기", "trigger": "event", "afterMs": 1000 }
+      { "id": "press-circle", "from": "idle", "to": "growing", "label": "Click the circle", "trigger": "event", "afterMs": 1000 },
+      { "id": "growth-done", "from": "growing", "to": "settled", "label": "Growth finished", "trigger": "after", "afterMs": 1200 },
+      { "id": "press-reset", "from": "settled", "to": "idle", "label": "Click again to reset", "trigger": "event", "afterMs": 1000 }
     ]
   }
 }

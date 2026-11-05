@@ -1,0 +1,12 @@
+{
+  "output": [
+    {
+      "content": [
+        {
+          "type": "output_text",
+          "text": "{\"divisible\":true,\"reason\":\"\",\"algorithms\":[],\"parts\":[{\"id\":\"grow\",\"label\":\"Grow\",\"description\":\"Grow 설명\",\"properties\":[{\"id\":\"grow\",\"label\":\"grow\",\"effect\":\"spatial\",\"description\":\"\",\"value\":{\"type\":\"number\",\"value\":3,\"min\":0,\"max\":10,\"step\":1,\"unit\":\"\"}}]}]}"
+        }
+      ]
+    }
+  ]
+}

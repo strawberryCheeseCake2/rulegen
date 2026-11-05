@@ -1,0 +1,10 @@
+{
+  "name": "Error",
+  "message": "Could not parse the model response. Please generate again.",
+  "stack": "Error: Could not parse the model response. Please generate again.\n    at runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:79:76)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fields.test.ts:69:46)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async TestContext.<anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fields.test.ts:68:3)\n    at async Test.run (node:internal/test_runner/test:1113:7)\n    at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)",
+  "cause": {
+    "name": "ZodError",
+    "message": "[\n  {\n    \"origin\": \"array\",\n    \"code\": \"too_big\",\n    \"maximum\": 2,\n    \"inclusive\": true,\n    \"path\": [\n      \"fields\"\n    ],\n    \"message\": \"Too big: expected array to have <=2 items\"\n  }\n]",
+    "stack": "ZodError: [\n  {\n    \"origin\": \"array\",\n    \"code\": \"too_big\",\n    \"maximum\": 2,\n    \"inclusive\": true,\n    \"path\": [\n      \"fields\"\n    ],\n    \"message\": \"Too big: expected array to have <=2 items\"\n  }\n]\n    at respond (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:121:69)\n    at async runGeneration (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:77:13)\n    at async runAI (/Users/kmg/Desktop/Code/genbrush/rulegen/app/server/ai.server.ts:44:20)\n    at async <anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fields.test.ts:69:46)\n    at async withMockedAI (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fixtures/scene.ts:78:16)\n    at async TestContext.<anonymous> (/Users/kmg/Desktop/Code/genbrush/rulegen/tests/fields.test.ts:68:3)\n    at async Test.run (node:internal/test_runner/test:1113:7)\n    at async Test.processPendingSubtests (node:internal/test_runner/test:788:7)"
+  }
+}

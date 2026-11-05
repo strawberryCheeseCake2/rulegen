@@ -60,7 +60,7 @@ export function RawCodePanel({ code, sketchName, fileName, onCopy, onError, mach
 
   async function copyCode() {
     try { await navigator.clipboard.writeText(code); onCopy(); }
-    catch { onError("클립보드에 접근하지 못했습니다. 다운로드를 이용해주세요."); }
+    catch { onError("Couldn't access the clipboard. Please use download instead."); }
   }
 
   return <section className={`raw-code-panel ${expanded ? "expanded" : "collapsed"} ${mode !== "code" ? "machine-mode" : ""}`} aria-label="Raw p5.js code panel">

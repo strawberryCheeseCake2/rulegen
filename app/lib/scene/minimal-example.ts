@@ -28,7 +28,7 @@ function within(child: Region, parent: Region, next: Region): Region {
 
 export function minimalExampleScene(scene: Scene, nodeId: string, transformationId: string): Scene {
   const node = findNode(scene, nodeId), transformation = node && findTransformation(node, transformationId);
-  if (!node || !transformation) throw new Error("Transformation을 찾지 못했습니다.");
+  if (!node || !transformation) throw new Error("Could not find the Transformation.");
   const region = centered(node.region);
   const main: SceneNode = { ...node, parentId: null, region, visible: true, machine: null, transformations: [structuredClone(transformation)] };
   const nodes = [main];

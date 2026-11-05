@@ -13,7 +13,7 @@ import { sceneBindings } from "./values";
  */
 export function stampModule(target: { scene: Scene; generated: GeneratedCode | null }, source: Scene, nodeId: string, module: { key: string; text: string }, points: { x: number; y: number }[], name: string) {
   const code = target.generated?.code;
-  if (code && !hasModules(code)) throw new Error("이 프레임의 코드는 brush를 받을 수 없는 이전 형식입니다. 먼저 Update로 코드를 다시 생성해주세요.");
+  if (code && !hasModules(code)) throw new Error("This frame's code uses an older format that cannot take a brush. Regenerate the code with Update first.");
   const modules = code ? programModules(code) : new Map<string, string>();
   // Same key and same code: reuse it. Same key, other code: add it under a free key.
   let key = module.key;

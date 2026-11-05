@@ -19,7 +19,7 @@ export type ForkSlotFrame = { id: `slot-${string}`; targetFrameId: string; brush
 export const isSlotFrame = (id: string): id is `slot-${string}` => id.startsWith("slot-");
 type Props = {
   title: string; detail: string;
-  /** waiting: its Execution and key parameter frames are being made; paused: they wait for "마저 생성"; ready: it can be accepted. */
+  /** waiting: its Execution and key parameter frames are being made; paused: they wait for "Continue generating"; ready: it can be accepted. */
   status: ForkSlotStatus; message: string;
   /** The version the fork will be (the recommendation's preview on the held step's marks), or null while it cannot be drawn. */
   preview: Omit<ComponentProps<typeof RecommendationPreview>, "large" | "plain" | "onCapture" | "onDrawn" | "adjusted" | "onAdjust"> | null;
@@ -54,31 +54,31 @@ export function ForkSlot({ title, detail, status, message, preview, paused, onCo
     <div className="fork-slot-view">
       {preview ? <RecommendationPreview {...preview} large onCapture={image => { latest.current = image; take(image); }} onDrawn={() => { wantShot.current = true; setTimeout(() => take(latest.current), 300); }}
         adjusted={edit.adjusted} onAdjust={edit.revising ? undefined : (key, value) => { const adjusted = { ...edit.adjusted }; if (value === null) delete adjusted[key]; else adjusted[key] = value; onEdit({ adjusted }); }} />
-        : <div className="frame-render-status"><span className="loading-spinner" /><strong>바뀐 버전을 준비하고 있습니다…</strong></div>}
+        : <div className="frame-render-status"><span className="loading-spinner" /><strong>Preparing the changed version…</strong></div>}
     </div>
     {/* What the user did on the preview: annotation strokes, and the crops carried where they were moved, scaled and rotated. */}
     <EditSheet edit={edit} onEdit={onEdit} shot={shot || latest.current} editable={editable} selected={selected} onSelect={setSelected} />
     <div className="fork-slot-bar" onPointerDown={e => e.stopPropagation()}>
-      <span className="section-kicker">FORK · 아직 만들지 않음</span>
+      <span className="section-kicker">FORK · Not generated yet</span>
       <strong>{title}</strong>
       <span className="fork-slot-detail">{detail}</span>
       <span className={`fork-slot-message ${status}`} role="status">{status === "waiting" || status === "making" ? <span className="loading-spinner" /> : null}{message}</span>
       <div className="fork-slot-actions">
-        <button className="primary" disabled={status !== "ready" || edit.revising} onClick={onAccept}><Icon name="spark" size={14} />Accept · 이 버전으로 fork 만들기</button>
-        {paused && <button onClick={onContinue} disabled={edit.revising} title="옆의 Execution·핵심 파라미터 프레임을 AI로 만듭니다">▶ 마저 생성 (Execution·핵심 파라미터)</button>}
+        <button className="primary" disabled={status !== "ready" || edit.revising} onClick={onAccept}><Icon name="spark" size={14} />Accept · Fork with this version</button>
+        {paused && <button onClick={onContinue} disabled={edit.revising} title="Generates the adjacent Execution and key parameter frames with AI">▶ Continue generating (Execution · Key parameters)</button>}
       </div>
       {/* Revising the recommendation before it is applied. */}
       <div className="fork-slot-revise">
-        <span className="section-kicker">PREVIEW에서 고치기 · 크롭해서 옮기기·키우기·돌리기, annotation, preview 위 손잡이로 보여주세요</span>
+        <span className="section-kicker">Fix in preview · show it by cropping to move, scale, rotate, with annotation, or with the handles on the preview</span>
         <EditTools edit={edit} onEdit={onEdit} editable={editable} busy={edit.revising} selected={selected} onSelect={setSelected} />
         {Object.keys(edit.adjusted).length > 0 && <ul className="fork-slot-manipulations">
           {Object.entries(edit.adjusted).map(([key, value]) => <li key={key}><b>{handleName(key)}</b><span>→ {formatScalar(value)}</span>
-            <button aria-label="Back" title="원래대로" disabled={edit.revising} onClick={() => { const adjusted = { ...edit.adjusted }; delete adjusted[key]; onEdit({ adjusted }); }}>×</button></li>)}
+            <button aria-label="Back" title="Reset" disabled={edit.revising} onClick={() => { const adjusted = { ...edit.adjusted }; delete adjusted[key]; onEdit({ adjusted }); }}>×</button></li>)}
         </ul>}
-        <textarea value={edit.note} rows={2} maxLength={2000} placeholder="어떻게 고칠지 (선택) · 예: 겹친 것만 더 크게, 획 방향으로 돌려서" disabled={edit.revising} onChange={e => onEdit({ note: e.target.value })}
+        <textarea value={edit.note} rows={2} maxLength={2000} placeholder="How to fix it (optional) · e.g. only the overlapping ones bigger, rotated along the stroke" disabled={edit.revising} onChange={e => onEdit({ note: e.target.value })}
           onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && changed) onRevise(picture); }} />
         <div className="fork-slot-actions">
-          {edit.revising ? <><span className="fork-slot-message waiting"><span className="loading-spinner" />AI가 recommendation과 preview를 고치고 있습니다…</span><button onClick={onCancelRevise}>취소</button></>
+          {edit.revising ? <><span className="fork-slot-message waiting"><span className="loading-spinner" />The AI is revising the recommendation and preview…</span><button onClick={onCancelRevise}>Cancel</button></>
             : <button className="primary" disabled={!changed || !preview} onClick={() => onRevise(picture)}><Icon name="spark" size={14} />Revise recommendation</button>}
         </div>
         {edit.reply && <span className="fork-slot-message">{edit.reply}</span>}
