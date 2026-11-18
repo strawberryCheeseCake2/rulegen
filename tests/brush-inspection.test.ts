@@ -42,7 +42,7 @@ test("stamped copies stay inspectable as the brush; the live source is preferred
   const scene = sampleScene(), [brush] = makeBrushes(scene);
   const marked = markBrushes(scene, [brush]);
   const source = brushSource(brush, marked);
-  const stamped = transplantNodes(source, brush.nodeId, { algorithms: [], nodes: [] }, { x: .5, y: .5 });
+  const stamped = transplantNodes(source, brush.nodeId, { nodes: [] }, { x: .5, y: .5 });
   const twice = transplantNodes(source, brush.nodeId, stamped.scene, { x: .2, y: .2 });
   assert.equal(twice.scene.nodes.filter(node => node.brushId === brush.id).length, 2);
   assert.equal(brushNodeIds(twice.scene, brush, "sketch-b").length, 4, "both stamps with their members");
@@ -55,7 +55,7 @@ test("stamped copies stay inspectable as the brush; the live source is preferred
 test("the source frame holds a brush's master, every stamp is an instance; detaching makes it the master of a new brush", () => {
   const scene = sampleScene(), [brush] = makeBrushes(scene), marked = markBrushes(scene, [brush]);
   assert.deepEqual(brushRole(marked, "sketch-a", "orb", [brush]), { brush, rootId: "tree", master: true }, "a member of the master");
-  const stamped = transplantNodes(brushSource(brush, marked), brush.nodeId, { algorithms: [], nodes: [] }, { x: .3, y: .3 });
+  const stamped = transplantNodes(brushSource(brush, marked), brush.nodeId, { nodes: [] }, { x: .3, y: .3 });
   const member = stamped.ids.get("orb")!;
   assert.deepEqual(brushRole(stamped.scene, "sketch-b", member, [brush]), { brush, rootId: stamped.rootId, master: false });
   assert.equal(brushRole(scene, "sketch-b", "orb", [brush]), null, "the same ids in another frame, without the brush mark, are not the brush");
@@ -174,7 +174,7 @@ test("targeted inspection asks AI with the brush's params and steps, and drops l
       { kind: "add-constraint", nodeId: "orb", targetId: "", targetIds: [], title: "새로 추가", detail: "속도에 따라 꼬리를 그리는 새 constraint", changes: [] },
       { kind: "add-constraint", nodeId: "elsewhere", targetId: "", targetIds: [], title: "브러시 밖", detail: "", changes: [] }] };
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 1, marks: [[{ x: .4, y: .2 }, { x: .5, y: .3 }]],
-    params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+    params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
     steps: [{ id: 1, nodeId: "orb", from: "idle", to: "moving", transitionId: "press", values: { "orb/radius": 80 }, runtime: { states: { orb: { id: "moving", elapsed: 0 } }, stores: { tree: { ball: { x: 10 } } } } }] };
   await withMockedAI(() => output, async calls => {
     const raw = await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기가 궁금해", inspection }), new AbortController().signal) as Record<string, unknown>;

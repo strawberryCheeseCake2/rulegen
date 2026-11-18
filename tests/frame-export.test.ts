@@ -8,7 +8,7 @@ import { updateNode } from "../app/lib/scene/graph";
 import { frameExport, FRAME_EXPORT_FORMAT } from "../app/lib/frame-export";
 import { FrameJsonDialog } from "../app/components/frame-json-dialog";
 
-test("a frame exports as one JSON: nodes with constraints and params, each state's constraints in order, transitions, the algorithms used and the code", () => {
+test("a frame exports as one JSON: nodes with constraints and params, each state's constraints in order, transitions and the code", () => {
   let scene = sampleScene();
   scene = updateNode(scene, "tree", node => ({ ...node, constraints: node.constraints.map(item => ({ ...item, params: item.params.map(param => param.id === "ink" ? { ...param, handle: { code: "rulegenHandle(function (h) { return {}; });", prepared: "x", paths: [[]], hint: "먹색" } } : param) })) }));
   const generated = connectScene({ title: "Tree", explanation: "나무", code: sceneProgram }, scene);
@@ -23,9 +23,8 @@ test("a frame exports as one JSON: nodes with constraints and params, each state
   const radius = orb.constraints[0].params.find(param => param.id === "radius")!;
   assert.deepEqual(radius.scalars[0], { key: "orb/radius", path: "", type: "number", value: 24, min: 10, max: 140, step: 1, unit: "px" }, "with its range");
   const structure = tree.constraints[0].params[0];
-  assert.equal(structure.value.type, "algorithm", "algorithm blocks are kept as blocks");
-  assert.ok(structure.scalars.some(item => item.path === "length/base"), "and every scalar inside them");
-  assert.deepEqual(data.algorithms.map(item => item.id).sort(), ["power-decay", "recursive-branch"], "only the algorithms used");
+  assert.deepEqual(structure.scalars, [{ key: "tree/structure", path: "", type: "number", value: 5, min: 1, max: 9, step: 1, unit: "" }], "a scalar param: one scalar");
+  assert.equal("algorithms" in data, false);
   assert.deepEqual(tree.constraints[1].params[0].handle, { hint: "먹색", paths: [[]] }); assert.doesNotMatch(JSON.stringify(data), /rulegenHandle/, "no widget code");
   assert.deepEqual(tree.brush, { name: "Tree", role: "master" }); assert.equal("brush" in orb, false);
   assert.match(data.code!.source, /@rulegen-scene:start/); assert.match(data.code!.source, /rulegenModule\("tree"/);

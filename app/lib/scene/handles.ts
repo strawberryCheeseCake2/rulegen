@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { idSchema, MAX_HANDLE_CODE, MAX_VALUE_DEPTH, type Algorithm, type Param, type ParamHandle, type ScalarValue, type Scene, type SceneNode, type Constraint } from "./schema";
+import { idSchema, MAX_HANDLE_CODE, MAX_VALUE_DEPTH, type Param, type ParamHandle, type ScalarValue, type Scene, type SceneNode, type Constraint } from "./schema";
 import { findNode, updateNode } from "./graph";
 import { findParam, findConstraint, mapParams, nodeParams, updateParam } from "./constraints";
-import { isAlgorithm, valueAt, valueLeaves } from "./values";
+import { valueAt, valueLeaves } from "./values";
 
 // Direct manipulation handles: each param can carry one widget made for it
 // (p5 code, `rulegenHandle(function (h) { … })`). Widgets run in a proxy frame
@@ -14,7 +14,7 @@ const samePath = (a: string[], b: string[]) => pathKey(a) === pathKey(b);
 export const handleLeaves = (param: Param) => valueLeaves(param.value);
 /** Whether every scalar the handle drives is still there (same path, a scalar). */
 export function handleFits(param: Param, handle: ParamHandle | undefined = param.handle) {
-  return Boolean(handle && handle.paths.every(path => { const value = valueAt(param.value, path); return value && !isAlgorithm(value); }));
+  return Boolean(handle && handle.paths.every(path => valueAt(param.value, path)));
 }
 
 export function setHandle(scene: Scene, nodeId: string, paramId: string, handle: ParamHandle | null): Scene {
@@ -128,16 +128,12 @@ export function applyHandles(scene: Scene, nodeId: string, suggestions: HandleSu
   if (!node) return scene;
   return suggestions.filter(item => findParam(node, item.paramId)).reduce((next, item) => setHandle(next, nodeId, item.paramId, item.handle), scene);
 }
-/** What the model is told about each param it designs for: meaning, scalars (with ranges) and the algorithms behind it. */
-export function handleTargets(node: SceneNode, algorithms: Algorithm[], target: HandleTarget) {
+/** What the model is told about each param it designs for: meaning and its scalar (with its range). */
+export function handleTargets(node: SceneNode, target: HandleTarget) {
   return handleTargetParams(node, target).map(param => {
     const owner = node.constraints.find(item => item.params.some(entry => entry.id === param.id));
-    const used = new Set<string>();
-    const walk = (value: Param["value"]) => { if (isAlgorithm(value)) { used.add(value.algorithmId); value.args.forEach(arg => walk(arg.value)); } };
-    walk(param.value);
     return { paramId: param.id, label: param.label, effect: param.effect, description: param.description, constraint: owner ? { label: owner.property, description: owner.description } : null,
       scalars: Object.entries(handleSpecs(param)).map(([key, spec]) => ({ path: key ? key.split("/") : [], ...spec })),
-      algorithms: algorithms.filter(algorithm => used.has(algorithm.id)).map(algorithm => ({ id: algorithm.id, name: algorithm.name, description: algorithm.description, params: algorithm.params.map(param => ({ id: param.id, label: param.label, description: param.description })) })),
       current: param.handle ? { hint: param.handle.hint, code: param.handle.code } : null };
   });
 }

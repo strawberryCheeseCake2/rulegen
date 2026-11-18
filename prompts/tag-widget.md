@@ -12,7 +12,7 @@ The user pressed **Create widget** on that tag. Your job:
 2. Decide which variations of them the user would want to try by hand to find what they really want.
 3. Build that as a **direct manipulation interface drawn on the picture itself**.
 
-The image is the moment's picture with the drawing on it. `object.box` is where the object is now (canvas pixels, 900×600). `others` are the other objects drawn. `concern`, `inspectionSummary`, `reading` and the brush (`brushNodes`, `algorithms`, `code`, `step`) say what the user is after.
+The image is the moment's picture with the drawing on it. `object.box` is where the object is now (canvas pixels, 900×600). `others` are the other objects drawn. `concern`, `inspectionSummary`, `reading` and the brush (`brushNodes`, `code`, `step`) say what the user is after.
 
 ## Reading the rules: intent first
 

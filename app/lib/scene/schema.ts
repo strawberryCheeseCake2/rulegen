@@ -1,25 +1,22 @@
 import { z } from "zod";
 
 // Collection / Object scene model, as declarative FSMs.
-// A scene is a flat list of nodes linked by parentId (Figma-like layers) plus a
-// reusable algorithm library. Each collection and object has its own FSM: states
+// A scene is a flat list of nodes linked by parentId (Figma-like layers). Each collection and object has its own FSM: states
 // that list, in evaluation order, the constraints that determine its properties
 // (each constraint controls one property), and event transitions between them.
-// A constraint is tuned by params: a scalar (slider, color, …) or an algorithm
-// call whose arguments can themselves be scalars or other algorithm calls.
+// A constraint is tuned by params, each one slider (number, color, option or toggle).
 
 export const MAX_SCENE_NODES = 48;
 /** Layer levels, root = 1 (e.g. scene → tree → crown → branch cluster → leaves). */
 export const MAX_NESTING_DEPTH = 5;
-export const MAX_ALGORITHMS = 96;
 /** Params of one constraint. */
 export const MAX_PARAMS = 8;
 /** Constraints of one node. */
 export const MAX_CONSTRAINTS = 16;
 /** Params across a node's constraints (their ids are unique per node, so live keys are `nodeId/paramId/…`). */
 export const MAX_NODE_PARAMS = 32;
-export const MAX_ALGORITHM_PARAMS = 8;
-export const MAX_VALUE_DEPTH = 4;
+/** Scalar paths inside a param: a param is one scalar, so its path is always empty. */
+export const MAX_VALUE_DEPTH = 0;
 export const MAX_NODE_STATES = 32;
 export const MAX_NODE_TRANSITIONS = 128;
 
@@ -36,20 +33,9 @@ export type NumberValue = z.infer<typeof numberValueSchema>;
 export type ScalarValue = z.infer<typeof scalarValueSchema>;
 export type ScalarType = ScalarValue["type"];
 
-export type AlgorithmArg = { id: string; value: Value };
-export type AlgorithmCall = { type: "algorithm"; algorithmId: string; args: AlgorithmArg[] };
-export type Value = ScalarValue | AlgorithmCall;
-export const valueSchema: z.ZodType<Value> = z.lazy(() => z.union([numberValueSchema, colorValueSchema, selectValueSchema, toggleValueSchema, algorithmCallSchema]));
-export const algorithmCallSchema: z.ZodType<AlgorithmCall> = z.object({
-  type: z.literal("algorithm"), algorithmId: idSchema,
-  args: z.array(z.object({ id: idSchema, value: valueSchema })).max(MAX_ALGORITHM_PARAMS),
-});
-
-/** A reusable implementation. Its parameter values are defaults for new calls. */
-export const algorithmParamSchema = z.object({ id: idSchema, label: z.string().min(1).max(80), description: z.string().max(600), value: valueSchema });
-export const algorithmSchema = z.object({ id: idSchema, name: z.string().min(1).max(100), description: z.string().max(1500), params: z.array(algorithmParamSchema).max(MAX_ALGORITHM_PARAMS) });
-export type AlgorithmParam = z.infer<typeof algorithmParamSchema>;
-export type Algorithm = z.infer<typeof algorithmSchema>;
+/** A param's value: one slider. */
+export type Value = ScalarValue;
+export const valueSchema = scalarValueSchema;
 
 export const effectSchema = z.enum(["spatial", "stylistic", "temporal"]);
 export type Effect = z.infer<typeof effectSchema>;
@@ -64,15 +50,15 @@ export const paramHandleSchema = z.object({
   code: z.string().min(1).max(MAX_HANDLE_CODE),
   /** The same code with the runtime guards in place, as it runs. */
   prepared: z.string().min(1).max(MAX_HANDLE_CODE * 4),
-  /** The scalars it drives: argument ids leading to each (empty: the param's own scalar). */
+  /** The scalars it drives: always the param's own value (`[[]]`). */
   paths: z.array(z.array(idSchema).max(MAX_VALUE_DEPTH)).min(1).max(8),
   /** What the gesture does, shown above the widget ("Drag to spread the branches"). */
   hint: z.string().max(120).default(""),
 });
 export type ParamHandle = z.infer<typeof paramHandleSchema>;
 /**
- * A parameter a constraint is tuned by: a slider (number, color, option, toggle) or an algorithm block whose arguments
- * are sliders or further blocks. Its id is unique across the node, so its live key is `nodeId/paramId/…`.
+ * A parameter a constraint is tuned by: one slider (number, color, option, toggle). Its id is unique across the node,
+ * so its live key is `nodeId/paramId`.
  */
 export const paramSchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: valueSchema,
   /** Its direct manipulation interface (absent: none; a handle that does not parse, e.g. an older kind, is dropped). */
@@ -108,19 +94,18 @@ export const DRAG_MODES = ["direct", "ratio", "range"] as const;
 export type DragMode = (typeof DRAG_MODES)[number];
 export const MAX_CONSTRAINT_DRAGS = 2;
 /**
- * A value of the constraint that dragging on its object adjusts: one of its number params (`paramId`, and `path` the
- * argument ids into it, "" its own value), the mouse attribute that moves it (`source`), how far, whether it runs the
+ * A value of the constraint that dragging on its object adjusts: one of its number params (`paramId`), the mouse attribute that moves it (`source`), how far, whether it runs the
  * other way (`invert`: left, down or slow makes it larger), and what it does in a few words. The user can turn it off
  * (`off`): the value is then adjusted by its slider only.
  */
-export const valueDragSchema = z.object({ paramId: z.string().max(80), path: z.string().max(200), source: z.enum(DRAG_SOURCES), mode: z.enum(DRAG_MODES), invert: z.boolean(), how: z.string().max(160),
+export const valueDragSchema = z.object({ paramId: z.string().max(80), source: z.enum(DRAG_SOURCES), mode: z.enum(DRAG_MODES), invert: z.boolean(), how: z.string().max(160),
   off: z.boolean().optional() });
 export type ValueDrag = z.infer<typeof valueDragSchema>;
 /**
  * A constraint (as in a declarative FSM): the relationship that determines ONE property of its node ("position",
  * "size", "rotation", "color" …). `property` is exactly the name of the property it controls (the code computes it
  * with the constraint's compute function and stores it in the owner's data under that name); `description` says how
- * the property depends on other nodes, the input or time. Its `params` (sliders and algorithm blocks) tune the
+ * the property depends on other nodes, the input or time. Its `params` (sliders) tune the
  * computation. The states of the node's FSM list which constraints apply, in evaluation order (dependencies first).
  */
 export const constraintSchema = z.object({ id: idSchema, property: z.string().min(1).max(80), description: z.string().max(1000), params: z.array(paramSchema).max(MAX_PARAMS),
@@ -171,10 +156,10 @@ export const sceneNodeSchema = z.object({
 });
 export type SceneNode = z.infer<typeof sceneNodeSchema>;
 
-export const sceneShapeSchema = z.object({ nodes: z.array(sceneNodeSchema).max(MAX_SCENE_NODES).default([]), algorithms: z.array(algorithmSchema).max(MAX_ALGORITHMS).default([]) });
+export const sceneShapeSchema = z.object({ nodes: z.array(sceneNodeSchema).max(MAX_SCENE_NODES).default([]) });
 export type Scene = z.infer<typeof sceneShapeSchema>;
-export const emptyScene = (): Scene => ({ nodes: [], algorithms: [] });
+export const emptyScene = (): Scene => ({ nodes: [] });
 
-/** Live code bindings: one per scalar leaf of every node param. */
+/** Live code bindings: one per param of every node (`path` = [paramId]). */
 export const sceneBindingSchema = z.object({ key: z.string().max(1200), nodeId: idSchema, path: z.array(idSchema).min(1).max(MAX_VALUE_DEPTH + 1), type: z.enum(["number", "color", "select", "toggle"]) });
 export type SceneBinding = z.infer<typeof sceneBindingSchema>;

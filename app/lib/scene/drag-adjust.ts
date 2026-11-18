@@ -1,7 +1,6 @@
 import { ART_HEIGHT, ART_WIDTH } from "../schema";
 import type { DragSource, NumberValue, Scene, SceneNode, Constraint } from "./schema";
 import { dragLinks, type DragLink } from "./constraints";
-import { valueAt } from "./values";
 
 // Adjusting values by dragging the drawn object (the Adjust tool): each constraint says which of its numbers the
 // mouse's x, y or speed moves while the user drags on its object, a metaphor of what the value does to the picture (see
@@ -19,7 +18,7 @@ export type DragTarget = DragLink & { nodeId: string; value: NumberValue };
 export function dragTargets(node: SceneNode, stack: Constraint[] = node.constraints): DragTarget[] {
   return dragLinks(node.constraints, true).flatMap(link => {
     const param = stack.find(item => item.id === link.constraintId)?.params.find(item => item.id === link.paramId);
-    const value = param && valueAt(param.value, link.path ? link.path.split("/") : []);
+    const value = param?.value;
     return value?.type === "number" ? [{ ...link, nodeId: node.id, value }] : [];
   });
 }

@@ -5,12 +5,11 @@ import type { GeneratedCode } from "./schema";
 import { nodeMachine, stateConstraints } from "./scene/machines";
 import { liveSceneSource } from "./scene/live";
 import type { Param, Scene, SceneNode, Value } from "./scene/schema";
-import { bindingKey, isAlgorithm, valueLeaves } from "./scene/values";
+import { bindingKey, valueLeaves } from "./scene/values";
 
 // One frame as a single JSON document, to copy out of the app: every node with its
-// constraints (the property each controls, its params with ranges and algorithm
-// structure), its FSM with each state's constraints in evaluation order, the
-// algorithms they use, the frame's full code as the code panel shows it, and each
+// constraints (the property each controls, its params with ranges), its FSM with
+// each state's constraints in evaluation order, the frame's full code as the code panel shows it, and each
 // brush in the frame with its targeted inspection tools (concern, annotation,
 // overlays, suggestions) in this frame's ids.
 
@@ -21,19 +20,13 @@ const CANVAS = { width: 900, height: 600 };
 function paramValues(node: SceneNode) {
   return Object.fromEntries(node.constraints.flatMap(constraint => constraint.params).flatMap(param => valueLeaves(param.value, [node.id, param.id])).map(leaf => [bindingKey(leaf.path), leaf.value.value]));
 }
-/** A param for reading: its value (algorithms kept as blocks) and each scalar it holds with its range. Widget code is left out. */
+/** A param for reading: its value (a slider, with its range) and its live key. Widget code is left out. */
 function exportParam(node: SceneNode, param: Param) {
   return {
     id: param.id, label: param.label, effect: param.effect, description: param.description, value: param.value,
     scalars: valueLeaves(param.value, [node.id, param.id]).map(leaf => ({ key: bindingKey(leaf.path), path: leaf.path.slice(2).join("/"), ...leaf.value })),
     ...(param.handle ? { handle: { hint: param.handle.hint, paths: param.handle.paths } } : {}),
   };
-}
-function usedAlgorithms(scene: Scene) {
-  const used = new Set<string>();
-  const walk = (value: Value) => { if (isAlgorithm(value)) { used.add(value.algorithmId); value.args.forEach(arg => walk(arg.value)); } };
-  for (const node of scene.nodes) for (const constraint of node.constraints) for (const param of constraint.params) walk(param.value);
-  return scene.algorithms.filter(algorithm => used.has(algorithm.id));
 }
 
 export type FrameExportInput = {
@@ -80,7 +73,6 @@ export function frameExport({ id, name, scene, generated, brushOf, brushes = [] 
         },
       };
     }),
-    algorithms: usedAlgorithms(scene),
     brushes: brushes.map(brush => ({ id: brush.id, name: brush.name, roots: brush.roots, targetedInspections: brush.targeted.map(tool => exportTargeted(scene, brush.roots, tool, generated?.code)) })),
     code: code ? { title: generated?.title ?? "", explanation: generated?.explanation ?? "", source: code } : null,
   };

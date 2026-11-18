@@ -2,7 +2,7 @@ import { z } from "zod";
 import { MAX_CONSTRAINTS } from "../lib/scene/schema";
 import { clarificationSchema, codeSchema, compositionPromptSchema, generatedSchema, type requestSchema } from "../lib/schema";
 import { aiMachineRefineSchema, aiNodeMachineSchema, aiRevisionSchema, aiSceneSchema, aiSplitSchema, aiTransformSchema } from "../lib/scene/ai-schema";
-import { withMachine, convertMachine, convertScene, convertConstraint, convertConstraints, mergeAIAlgorithms } from "../lib/scene/convert";
+import { withMachine, convertMachine, convertScene, convertConstraint, convertConstraints } from "../lib/scene/convert";
 import { descendantIds, findNode, updateNode } from "../lib/scene/graph";
 import { conformMachine, programModules, validateMachine } from "../lib/scene/machines";
 import { settleProposal, validateSceneProposal } from "../lib/scene/revisions";
@@ -71,7 +71,7 @@ function settledFix(input: AIInput, output: AlignFix) {
 function alignContext(input: AIInput) {
   const inspection = input.inspection!, align = inspection.align!;
   return { concern: align.concern, inspectionSummary: align.summary, execution: align.execution, brush: inspection.brushName,
-    brushNodes: input.scene!.nodes.filter(node => inspection.nodeIds.includes(node.id)), algorithms: input.scene!.algorithms, params: inspection.params,
+    brushNodes: input.scene!.nodes.filter(node => inspection.nodeIds.includes(node.id)), params: inspection.params,
     step: inspection.steps[0] ?? null, canvas, code: brushModules(input) };
 }
 const needsTarget = (input: AIInput) => !targetNode(input) ? "Could not find the target Collection or Object." : undefined;
@@ -105,36 +105,36 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     context: input => ({ scene: input.scene, targetNodeId: input.targetNodeId, targetConstraintId: input.targetConstraintId, targetParamId: input.targetParamId,
       mode: input.targetParamId ? "param" : input.targetConstraintId ? "replace" : "add", alternative: input.alternative, instruction: input.instruction, annotationMarks: input.transformMarks, canvas }),
     finalize: (input, output: z.infer<typeof aiTransformSchema>) => {
-      const scene = input.scene!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
-      const generated = convertConstraint(output.constraint, library, ids);
+      const scene = input.scene!;
+      const generated = convertConstraint(output.constraint);
       const target = { constraintId: input.targetConstraintId || undefined, paramId: input.targetParamId || undefined };
-      return validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, node => conformMachine(keepHandles(node, placeConstraint(node, generated, target)))));
+      return validateScene(updateNode(scene, input.targetNodeId, node => conformMachine(keepHandles(node, placeConstraint(node, generated, target)))));
     },
   },
-  /** Decompose again: one constraint (of a minimal example) into the meaningful algorithms its code runs, each its own constraint. */
+  /** Decompose again: one constraint (of a minimal example) into the meaningful computations its code runs, each its own constraint. */
   split: {
     schema: aiSplitSchema, maxTokens: () => 16000, effort: "medium",
     check: input => needsTarget(input) || (!targetNode(input)!.constraints.some(item => item.id === input.targetConstraintId) ? "Could not find the constraint to divide." : undefined),
     context: input => { const node = targetNode(input)!, key = moduleKeyOf(input.scene!, node.id), code = key && input.previous ? programModules(input.previous).get(key) ?? "" : "";
       return { scene: input.scene, targetNodeId: input.targetNodeId, targetConstraintId: input.targetConstraintId, code: code.slice(0, 40000), instruction: input.instruction }; },
     finalize: (input, output: z.infer<typeof aiSplitSchema>) => {
-      const scene = input.scene!, node = targetNode(input)!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
+      const node = targetNode(input)!;
       // Each part becomes a constraint of its own: ids unique in the node (the parent's own id is taken too).
       const taken = new Set(node.constraints.map(item => item.id));
-      const parts = convertConstraints(output.parts, library, ids).map(part => { let id = part.id, n = 2; while (taken.has(id)) id = `${part.id}-${n++}`; taken.add(id); return { ...part, id }; })
+      const parts = convertConstraints(output.parts).map(part => { let id = part.id, n = 2; while (taken.has(id)) id = `${part.id}-${n++}`; taken.add(id); return { ...part, id }; })
         .filter(part => part.params.length);
       const divisible = output.divisible && parts.length >= 2;
-      return { divisible, reason: (divisible ? output.reason : output.reason || "There are no meaningful inner algorithms to divide it into.").slice(0, 400), algorithms: divisible ? library : [], parts: divisible ? parts : [] };
+      return { divisible, reason: (divisible ? output.reason : output.reason || "There are no meaningful inner computations to divide it into.").slice(0, 400), parts: divisible ? parts : [] };
     },
   },
   "state-machine": {
     schema: aiNodeMachineSchema, maxTokens: () => 32000, effort: "medium", strokes: true, check: needsTarget,
     context: input => ({ scene: input.scene, targetNodeId: input.targetNodeId, instruction: input.instruction, previous: input.previous }),
     finalize: (input, output: z.infer<typeof aiNodeMachineSchema>) => {
-      const scene = input.scene!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
-      const node = withMachine(findNode(scene, input.targetNodeId)!, output, library, ids);
+      const scene = input.scene!;
+      const node = withMachine(findNode(scene, input.targetNodeId)!, output);
       validateMachine(node, node.machine!);
-      return validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, () => node));
+      return validateScene(updateNode(scene, input.targetNodeId, () => node));
     },
   },
   "machine-refine": {
@@ -152,17 +152,17 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
       return { scene: input.scene, targetNodeId: input.targetNodeId, attached, instruction: input.instruction, annotationMarks: input.machineMarks, composePrompt: input.composePrompt, previous: input.previous };
     },
     finalize: (input, output: z.infer<typeof aiMachineRefineSchema>) => {
-      const scene = input.scene!, { library, ids } = mergeAIAlgorithms(scene.algorithms, output.algorithms);
-      const node = withMachine(findNode(scene, input.targetNodeId)!, output, library, ids);
+      const scene = input.scene!;
+      const node = withMachine(findNode(scene, input.targetNodeId)!, output);
       validateMachine(node, node.machine!);
-      return { scene: validateScene(updateNode({ ...scene, algorithms: library }, input.targetNodeId, () => node)), composePrompt: output.composePrompt.trim() || input.composePrompt };
+      return { scene: validateScene(updateNode(scene, input.targetNodeId, () => node)), composePrompt: output.composePrompt.trim() || input.composePrompt };
     },
   },
   inspect: {
     schema: inspectResultSchema, maxTokens: () => 16000, effort: "medium",
     check: input => !input.scene || !input.inspection ? "A brush to inspect and its records are needed." : !input.instruction.trim() && !input.inspection.marks.length ? "Write what you want to know, or mark it with an Inspection annotation." : undefined,
     context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
-      algorithms: input.scene!.algorithms, params: input.inspection!.params, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
+      params: input.inspection!.params, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, annotationMarks: input.inspection!.marks, annotationMarkStyles: input.inspection!.markStyles, canvas,
       // The modules that draw the brush, to find constants the concern depends on (hidden parameters).
       code: brushModules(input),
       // A fix was applied (values, a constraint changed or added, a state or transition): the overlays are rebuilt for it.
@@ -311,7 +311,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     schema: exploreResultSchema, maxTokens: () => 16000, effort: "medium",
     check: input => !input.scene || !input.inspection || !input.explore ? "A brush to explore and its records are needed." : !input.inspection.steps.length ? "Move the brush first to record steps." : undefined,
     context: input => ({ concern: input.instruction, brush: input.inspection!.brushName, brushNodes: input.scene!.nodes.filter(node => input.inspection!.nodeIds.includes(node.id)),
-      algorithms: input.scene!.algorithms, params: input.inspection!.params, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, input: input.explore!.input, canvas,
+      params: input.inspection!.params, steps: input.inspection!.steps, currentStep: input.inspection!.cursor, input: input.explore!.input, canvas,
       code: brushModules(input), inspection: { summary: input.explore!.summary, overlays: input.explore!.overlays } }),
     /**
      * Keep only what this frame can run: inner terms and decisions that apply to the module (its steps are the brush's
@@ -350,8 +350,8 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
   },
   handles: {
     schema: aiHandlesSchema, maxTokens: () => 32000, effort: "medium",
-    check: input => needsTarget(input) || (!input.targetParamId && !input.targetConstraintId ? "Direct manipulation handles are made for one param or one constraint." : undefined) || (!handleTargets(targetNode(input)!, input.scene!.algorithms, handleTarget(input)).length ? "There is no param that a direct manipulation handle can control." : undefined),
-    context: input => { const node = targetNode(input)!, r = node.region, params = handleTargets(node, input.scene!.algorithms, handleTarget(input));
+    check: input => needsTarget(input) || (!input.targetParamId && !input.targetConstraintId ? "Direct manipulation handles are made for one param or one constraint." : undefined) || (!handleTargets(targetNode(input)!, handleTarget(input)).length ? "There is no param that a direct manipulation handle can control." : undefined),
+    context: input => { const node = targetNode(input)!, r = node.region, params = handleTargets(node, handleTarget(input));
       // The widget area each will get in the proxy frame, given how many the node will show.
       // Each constraint has its own proxy frame: the cell this request's first param gets there once its widgets are in.
       const designed = new Set(params.map(item => item.paramId)), owner = node.constraints.find(item => item.params.some(param => designed.has(param.id)));
@@ -391,7 +391,7 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     check: input => needsScene(input) || (!input.image || !input.previous || !input.annotations.length || !input.instruction.trim() ? "Provide a sketch over the result and a text clarification." : undefined),
     context: input => ({ scene: input.scene, previous: input.previous, instruction: input.instruction, annotations: input.annotations }),
     finalize: (input, output: z.infer<typeof aiRevisionSchema>) => {
-      const current = input.scene!, proposed = settleProposal(current, convertScene(output, current.algorithms));
+      const current = input.scene!, proposed = settleProposal(current, convertScene(output));
       validateSceneProposal(current, proposed);
       return { summary: output.summary, scene: proposed };
     },

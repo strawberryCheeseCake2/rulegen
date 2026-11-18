@@ -142,5 +142,5 @@ export function clickTarget(scene: Scene, hitId: string, selected: string[]) {
 /** The given nodes with all descendants, re-rooted, for requests about part of a scene. */
 export function subScene(scene: Scene, ids: string[]): Scene {
   const keep = new Set(ids.flatMap(id => [id, ...descendantIds(scene, id)]));
-  return { algorithms: scene.algorithms, nodes: scene.nodes.filter(node => keep.has(node.id)).map(node => node.parentId && !keep.has(node.parentId) ? { ...node, parentId: null } : node) };
+  return { nodes: scene.nodes.filter(node => keep.has(node.id)).map(node => node.parentId && !keep.has(node.parentId) ? { ...node, parentId: null } : node) };
 }

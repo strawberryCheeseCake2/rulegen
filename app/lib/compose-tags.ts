@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { algorithmRefs } from "./scene/algorithms";
 import { findNode } from "./scene/graph";
 import type { Scene } from "./scene/schema";
 
@@ -27,8 +26,8 @@ const unit = z.number().min(0).max(1);
 const tagPenSchema = z.object({ name: z.string().max(100), color: z.string().max(20),
   /** The frame and node the pen was made from. */
   frameId: z.string().max(80).default(""), nodeId: z.string().max(80).default(""),
-  /** A constraint pen's constraint (label); an algorithm pen's algorithm (id). */
-  constraint: z.string().max(100).default(""), algorithmId: z.string().max(80).default("") });
+  /** The constraint the pen carries (its label). */
+  constraint: z.string().max(100).default("") });
 export type ComposeTagPen = z.infer<typeof tagPenSchema>;
 export const composeTagSchema = aiComposeTagSchema.omit({ constraints: true }).extend({
   /** Where its marks are (normalized to the canvas). */
@@ -38,9 +37,9 @@ export type ComposeTag = z.infer<typeof composeTagSchema>;
 export type AIComposeTag = z.infer<typeof aiComposeTagSchema>;
 
 type Stroke = { id: string; tool: string; points: { x: number; y: number }[] };
-type Pen = { id: string; name: string; color: string; sourceSketchId?: string; source?: { nodeId: string }; constraint?: { label: string } | null; algorithm?: { call: { algorithmId: string } } | null };
+type Pen = { id: string; name: string; color: string; sourceSketchId?: string; source?: { nodeId: string }; constraint?: { label: string } | null };
 const tagPen = (pen: Pen): ComposeTagPen => ({ name: pen.name, color: pen.color, frameId: pen.sourceSketchId ?? "", nodeId: pen.source?.nodeId ?? "",
-  constraint: pen.constraint?.label ?? "", algorithmId: pen.algorithm?.call.algorithmId ?? "" });
+  constraint: pen.constraint?.label ?? "" });
 const PAD = .012;
 const union = (boxes: ComposeTag["box"][]) => {
   const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
@@ -131,16 +130,15 @@ export function placedPen(pen: ComposeTagPen | null, pens: Pen[]): ComposeTagPen
 type ExampleFrames = Record<string, { scene: Scene; exampleOf: { frameId: string; nodeId: string; constraintId: string } | null } | undefined>;
 /**
  * The minimal example frames (made with Decompose) of the constraint a tag's pen carries: the pen's own frame
- * when it was made from an example, else the examples of the constraint it was taken from (a constraint pen:
- * the one with its label; an algorithm pen: the ones whose params use its algorithm) in the pen's frame.
+ * when it was made from an example, else the examples of the constraint it was taken from (the one with its label)
+ * in the pen's frame.
  */
 export function penExamples(pen: ComposeTagPen | null, frames: ExampleFrames): string[] {
   const own = pen?.frameId ? frames[pen.frameId] : undefined;
   if (!pen || !own) return [];
   if (own.exampleOf) return [pen.frameId];
   const node = findNode(own.scene, pen.nodeId); if (!node) return [];
-  const ids = node.constraints.filter(item => pen.constraint ? item.property === pen.constraint
-    : Boolean(pen.algorithmId) && item.params.some(param => algorithmRefs(param.value).includes(pen.algorithmId))).map(item => item.id);
+  const ids = node.constraints.filter(item => Boolean(pen.constraint) && item.property === pen.constraint).map(item => item.id);
   return Object.entries(frames).filter(([, frame]) => frame?.exampleOf && frame.exampleOf.frameId === pen.frameId && frame.exampleOf.nodeId === node.id && ids.includes(frame.exampleOf.constraintId)).map(([id]) => id);
 }
 

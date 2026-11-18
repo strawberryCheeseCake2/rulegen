@@ -34,7 +34,7 @@ test("a proxy frame is laid out by constraint: each section holds only its own w
 
 test("each constraint has its own proxy frame (the whole frame), numbered and colored the same everywhere; a node's frames can be hidden and come back", () => {
   let scene = sampleScene();
-  scene = setHandle(scene, "tree", "structure", widget([["depth"]]));
+  scene = setHandle(scene, "tree", "structure", widget([[]]));
   scene = setHandle(scene, "tree", "ink", widget());
   const tree = findNode(scene, "tree")!;
   assert.deepEqual(proxyGroups(tree.constraints).map(group => group.constraint.id), ["branching-growth", "ink-wash"]);
@@ -83,7 +83,7 @@ test("Handles for all: one request per base-state constraint still without handl
       assert.equal(intent, "handles"); asked.push(`${body.targetNodeId}/${body.targetConstraintId}`);
       if (body.targetNodeId === "orb") throw new Error("boom");
       const node = findNode(body.scene, body.targetNodeId)!, item = node.constraints.find(entry => entry.id === body.targetConstraintId)!;
-      return { handles: item.params.map(param => ({ paramId: param.id, handle: widget(param.id === "structure" ? [["depth"]] : [[]]) })), skipped: [] };
+      return { handles: item.params.map(param => ({ paramId: param.id, handle: widget([[]]) })), skipped: [] };
     },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     openProxy: (_owner: string, nodeId: string) => opened.push(nodeId),
@@ -92,7 +92,7 @@ test("Handles for all: one request per base-state constraint still without handl
   assert.deepEqual(asked.sort(), ["orb/drift", "orb/pulse", "tree/branching-growth"], "ink-wash already has its handle; the orb (a child) is included");
   assert.ok(findNode(panels.a.scene, "tree")!.constraints[0].params[0].handle, "the result is on the scene");
   assert.deepEqual(opened, ["tree"]);
-  assert.match(toasts.at(-1)!, /Created 1 direct manipulation handle\(s\) for 1 constraint\(s\).*Could not make: (size, x|x, size)/);
+  assert.match(toasts.at(-1)!, /Created 3 direct manipulation handle\(s\) for 1 constraint\(s\).*Could not make: (size, x|x, size)/);
 
   asked.length = 0;
   await sceneAI(deps, "a").suggestAllHandles(["tree"]);
@@ -104,7 +104,7 @@ test("Handles for all: one request per base-state constraint still without handl
   asked.length = 0;
   await sceneAI(deps, "a").suggestAllHandles(undefined, true);
   assert.deepEqual(asked.sort(), ["tree/branching-growth", "tree/ink-wash"], "only those with handles (the orb has none)");
-  assert.match(toasts.at(-1)!, /^Redesigned 2 direct manipulation handle\(s\) for 2 constraint\(s\)/);
+  assert.match(toasts.at(-1)!, /^Redesigned 4 direct manipulation handle\(s\) for 2 constraint\(s\)/);
   assert.equal(panels.a.sceneHistory.length >= 2, true, "each result is its own undo step");
   const none = createSketchPanel({ scene: sampleScene() }); panels.b = none;
   await sceneAI(deps, "b").suggestAllHandles(undefined, true);

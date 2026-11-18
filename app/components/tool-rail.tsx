@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import type { SemanticPen } from "../lib/schema";
 import { BRUSH_TOOLS, brushGroup, brushTool, groupBrushes, parseBrushTool, subBrushes, type Brush, type BrushToolKind } from "../lib/brushes";
-import { AlgorithmPenSettings } from "./algorithm-pen-settings";
+import { PenSettings } from "./pen-settings";
 import { Icon, type IconName } from "./icons";
 
 type Props = {
@@ -64,11 +64,11 @@ export function ToolRail(props: Props) {
         <label><span>Opacity</span><input aria-label="Pencil opacity" type="range" min="5" max="100" value={props.opacity} onChange={e => props.onOpacity(+e.target.value)} /><output>{props.opacity}%</output></label>
       </div>}</div>
       {toolButton("eraser", "eraser", "Eraser")}{toolButton("lasso", "lasso", "Lasso selection")}{toolButton("hand", "hand", "Pan")}
-      {props.pens.length > 0 && <div className="left-tool-anchor algorithm-pen-anchor"><div className="algorithm-pen-toolbar" role="group" aria-label="Drawing pens">{props.pens.map(pen => {
+      {props.pens.length > 0 && <div className="left-tool-anchor semantic-pen-anchor"><div className="semantic-pen-toolbar" role="group" aria-label="Drawing pens">{props.pens.map(pen => {
         const active = props.tool === "semantic" && props.activePen?.id === pen.id;
-        return <button key={pen.id} style={{ color: pen.color }} className={`rail-button algorithm-pen-button ${active ? "active" : ""}`} title={`${pen.name} · ${pen.meaning}`} aria-label={pen.kind === "interaction" ? "Use Interaction pen" : `Use algorithm pen ${pen.name}`} aria-pressed={active} onClick={() => props.onPen(pen)}><Icon name={pen.kind === "interaction" ? "interaction" : "pen"} size={18} /><span className="semantic-pen-dot" style={{ background: pen.color }} /></button>;
+        return <button key={pen.id} style={{ color: pen.color }} className={`rail-button semantic-pen-button ${active ? "active" : ""}`} title={`${pen.name} · ${pen.meaning}`} aria-label={pen.kind === "interaction" ? "Use Interaction pen" : `Use constraint pen ${pen.name}`} aria-pressed={active} onClick={() => props.onPen(pen)}><Icon name={pen.kind === "interaction" ? "interaction" : "pen"} size={18} /><span className="semantic-pen-dot" style={{ background: pen.color }} /></button>;
       })}</div>
-        {props.penSettingsOpen && props.activePen && props.tool === "semantic" && <AlgorithmPenSettings pen={props.activePen} onChange={props.onPenChange} onClose={props.onPenSettingsClose} onRemove={props.activePen.kind === "interaction" ? undefined : () => props.onPenRemove(props.activePen!)} />}
+        {props.penSettingsOpen && props.activePen && props.tool === "semantic" && <PenSettings pen={props.activePen} onChange={props.onPenChange} onClose={props.onPenSettingsClose} onRemove={props.activePen.kind === "interaction" ? undefined : () => props.onPenRemove(props.activePen!)} />}
       </div>}
       {(props.brushes?.length ?? 0) > 0 && (() => {
         // One Brush tool: its panel lists the brushes on top and, below, the tools and options of the one picked.

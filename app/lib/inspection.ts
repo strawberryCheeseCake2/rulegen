@@ -97,14 +97,14 @@ export function filterValues(values: Record<string, unknown>, nodeIds: string[])
   return Object.fromEntries(Object.entries(values).filter(([key, value]) => prefixes.some(prefix => key.startsWith(prefix)) && ["number", "string", "boolean"].includes(typeof value))) as Record<string, Scalar>;
 }
 
-export type ParamRow = { key: string; binding: SceneBinding; node: string; constraint: string; constraintId: string; param: string; path: string };
+export type ParamRow = { key: string; binding: SceneBinding; node: string; constraint: string; constraintId: string; param: string };
 /** Param (constraint) rows of the brush, in node/constraint order. */
 export function paramRows(scene: Scene, nodeIds: string[]): ParamRow[] {
   const ids = new Set(nodeIds);
   return sceneBindings(scene).filter(binding => ids.has(binding.nodeId)).map(binding => {
     const node = findNode(scene, binding.nodeId)!, param = findParam(node, binding.path[0]), owner = paramOwner(node, binding.path[0]);
     return { key: binding.key, binding, node: node.name, constraint: owner?.property || "", constraintId: owner?.id || "",
-      param: param?.label || binding.path[0], path: binding.path.slice(1).join(" › ") };
+      param: param?.label || binding.path[0] };
   });
 }
 export const layoutKeys = (nodeIds: string[]) => nodeIds.flatMap(id => (["x", "y", "w", "h"] as const).map(field => layoutKey(id, field)));

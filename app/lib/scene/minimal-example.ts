@@ -1,5 +1,4 @@
 import { ART_HEIGHT, ART_WIDTH } from "../schema";
-import { algorithmClosure, algorithmRefs } from "./algorithms";
 import { descendantIds, findNode } from "./graph";
 import type { Region, Scene, SceneNode } from "./schema";
 import { findConstraint } from "./constraints";
@@ -13,7 +12,7 @@ import { stateConstraints } from "./machines";
 // Decompose goes one level at a time: a frame splits into its nodes, a node into
 // its own constraints (as one group) and its child nodes (each whole, with their
 // constraints and their own children), a group or a leaf object into its single
-// constraints, and a single constraint into the algorithms inside it (AI).
+// constraints, and a single constraint into the computations inside it (AI).
 
 /** What an example frame shows: one constraint, a node's own constraints together, or a node with everything below it. */
 export type ExampleScope = "constraint" | "constraints" | "node";
@@ -58,8 +57,7 @@ export function minimalExampleScene(scene: Scene, nodeId: string, constraintId: 
     else nodes.push({ id: node.id === "object" ? "example-object" : "object", kind: "object", parentId: node.id, name: "Object", description: "", primitive: "shape",
       region: { x: region.x + region.w * .4, y: region.y + region.h * .4, w: region.w * .2, h: region.h * .2 }, constraints: [], visible: true, machine: null });
   }
-  const refs = constraint.params.flatMap(param => algorithmRefs(param.value));
-  return { algorithms: algorithmClosure(scene.algorithms, refs), nodes };
+  return { nodes };
 }
 
 /**
@@ -85,8 +83,7 @@ export function nodeExampleScene(scene: Scene, nodeId: string, scope: "constrain
     nodes = [{ id, kind: "collection", parentId: null, name: `${node.name} collection`, description: "", primitive: "group", region, constraints: [], visible: true, machine: null }, ...nodes];
     main.parentId = id;
   }
-  const refs = nodes.flatMap(item => item.constraints.flatMap(constraint => constraint.params.flatMap(param => algorithmRefs(param.value))));
-  return { algorithms: algorithmClosure(scene.algorithms, refs), nodes };
+  return { nodes };
 }
 
 /** The scene of an example frame for a target. */
@@ -96,7 +93,7 @@ export const exampleScene = (scene: Scene, target: ExampleTarget) =>
 /**
  * The next level of a frame's decomposition, from what the frame shows (`shown`; null for an ordinary frame).
  * Empty when there is nothing below; one single constraint the frame already shows on its own means its
- * inner algorithms are next (that is the AI's split, not a frame of this kind).
+ * inner computations are next (that is the AI's split, not a frame of this kind).
  */
 export function decomposeTargets(scene: Scene, shown: { nodeId: string; scope?: ExampleScope; constraintId: string } | null, keep: (node: SceneNode) => boolean = () => true): ExampleTarget[] {
   const single = (node: SceneNode) => tunable(node).map(item => ({ nodeId: node.id, scope: "constraint" as const, constraintId: item.id }));

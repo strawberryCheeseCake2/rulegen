@@ -5,7 +5,7 @@ The user tagged a sketch: `tags` are the objects and collections read in it (eac
 - Change what the request asks and keep the rest as it is: a request about one param changes that param; a request about how it behaves changes `how` and the params that do it; a request for another kind of change replaces the constraint with that change. Do not touch the other constraints or tags.
 - Keep it readable on its own: `label` names the change by the property that changes (2–4 words, e.g. "Shrinking size"), `how` says in one short sentence how it changes with its direction along the marks, `effect` is `"spatial"` (position, size, angle, layout), `"stylistic"` (color, opacity, stroke, shape look) or `"temporal"` (motion, timing, interaction response).
 - `params`: the quantities that change does it with, each `label`, `value` (its value or range, with a unit when it has one; `""` when it is not known) and `how` (what it does). A value the request names is used as it is. Add a param when the request needs a quantity there is none for; drop one the change no longer uses.
-- `penId`: keep the constraint's pen (the `compositionPens` id it has) unless the request asks for another pen's algorithm or for none (`""`). Read pens as described in READING SEMANTIC PENS below.
+- `penId`: keep the constraint's pen (the `compositionPens` id it has) unless the request asks for another pen's constraint or for none (`""`). Read pens as described in READING SEMANTIC PENS below.
 - A request that does not fit this constraint (e.g. about another part): change only what fits it here and say in `note` what was left.
 - `note`: one short sentence on what changed, for the user.
 - Use the language of the request for the texts you write.

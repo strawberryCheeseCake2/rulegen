@@ -23,7 +23,7 @@ export async function requestExplore(deps: StudioDeps, owner: string, brush: Bru
   const rows = paramRows(panel.scene, nodeIds), code = panel.generated?.code ?? "";
   const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "explore", scene: panel.scene, targetNodeId: nodeIds[0], instruction: request.concern.slice(0, 2000), image, previous: code,
     inspection: { brushName: brush.name, nodeIds, cursor: at, marks: [], markStyles: [],
-      params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+      params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
       steps: state.steps.map(step => ({ id: step.id, nodeId: step.nodeId, from: step.from, to: step.to, transitionId: step.transitionId, values: stepValues(step)!, runtime: runtimeForAI(step, nodeIds) })) },
     explore: { summary: request.inspection.summary, overlays: request.inspection.overlays.map(overlay => ({ name: overlay.name ?? "", label: overlay.label, link: overlay.link })),
       input: { gestures: history.length, points: inputPath(runtime).length } } }) });

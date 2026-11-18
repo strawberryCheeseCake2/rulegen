@@ -80,7 +80,7 @@ test("a targeted inspection lists a field only when the concern is about it; the
   await withMockedAI(() => output, async calls => {
     const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "Why do the lines bunch up here?", previous: code,
       inspection: { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 0, marks: [],
-        params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+        params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
         steps: [{ id: 1, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: null }] } }), new AbortController().signal));
     assert.deepEqual(result.fields.map(item => item.id), ["flow"], "only a field the edits really declare");
     assert.match(result.summary, /1 field\(s\) could not be hooked into the code/);

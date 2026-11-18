@@ -89,7 +89,7 @@ function request(intent: "align-kit" | "align", align: object, extra: object = {
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
   return requestSchema.parse({ intent, scene, image: "data:image/png;base64,AAAA", previous: code, instruction: "", ...extra,
     inspection: { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 0, marks: [],
-      params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+      params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
       steps: [{ id: 1, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: { states: {}, stores: { tree: { leaves: [{ x: 100, y: 100 }] } } } }], align: { concern: "잎이 겹치면 하나로", summary: "s", execution: moment, ...align } } });
 }
 

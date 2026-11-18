@@ -16,7 +16,7 @@ const moduleOf = (code: string) => ({ key: "tree", text: programModules(code).ge
 
 test("a brush stamps into an empty frame and runs its own module at once, without new code", () => {
   const source = sampleScene(), code = generated().code;
-  const result = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, source, "tree", moduleOf(code), [{ x: .3, y: .5 }, { x: .7, y: .5 }], "Tree");
+  const result = stampModule({ scene: { nodes: [] }, generated: null }, source, "tree", moduleOf(code), [{ x: .3, y: .5 }, { x: .7, y: .5 }], "Tree");
   assert.equal(result.roots.length, 2);
   assert.deepEqual([...programModules(result.generated.code).keys()], ["tree"], "one module, two instances");
   assert.equal(sceneLiveStatus(result.generated, result.scene), "live");
@@ -94,8 +94,8 @@ test("adding a brush to a frame whose result is running injects its module in pl
   const { rememberPrepared, preparedFor } = await import("../app/lib/prepared");
   const { prepareCode } = await import("../app/server/code.server");
   const scene = sampleScene(), [brush] = brushesFor(scene, "sketch-a", [], () => "brush-hot");
-  const other = { algorithms: scene.algorithms, nodes: [{ ...scene.nodes[0], id: "rock", name: "Rock", brushId: undefined, codeModule: undefined }] };
-  const rock = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, other, "rock", { key: "rock", text: moduleOf(generated().code).text.replaceAll("\"tree", "\"rock") }, [{ x: .5, y: .5 }], "Rock");
+  const other = { nodes: [{ ...scene.nodes[0], id: "rock", name: "Rock", brushId: undefined, codeModule: undefined }] };
+  const rock = stampModule({ scene: { nodes: [] }, generated: null }, other, "rock", { key: "rock", text: moduleOf(generated().code).text.replaceAll("\"tree", "\"rock") }, [{ x: .5, y: .5 }], "Rock");
   const panels: Record<string, ReturnType<typeof createSketchPanel>> = {
     "sketch-a": { ...createSketchPanel({ scene: markBrushes(scene, [brush]) }), generated: generated() },
     "sketch-b": { ...createSketchPanel({ scene: rock.scene }), generated: rock.generated, executable: prepareCode(rock.generated.code), preparedCode: rock.generated.code },
@@ -121,7 +121,7 @@ test("deleting a brush stamp keeps the frame's program live (no Update needed), 
   const { sceneEdits } = await import("../app/studio/scene-actions");
   const { relinkStamps } = await import("../app/lib/scene/live");
   const source = sampleScene(), code = generated().code;
-  const two = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, source, "tree", moduleOf(code), [{ x: .3, y: .5 }, { x: .7, y: .5 }], "Tree");
+  const two = stampModule({ scene: { nodes: [] }, generated: null }, source, "tree", moduleOf(code), [{ x: .3, y: .5 }, { x: .7, y: .5 }], "Tree");
   const panels: Record<string, ReturnType<typeof createSketchPanel>> = { f: { ...createSketchPanel({ scene: two.scene }), generated: two.generated } };
   const deps = { panel: (id: string) => panels[id], updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; } } as any;
   const edits = sceneEdits(deps, "f");
@@ -172,17 +172,18 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   ] };
   const made = brushesFor(composed, "sketch-c", [], () => "brush-plant");
   assert.deepEqual(made.map(brush => [brush.nodeId, brush.name]), [["background", "Light background"], ["plant", "Draggable plant"]].slice(composed.nodes[0].machine ? 0 : 1));
-  // Only a still backdrop is left out: one that reacts (a state machine) is a brush like anything interactive.
-  const still = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: null } : node) };
+  // Only a still backdrop (colors only) is left out: one that reacts (a state machine) is a brush like anything interactive.
+  const still = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: null,
+    constraints: [{ id: "ground", property: "color", description: "", params: [{ id: "light", label: "Light", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#fdf8ee" } }] }] } : node) };
   assert.deepEqual(brushesFor(still, "sketch-c", [], () => "b").map(brush => brush.nodeId), ["plant"]);
   const reacting = { ...composed, nodes: composed.nodes.map(node => node.id === "background" ? { ...node, machine: scene.nodes.find(item => item.id === "orb")!.machine } : node) };
   assert.deepEqual(brushesFor(reacting, "sketch-c", [], () => "b").map(brush => brush.nodeId), ["background", "plant"]);
   assert.deepEqual(brushesFor(sampleScene(), "sketch-a", [], () => "b").map(brush => brush.nodeId), ["tree"], "a collection is a brush as before (its members are parts of it)");
-  // A flow field over the whole canvas (lines traced by an algorithm) is the drawing itself, not a background: a brush; plain paper is not.
+  // A flow field over the whole canvas (with a count of lines to trace) is the drawing itself, not a background: a brush; plain paper is not.
   const full = { x: 0, y: 0, w: 1, h: 1 }, orb = scene.nodes.find(node => node.id === "orb")!;
   const flow = { ...scene, nodes: [
     { ...orb, id: "paper", name: "Paper", parentId: null, region: full, machine: null, constraints: [{ id: "ground", property: "color", description: "", params: [{ id: "fill", label: "Fill", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#ffffff" } }] }] },
-    { ...orb, id: "flowing-ink", name: "Flowing ink", parentId: null, region: full, machine: null, constraints: [{ id: "trace", property: "paths", description: "", params: [{ id: "paths", label: "Paths", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "power-decay", args: [] } }] }] },
+    { ...orb, id: "flowing-ink", name: "Flowing ink", parentId: null, region: full, machine: null, constraints: [{ id: "trace", property: "paths", description: "", params: [{ id: "paths", label: "Paths", effect: "spatial" as const, description: "", value: { type: "number" as const, value: 40, min: 1, max: 200, step: 1, unit: "" } }] }] },
   ] };
   assert.deepEqual(brushesFor(flow, "sketch-f", [], () => "b").map(brush => brush.nodeId), ["flowing-ink"]);
   // A root form left without a brush can be made one by hand, from the layer panel.
@@ -191,7 +192,7 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   assert.match(home, /updatePanel\(frameId, panel => \(\{ scene: markBrushes\(panel\.scene, \[brush\]\) \}\)\);/);
   // The object brush stamps into another frame and runs its own module, like a collection's.
   const program = connectScene({ title: "Plant", explanation: "", code: 'rulegenModule("background", function (m) { function size() { return m.v("background/radius") * 2; } function x() { return m.v("background/speed"); } return { draw() { m.fsm("background").evaluate(); }, mousePressed() { m.fsm("background").dispatch("press"); }, mouseReleased() { m.fsm("background").dispatch("settle"); }, constraints: { background: { pulse: size, drift: x } } }; });\nrulegenModule("plant", function (m) { function size() { return m.v("plant/radius") * 2; } function x() { return m.v("plant/speed"); } return { draw() { const b = m.box("plant"), data = m.fsm("plant").evaluate(); p.circle(b.x, b.y, data.size); }, mousePressed() { m.fsm("plant").dispatch("press"); }, mouseReleased() { m.fsm("plant").dispatch("settle"); }, constraints: { plant: { pulse: size, drift: x } } }; });' }, composed).code;
-  const result = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, composed, "plant", { key: "plant", text: programModules(program).get("plant")! }, [{ x: .5, y: .5 }], "Draggable plant");
+  const result = stampModule({ scene: { nodes: [] }, generated: null }, composed, "plant", { key: "plant", text: programModules(program).get("plant")! }, [{ x: .5, y: .5 }], "Draggable plant");
   assert.equal(result.roots.length, 1);
   const sketch = run(result.generated.code); sketch.draw();
   assert.equal(sketch.circles.length, 1, "the stamp draws");

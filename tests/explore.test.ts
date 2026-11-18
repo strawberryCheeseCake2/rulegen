@@ -90,7 +90,7 @@ const pen: Shown = { id: "pen", kind: "ellipse", name: "펜 끝", x: `pathX(p("$
   link: { kind: "param", nodeId: "orb", id: "radius" }, when: "", each: "" };
 /** As an AI may still write it: with a handle (that runs execution, or changes a value). */
 const handled = (key: string) => ({ ...pen, id: `grip-${key}`, handle: { key, gesture: "drag", x: `pathX(p("${EXEC_KEY}"))`, y: `pathY(p("${EXEC_KEY}"))`, pivotX: "", pivotY: "", value: "nearest(hx, hy)", hint: "끌어 그려 나가기" } });
-const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "pulse", constraint: "size", paramId: "radius", param: "Radius", path: "", type: "number" }];
+const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "pulse", constraint: "size", paramId: "radius", param: "Radius", type: "number" }];
 const stepInput = { id: 1, nodeId: null, from: null, to: null, transitionId: null, values: { "orb/radius": 24 }, runtime: { states: {}, stores: {} } };
 async function explore(output: Partial<ExploreResult>, steps = [stepInput]) {
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;

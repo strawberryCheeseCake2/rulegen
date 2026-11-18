@@ -37,7 +37,6 @@ Return exactly one object matching `prompts/schemas/machine-refine.json`:
 
 ```json
 {
-  "algorithms": [],
   "constraints": [
     { "id": "size-bounce", "property": "size", "description": "Overshoots the grown radius and settles back over the bounce time since the click.", "params": [
       { "id": "bounce-time", "label": "Bounce time", "effect": "temporal", "description": "How long the bounce lasts", "value": { "type": "number", "value": 600, "min": 100, "max": 3000, "step": 50, "unit": "ms" } }

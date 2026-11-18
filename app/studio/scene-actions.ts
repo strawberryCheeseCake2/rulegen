@@ -1,18 +1,15 @@
 import { reviseTag, tagRevisionSchema } from "../lib/compose-tags";
 import { compositionPromptSchema, generatedSchema, machineRefineResultSchema, splitResultSchema, type MachineMark, type MachineTarget } from "../lib/schema";
 import { annotatedImage, compactMarks, type Marks } from "./annotated-image";
-import { compositionContext } from "../lib/algorithm-pens";
+import { compositionContext } from "../lib/semantic-pens";
 import { emptyMachineDraft, type SketchPanel } from "../lib/sketch-panels";
 import { isBackdrop, markBrushes } from "../lib/brushes";
-import type { AlgorithmCall, Algorithm, ParamHandle, Scene, ScalarValue, SceneNode, Constraint } from "../lib/scene/schema";
+import type { ParamHandle, Scene, ScalarValue, SceneNode, Constraint } from "../lib/scene/schema";
 import { MAX_NESTING_DEPTH } from "../lib/scene/schema";
 import { sceneSchema } from "../lib/scene/validate";
 import { findNode, updateNode, groupNodes, moveNodes, removeNodes, reorderNode, sceneDepth, selectionRoots, setParent, ungroupNode, uniqueNodeId } from "../lib/scene/graph";
 import * as ops from "../lib/scene/panel-ops";
-import { importAlgorithmCall, makeAlgorithmPen } from "../lib/scene/pens";
-import { addBlockParam, copyAlgorithm, moveNodeTo, pasteAlgorithm, pasteConstraint, transplantNodes, type AlgorithmClip, type ConstraintClip } from "../lib/scene/transfer";
-import { instantiate } from "../lib/scene/algorithms";
-import { isAlgorithm, valueAt } from "../lib/scene/values";
+import { moveNodeTo, pasteConstraint, transplantNodes, type ConstraintClip } from "../lib/scene/transfer";
 import { liveSceneSource } from "../lib/scene/live";
 import { hasModules, ownCodeIds, programModules } from "../lib/scene/machines";
 import { stampModule } from "../lib/scene/stamp";
@@ -69,18 +66,14 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
     scalar: (nodeId: string, paramId: string, path: string[], raw: ScalarValue["value"]) => apply(panel => ops.setParamScalar(panel, nodeId, paramId, path, raw)),
     /** A value drag turned off (its value is adjusted by its param only) or on again: one undo step, nothing regenerated. */
     dragOff: (nodeId: string, constraintId: string, index: number, off: boolean) => structural(scene => updateNode(scene, nodeId, node => setDragOff(node, constraintId, index, off))),
-    /** Instantiating can fail (nesting limit), so it runs before the state update. */
-    swap: (nodeId: string, paramId: string, path: string[], choice: ops.SlotChoice) => {
-      try { const patch = ops.swapSlot(deps.panel(owner), nodeId, paramId, path, choice); deps.updatePanel(owner, patch); }
-      catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
-    },
     editNode: (nodeId: string, patch: Parameters<typeof ops.editNode>[2]) => apply(panel => ops.editNode(panel, nodeId, patch)),
     editParam: (nodeId: string, paramId: string, patch: Parameters<typeof ops.editParam>[3]) => apply(panel => ops.editParam(panel, nodeId, paramId, patch)),
     removeParam: (nodeId: string, paramId: string) => apply(panel => ops.removeParam(panel, nodeId, paramId)),
     /** A param's handle changed (its hint) or removed (null). UI only: the code needs nothing new. */
     handle: (nodeId: string, paramId: string, handle: ParamHandle | null) => apply(panel => ops.commitScene(panel, setHandle(panel.scene, nodeId, paramId, handle))),
-    addParam: (nodeId: string, algorithmId: string, constraintId?: string | null) => {
-      try { deps.updatePanel(owner, ops.addAlgorithmParam(deps.panel(owner), nodeId, algorithmId, constraintId)); }
+    /** A new slider param in a constraint. */
+    addParam: (nodeId: string, constraintId?: string | null) => {
+      try { deps.updatePanel(owner, ops.addSliderParam(deps.panel(owner), nodeId, constraintId)); }
       catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
     },
     addConstraint: (nodeId: string) => apply(panel => ops.addConstraint(panel, nodeId)),
@@ -95,50 +88,10 @@ export function sceneEdits(deps: StudioDeps, owner: string) {
       try { return ops.commitScene(panel, pasteConstraint(panel.scene, nodeId, clip, afterId), [nodeId]); }
       catch (error) { return { error: (error as Error).message }; }
     }),
-    editAlgorithm: (algorithmId: string, patch: { name?: string; description?: string }) => apply(panel => ops.editAlgorithm(panel, algorithmId, patch)),
-    importAlgorithm: (source: { call: AlgorithmCall; library: Algorithm[] }) => apply(panel => {
-      const { scene } = importAlgorithmCall(panel.scene, source);
-      return scene.algorithms.length > 96 ? { error: "The algorithm library is full." } : ops.commitScene(panel, scene);
-    }),
     chooseState: (nodeId: string, stateId: string | null) => { deps.updatePanel(owner, panel => ops.chooseState(panel, nodeId, stateId)); deps.focus(owner as FrameId); },
     editState: (nodeId: string, stateId: string, patch: Parameters<typeof ops.editMachineState>[3]) => apply(panel => ops.editMachineState(panel, nodeId, stateId, patch)),
     editTransition: (nodeId: string, transitionId: string, patch: Parameters<typeof ops.editTransition>[3]) => apply(panel => ops.editTransition(panel, nodeId, transitionId, patch)),
     removeMachine: (nodeId: string) => apply(panel => ops.removeMachine(panel, nodeId)),
-    /** Copy the algorithm plugged into a slot (with its arguments and dependencies). */
-    copySlot: (nodeId: string, paramId: string, path: string[]) => {
-      const panel = deps.panel(owner), node = findNode(panel.scene, nodeId);
-      const value = node && valueAt(ops.inspectedParams(panel, node).find(p => p.id === paramId)?.value ?? { type: "toggle", value: false }, path);
-      if (!value || !isAlgorithm(value)) return;
-      const clip = copyAlgorithm(panel.scene, value); deps.setClip(clip); deps.toast(`Copied ${clip.label}. Right-click another param to paste it.`);
-    },
-    copyDefinition: (algorithmId: string) => {
-      const scene = deps.panel(owner).scene, clip = copyAlgorithm(scene, instantiate(scene.algorithms, algorithmId));
-      deps.setClip(clip); deps.toast(`Copied ${clip.label}. Right-click another param to paste it.`);
-    },
-    /** Paste replaces the slot's value in the base param; a state cannot change structure. */
-    pasteSlot: (nodeId: string, paramId: string, path: string[], dropped?: AlgorithmClip) => {
-      const panel = deps.panel(owner), clip = dropped || deps.clip();
-      if (!clip) return;
-      if (panel.editingStates[nodeId]) { deps.updatePanel(owner, { error: "Algorithm blocks can only be inserted in Base. In a state, you can only change values." }); return; }
-      try { deps.updatePanel(owner, ops.commitScene(panel, pasteAlgorithm(panel.scene, nodeId, paramId, path, clip), [nodeId])); }
-      catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
-    },
-    /** The block plugged at a slot, ready to be dragged elsewhere. */
-    clipFor: (nodeId: string, paramId: string, path: string[]): AlgorithmClip | null => {
-      const panel = deps.panel(owner), node = findNode(panel.scene, nodeId);
-      const value = node && valueAt(ops.inspectedParams(panel, node).find(p => p.id === paramId)?.value ?? { type: "toggle", value: false }, path);
-      return value && isAlgorithm(value) ? copyAlgorithm(panel.scene, value) : null;
-    },
-    definitionClip: (algorithmId: string): AlgorithmClip => { const scene = deps.panel(owner).scene; return copyAlgorithm(scene, instantiate(scene.algorithms, algorithmId)); },
-    addBlock: (nodeId: string, clip: AlgorithmClip, constraintId?: string | null) => {
-      const panel = deps.panel(owner);
-      try { deps.updatePanel(owner, ops.commitScene(panel, addBlockParam(panel.scene, nodeId, clip, constraintId), [nodeId])); }
-      catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
-    },
-    makePen: (source: { nodeId: string; paramId: string; path?: string[] } | { algorithmId: string }) => {
-      try { const scene = deps.panel(owner).scene; deps.addPen((id, color) => makeAlgorithmPen(scene, source, owner, id, color)); }
-      catch (error) { deps.updatePanel(owner, { error: (error as Error).message }); }
-    },
   };
 }
 
@@ -303,23 +256,23 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => { for (let next = queue.shift(); next; next = queue.shift()) await renderExample(next.id); }));
   }
   /**
-   * Decompose a minimal example again: AI divides its constraint into the meaningful algorithms its code runs
+   * Decompose a minimal example again: AI divides its constraint into the meaningful computations its code runs
    * (their hard-coded constants become params). This frame is left as it is; each part gets a child example frame
    * of its own, linked to this one, where only that part is shown and adjusted.
    */
   async function splitExample(nodeId: string, constraintId: string) {
-    const out: { parts?: Constraint[]; algorithms?: Algorithm[]; reason?: string; scene?: Scene } = {};
-    await deps.task("AI is dividing this constraint into the algorithms inside it…", async () => {
+    const out: { parts?: Constraint[]; reason?: string; scene?: Scene } = {};
+    await deps.task("AI is dividing this constraint into the computations inside it…", async () => {
       const panel = deps.panel(owner);
       const result = splitResultSchema.parse(await deps.request("split", { scene: panel.scene, targetNodeId: nodeId, targetConstraintId: constraintId,
         previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: "" }, owner));
-      Object.assign(out, { parts: result.divisible ? result.parts : [], algorithms: result.algorithms, reason: result.reason, scene: panel.scene });
+      Object.assign(out, { parts: result.divisible ? result.parts : [], reason: result.reason, scene: panel.scene });
     }, owner);
     if (!out.scene) return;
     if (!out.parts?.length) { deps.toast(`Cannot be divided further: ${out.reason}`); return; }
     // Each part as the node's only constraint, in a copy of this frame's scene (the frame itself keeps its own).
-    const withPart = (part: Constraint): Scene => ({ algorithms: out.algorithms!, nodes: out.scene!.nodes.map(node => node.id === nodeId ? { ...node, constraints: [part] } : node) });
-    await makeExamples(out.parts.map(part => ({ nodeId, constraintId: part.id, scope: "constraint" as const, from: withPart(part) })), "inner algorithm");
+    const withPart = (part: Constraint): Scene => ({ nodes: out.scene!.nodes.map(node => node.id === nodeId ? { ...node, constraints: [part] } : node) });
+    await makeExamples(out.parts.map(part => ({ nodeId, constraintId: part.id, scope: "constraint" as const, from: withPart(part) })), "inner computation");
   }
   /** Regenerate one param/constraint (or add one); returns what changed, or null. */
   async function regenerateOne(nodeId: string, target: { constraintId?: string; paramId?: string }, instruction?: string, marks: Marks = []) {
@@ -340,7 +293,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
   async function rewriteCode(labels: string[], scene: Scene) {
     if (!labels.length || !deps.panel(owner).generated || JSON.stringify(deps.panel(owner).scene) !== JSON.stringify(scene)) return;
     const panelNow = deps.panel(owner), base = panelNow.generationMode === "compose" ? panelNow.composePrompt : panelNow.instruction;
-    const what = labels.length === 1 ? `${labels[0]} was just regenerated: implement its NEW description and algorithms` : `${labels.join("; ")} were just regenerated together: implement their NEW descriptions and algorithms`;
+    const what = labels.length === 1 ? `${labels[0]} was just regenerated: implement its NEW description and params` : `${labels.join("; ")} were just regenerated together: implement their NEW descriptions and params`;
     await generateCode(false, `${base}\n${what} exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
   }
 
@@ -444,7 +397,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
      * Decompose one level (base state, state machines left out), each part a frame linked to this one:
      * a frame into its nodes (its single brush straight into the next level), a node into its own
      * constraints as one group and each child node whole, a group or a leaf object into its single
-     * constraints, and a single constraint into the algorithms inside it. Decompose a part to go further.
+     * constraints, and a single constraint into the computations inside it. Decompose a part to go further.
      */
     async decompose() {
       const panel = deps.panel(owner), of = panel.exampleOf;
@@ -452,7 +405,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       const keep = (node: SceneNode) => Boolean(node.parentId) || !isBackdrop(node);
       const tunable = panel.scene.nodes.filter(keep).flatMap(node => node.constraints.filter(item => item.params.length).map(item => ({ nodeId: node.id, constraintId: item.id })));
       if (!tunable.length) { deps.updatePanel(owner, { error: "There is no constraint to decompose." }); return; }
-      // A frame that shows one constraint on its own: decomposing it again divides that constraint into the algorithms inside it.
+      // A frame that shows one constraint on its own: decomposing it again divides that constraint into the computations inside it.
       if (of && (!of.scope || tunable.length === 1)) { const only = tunable.find(item => item.constraintId === of.constraintId) ?? tunable[0]; await splitExample(only.nodeId, only.constraintId); return; }
       const targets = decomposeTargets(panel.scene, of && { nodeId: of.nodeId, scope: of.scope, constraintId: of.constraintId }, keep);
       if (!targets.length) { deps.updatePanel(owner, { error: "There is nothing below this to decompose." }); return; }
@@ -534,7 +487,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       if (text ? !prompt : !tags.length) { await draftComposePrompt(); return; }
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision;
       const out: { frame?: string } = {};
-      await deps.task("Composing the pen algorithms and sketch into brush stamps…", async () => {
+      await deps.task("Composing the pen marks and sketch into brush stamps…", async () => {
         const context = await sketchContext(deps, owner);
         // Marks erased since the tags were made are no longer there to point at.
         const drawn = new Set(context.compositionStrokes.map(stroke => stroke.id));

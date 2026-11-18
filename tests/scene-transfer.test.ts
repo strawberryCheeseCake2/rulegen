@@ -1,57 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { num, sampleScene } from "./fixtures/scene";
-import { addBlockParam, ALGORITHM_DRAG_TYPE, copyAlgorithm, moveNodeTo, NODE_DRAG_TYPE, pasteAlgorithm, readAlgorithmDrag, readNodeDrag, transplantNodes } from "../app/lib/scene/transfer";
-import { instantiate } from "../app/lib/scene/algorithms";
-import { sceneBindings, valueAt } from "../app/lib/scene/values";
+import { moveNodeTo, NODE_DRAG_TYPE, readNodeDrag, transplantNodes } from "../app/lib/scene/transfer";
+import { sceneBindings } from "../app/lib/scene/values";
 import { findNode } from "../app/lib/scene/graph";
-import type { AlgorithmCall, Scene } from "../app/lib/scene/schema";
+import type { Scene } from "../app/lib/scene/schema";
 
-const other = (): Scene => ({ algorithms: [{ id: "power-decay", name: "Different", description: "다른 정의", params: [] }], nodes: [
+const other = (): Scene => ({ nodes: [
   { id: "orb", kind: "object", parentId: null, name: "Existing orb", description: "", primitive: "ellipse", region: { x: .1, y: .1, w: .2, h: .2 }, visible: true, machine: null,
     constraints: [{ id: "main", property: "", description: "", params: [{ id: "size", label: "Size", effect: "spatial", description: "", value: num(5, 0, 10) }] }] },
 ] });
 
-test("a copied block keeps its arguments and can be pasted into any socket, even in another sketch", () => {
-  const scene = sampleScene();
-  const branch = scene.nodes[0].constraints[0].params[0].value as AlgorithmCall;
-  const clip = copyAlgorithm(scene, valueAt(branch, ["length"]) as AlgorithmCall);
-  assert.equal(clip.label, "Power decay");
-  // Same sketch: the orb's radius becomes a power-decay block with the copied argument values.
-  const pasted = pasteAlgorithm(scene, "orb", "radius", [], clip);
-  assert.deepEqual(findNode(pasted, "orb")!.constraints[0].params[0].value, clip.call);
-  // Another sketch with a different `power-decay`: the pasted block is renamed, not merged.
-  const elsewhere = pasteAlgorithm(other(), "orb", "size", [], clip);
-  const call = findNode(elsewhere, "orb")!.constraints[0].params[0].value as AlgorithmCall;
-  assert.equal(call.algorithmId, "power-decay-2");
-  assert.equal(elsewhere.algorithms.find(a => a.id === "power-decay")!.name, "Different");
-  // A whole nested block (branch → power decay) carries its dependencies too.
-  const nested = pasteAlgorithm(other(), "orb", "size", [], copyAlgorithm(scene, branch));
-  assert.deepEqual(nested.algorithms.map(a => a.id).sort(), ["power-decay", "power-decay-2", "recursive-branch"]);
-  assert.deepEqual(sceneBindings(nested).map(b => b.key), ["orb/size/depth", "orb/size/length/base", "orb/size/length/ratio"]);
-  // Pasting deep enough to exceed the nesting limit is refused.
-  const deep = copyAlgorithm(scene, branch);
-  assert.throws(() => pasteAlgorithm(scene, "tree", "structure", ["length", "base"], { ...deep, call: { ...deep.call, args: deep.call.args.map(a => a.id === "depth" ? { ...a, value: instantiate(scene.algorithms, "recursive-branch") } : a) } }), /Algorithms can be nested at most/);
-});
-
-test("dropping a block on a node's empty socket adds a param holding that block", () => {
-  const scene = sampleScene();
-  const next = addBlockParam(scene, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave")));
-  const added = findNode(next, "orb")!.constraints.at(-1)!.params.at(-1)!;
-  assert.equal(added.id, "sine-wave"); assert.equal(added.label, "Sine wave");
-  assert.equal(findNode(addBlockParam(next, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave"))), "orb")!.constraints.at(-1)!.params.at(-1)!.id, "sine-wave-2");
-});
-
-test("a layer dropped on another sketch frame is copied with members, blocks and machines; on the same frame it moves", () => {
+test("a layer dropped on another sketch frame is copied with members, params and machines; on the same frame it moves", () => {
   const scene = sampleScene();
   const { scene: target, rootId } = transplantNodes(scene, "tree", other(), { x: .7, y: .5 });
   assert.equal(rootId, "tree");
   const orbCopy = target.nodes.find(node => node.parentId === "tree")!;
   assert.equal(orbCopy.id, "orb-2", "colliding ids are renamed");
   assert.equal(orbCopy.machine!.states.length, 2);
-  assert.ok(target.algorithms.some(a => a.id === "recursive-branch"));
-  const length = valueAt(findNode(target, "tree")!.constraints[0].params[0].value, ["length"]) as AlgorithmCall;
-  assert.equal(length.algorithmId, "power-decay-2", "references follow renamed blocks");
+  assert.deepEqual(sceneBindings(target).map(b => b.key), ["orb/size", "tree/structure", "tree/base-length", "tree/ratio", "tree/ink", "orb-2/radius", "orb-2/speed"], "params come along, keyed by the copies' ids");
   const tree = findNode(target, "tree")!;
   assert.ok(Math.abs(tree.region.x + tree.region.w / 2 - .7) < .21, "placed around the drop point (clamped to the canvas)");
   assert.equal(findNode(target, "orb")!.name, "Existing orb", "existing nodes are untouched");
@@ -64,12 +31,12 @@ test("a layer dropped on another sketch frame is copied with members, blocks and
 test("drag payloads round-trip and reject foreign data", () => {
   const store = new Map<string, string>();
   const data = { getData: (type: string) => store.get(type) || "", setData: (type: string, value: string) => store.set(type, value) } as unknown as DataTransfer;
-  const scene = sampleScene(), clip = copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave"));
-  store.set(ALGORITHM_DRAG_TYPE, JSON.stringify(clip)); store.set(NODE_DRAG_TYPE, JSON.stringify({ sketchId: "source", nodeId: "tree" }));
-  assert.deepEqual(readAlgorithmDrag(data), clip);
+  store.set(NODE_DRAG_TYPE, JSON.stringify({ sketchId: "source", nodeId: "tree" }));
   assert.deepEqual(readNodeDrag(data), { sketchId: "source", nodeId: "tree" });
-  store.set(ALGORITHM_DRAG_TYPE, "not json"); store.set(NODE_DRAG_TYPE, JSON.stringify({ nodeId: 3 }));
-  assert.equal(readAlgorithmDrag(data), null); assert.equal(readNodeDrag(data), null);
+  store.set(NODE_DRAG_TYPE, JSON.stringify({ nodeId: 3 }));
+  assert.equal(readNodeDrag(data), null);
+  store.set(NODE_DRAG_TYPE, "not json");
+  assert.equal(readNodeDrag(data), null);
 });
 
 test("dropping a layer on another sketch copies it, shows a pending result frame and generates that sketch's result", async () => {
@@ -84,7 +51,7 @@ test("dropping a layer on another sketch copies it, shows a pending result frame
     request: async (intent: string, body: any) => { requests.push({ intent, body }); pending.push(panels["sketch-b"].pendingResult); return { title: "Copied", explanation: "", code: "p.setup=()=>{p.createCanvas(900,600);};" }; },
     capture: () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: () => ({ name: "B", photo: null, strokes: [], revision: 0 }), documentId: () => 1, requestId: () => 1,
-    addPen: () => {}, clip: () => null, setClip: () => {},
+    addPen: () => {},
   } as any;
   await dropNode(deps, "source", "tree", "sketch-b", { x: .5, y: .5 });
   assert.deepEqual(panels["sketch-b"].scene.nodes.map(node => node.id), ["tree", "orb"]);
@@ -114,7 +81,7 @@ test("Extract puts the scene into a NEW sketch frame beside the source and rende
     capture: async (owner: string) => { captured.push(owner); return { image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }; },
     artwork: (id: string) => id === "source" ? { name: "Tree sketch", photo: null, strokes: [], revision: 3 } : created.includes(id) ? { name: "Tree sketch · extracted", photo: null, strokes: [], revision: 0 } : undefined,
     createFrame: (from: string, name: string) => { assert.equal(from, "source"); assert.match(name, /extracted/); const id = "sketch-derived"; created.push(id); panels[id] = createSketchPanel(); return id; },
-    documentId: () => 1, requestId: () => 1, addPen: () => {}, clip: () => null, setClip: () => {},
+    documentId: () => 1, requestId: () => 1, addPen: () => {},
     addBrushes: (frameId: string, scene: any) => { const made = brushesFor(scene, frameId, brushes, () => `brush-${brushes.length + 1}`); brushes.push(...made); return made; }, preview: () => undefined,
   } as any;
   const { brushesFor } = await import("../app/lib/brushes");
@@ -176,7 +143,7 @@ test("AI work keeps running per frame: a frame made after the user moved away ap
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
     createFrame: () => { panels.derived = createSketchPanel(); return "derived"; },
-    documentId: () => 1, requestId: () => 1, addPen: () => {}, clip: () => null, setClip: () => {}, addBrushes: () => [], preview: () => undefined,
+    documentId: () => 1, requestId: () => 1, addPen: () => {}, addBrushes: () => [], preview: () => undefined,
   } as any;
   await sceneAI(deps, "source").extract();
   assert.equal(panels.derived.generated?.title, "Tree", "the work finished in its own frame");

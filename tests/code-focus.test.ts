@@ -11,10 +11,10 @@ const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "
 const at = (text: string) => lines.findIndex(line => line.includes(text));
 
 test("an inspection's focus in the code: where the code refers to it (by the code contract), and the lines using what those read", () => {
-  // A param: its value key and the keys of its arguments; the variables they are read into, where those are used.
+  // A param: its value key; the variables they are read into, where those are used.
   const structure = focusLines(code, scene, { kind: "param", nodeId: "tree", id: "structure" })!;
-  assert.deepEqual(structure.lines, [at('m.v("tree/structure/depth")')]);
-  assert.deepEqual(structure.related, [at("algo_power_decay(base, ratio, i)")], "depth, base and ratio are used there");
+  assert.deepEqual(structure.lines, [at('m.v("tree/structure")')]);
+  assert.deepEqual(structure.related, [at("lengths.push(decayed(base, ratio, i))")], "the depth it is read into is used there");
   assert.equal(structure.label, 'm.v("tree/structure…")');
   // A constraint: its compute function (named in the module's constraints map), and its params' reads and that entry.
   const branches = focusLines(code, scene, { kind: "constraint", nodeId: "tree", id: "branching-growth" })!;

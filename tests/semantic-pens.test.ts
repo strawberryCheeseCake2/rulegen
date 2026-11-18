@@ -4,9 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { compositionPromptSchema, requestSchema, type Artwork } from "../app/lib/schema";
-import { createInteractionPen, compositionContext } from "../app/lib/algorithm-pens";
-import { makeAlgorithmPen } from "../app/lib/scene/pens";
-import { setScalarAt } from "../app/lib/scene/values";
+import { createInteractionPen, compositionContext } from "../app/lib/semantic-pens";
+import { makeConstraintPen } from "../app/lib/scene/pens";
 import { aiScene, sampleScene } from "./fixtures/scene";
 import { projectSchema } from "../app/lib/project";
 import { createSketchPanel, savedSketchPanels } from "../app/lib/sketch-panels";
@@ -17,17 +16,17 @@ process.env.RULEGEN_AI_LOG_DIR = logDirectory;
 after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
 
 const scene = sampleScene();
-const pen = makeAlgorithmPen(scene, { nodeId: "tree", paramId: "structure" }, "source", "branch-pen", "#3b73c4");
-const depth = (value: typeof pen) => (value.algorithm!.call.args.find(arg => arg.id === "depth")!.value as { value: number }).value;
+const pen = makeConstraintPen(scene, "tree", "branching-growth", "source", "branch-pen", "#3b73c4");
+const depth = (value: typeof pen) => (value.constraint!.params.find(param => param.id === "structure")!.value as { value: number }).value;
 const art: Artwork = { name: "Sketch", photo: null, revision: 1, strokes: [{ tool: "pen", color: pen.color, width: 3, opacity: .8, points: [{ x: 100, y: 150 }, { x: 700, y: 300 }], semanticPen: structuredClone(pen) }, { tool: "pen", color: "#75664e", width: 3, opacity: .8, points: [{ x: 80, y: 80 }, { x: 600, y: 500 }] }] };
 const rawProject = { version: 2, name: "Semantic study", artwork: art, sketchPanels: { source: { scene } }, semanticPens: [pen], activeSemanticPenId: pen.id };
 
-test("projects have an editable default Interaction pen alongside custom algorithm pens", () => {
+test("projects have an editable default Interaction pen alongside custom constraint pens", () => {
   const old = projectSchema.parse(rawProject);
   assert.equal(old.interactionPen.kind, "interaction");
   assert.equal(old.interactionPen.name, "Interaction pen");
   assert.equal(old.semanticPens.length, 1);
-  assert.equal(old.semanticPens[0].kind, "algorithm");
+  assert.equal(old.semanticPens[0].kind, "constraint");
   const changed = { ...old.interactionPen, meaning: "원을 누르고 오른쪽 박스로 드래그하면 놓은 뒤 원이 정착합니다.", color: "#aa5533" };
   const restored = projectSchema.parse(JSON.parse(JSON.stringify({ ...old, interactionPen: changed, activeSemanticPenId: changed.id })));
   assert.deepEqual(restored.interactionPen, changed);
@@ -52,15 +51,6 @@ test("interaction annotations retain per-stroke meanings, geometry and eraser or
   assert.equal(requestSchema.safeParse({ intent: "compose", ...context, compositionPens: context.compositionPens.map(p => ({ ...p, kind: "algorithm" })) }).success, false);
 });
 
-test("Make pen copies the chosen algorithm locally without producing drawing geometry", () => {
-  assert.equal(pen.algorithm!.call.algorithmId, "recursive-branch"); assert.equal(depth(pen), 5);
-  assert.deepEqual(pen.algorithm!.library.map(item => item.id).sort(), ["power-decay", "recursive-branch"]);
-  assert.equal(pen.source.label, "Tree · Branching"); assert.equal(pen.meaning, scene.algorithms.find(item => item.id === "recursive-branch")!.description);
-  assert.equal(pen.sourceSketchId, "source"); assert.equal("primitives" in pen, false); assert.equal("settings" in pen, false);
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", paramId: "missing" }, "source", "x", "#3b73c4"));
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", paramId: "ink" }, "source", "x", "#3b73c4"), /param that contains an algorithm/);
-});
-
 test("composition includes semantic snapshots and pencil marks with spatial and eraser order", () => {
   const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], points: [{ x: 200, y: 100 }, { x: 250, y: 300 }] }, { ...art.strokes[0], tool: "eraser", semanticPen: undefined }] });
   assert.equal(context.compositionPens.length, 1); assert.equal(context.compositionStrokes.length, 4);
@@ -73,12 +63,12 @@ test("composition includes semantic snapshots and pencil marks with spatial and 
 });
 
 test("edited and removed pens keep the semantics of existing strokes, with bounded point context", () => {
-  const changed = { ...structuredClone(pen), meaning: "Grow deeper", algorithm: { ...pen.algorithm!, call: setScalarAt(pen.algorithm!.call, ["depth"], 7) as NonNullable<typeof pen.algorithm>["call"] } };
+  const changed = structuredClone(pen); changed.meaning = "Grow deeper"; (changed.constraint!.params.find(param => param.id === "structure")!.value as { value: number }).value = 7;
   const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], semanticPen: changed, points: Array.from({ length: 6000 }, (_, i) => ({ x: i / 5999 * 900, y: 400 })) }] });
   assert.equal(context.compositionPens.length, 2); assert.equal(depth(context.compositionPens[0]), 5); assert.equal(depth(context.compositionPens[1]), 7);
   assert.notEqual(context.compositionStrokes[0].semanticPenId, context.compositionStrokes[2].semanticPenId);
   assert.equal(context.compositionStrokes[2].points.length, 128); assert.equal(context.compositionStrokes[2].points.at(-1)?.x, 1);
-  const restored = projectSchema.parse({ ...rawProject, semanticPens: [] }); assert.equal(compositionContext(restored.artwork).compositionPens[0].algorithm!.call.algorithmId, "recursive-branch");
+  const restored = projectSchema.parse({ ...rawProject, semanticPens: [] }); assert.equal(compositionContext(restored.artwork).compositionPens[0].constraint!.label, "branches");
 });
 
 test("semantic pens, normal strokes and per-sketch compose prompts survive project export", () => {
@@ -92,10 +82,10 @@ test("semantic pens, normal strokes and per-sketch compose prompts survive proje
 
 test("projects from the previous format are rejected instead of half-migrated", () => {
   assert.equal(projectSchema.safeParse({ ...rawProject, version: 1 }).success, false);
-  assert.equal(projectSchema.safeParse({ ...rawProject, semanticPens: [{ ...pen, algorithm: null }] }).success, false, "algorithm pens must carry an algorithm");
+  assert.equal(projectSchema.safeParse({ ...rawProject, semanticPens: [{ ...pen, constraint: null }] }).success, false, "constraint pens must carry a constraint");
 });
 
-test("Compose sends freeform geometry, pen algorithms and the prompt to AI without requiring prior extraction", async () => {
+test("Compose sends freeform geometry, pen constraints and the prompt to AI without requiring prior extraction", async () => {
   const { runAI } = await import("../app/server/ai.server");
   const previousFetch = globalThis.fetch, previousKey = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "test-placeholder";
   let payload: any;
@@ -103,7 +93,7 @@ test("Compose sends freeform geometry, pen algorithms and the prompt to AI witho
   try {
     const context = compositionContext(art), image = "data:image/png;base64,YQ==";
     const result = await runAI(requestSchema.parse({ intent: "compose", image, ...context, instruction: "Power를 증가 패턴으로 만들고 연필 경로와 조합" }), new AbortController().signal) as { nodes: { id: string }[] };
-    const sent = JSON.parse(payload.input[0].content[0].text); assert.equal(sent.instruction, "Power를 증가 패턴으로 만들고 연필 경로와 조합"); assert.equal(depth(sent.compositionPens[0]), 5); assert.equal(sent.compositionPens[0].algorithm.call.algorithmId, "recursive-branch"); assert.equal(sent.compositionStrokes[1].tool, "pencil"); assert.equal(payload.input[0].content[1].image_url, image);
+    const sent = JSON.parse(payload.input[0].content[0].text); assert.equal(sent.instruction, "Power를 증가 패턴으로 만들고 연필 경로와 조합"); assert.equal(depth(sent.compositionPens[0]), 5); assert.equal(sent.compositionPens[0].constraint.label, "branches"); assert.equal(sent.compositionStrokes[1].tool, "pencil"); assert.equal(payload.input[0].content[1].image_url, image);
     assert.match(payload.instructions, /ordinary pencil line/); assert.match(payload.instructions, /jointly describe/); assert.deepEqual(result.nodes.map(node => node.id), ["tree", "orb"]);
     assert.equal(payload.text.format.name, "rulegen_compose"); assert.deepEqual(payload.text.format.schema.required.sort(), Object.keys(payload.text.format.schema.properties).sort());
     await assert.rejects(runAI(requestSchema.parse({ intent: "compose", ...context, instruction: "Compose" }), new AbortController().signal), /A sketch and a Compose prompt \(or its tags on the sketch\) are needed/);

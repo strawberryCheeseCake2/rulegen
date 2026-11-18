@@ -54,7 +54,7 @@
 .node-kind.kind-object { color: #3d6795; }
 .node-name-input { font: 400 22px/1.2 Georgia, serif; color: #3d4c37; border: 0; border-bottom: 1px solid transparent; padding: 2px 0; background: none; }
 .node-name-input:focus { outline: none; border-bottom-color: #a9c19a; }
-.node-heading textarea, .constraint-card textarea, .inspector-state textarea, .algorithm-card textarea { width: 100%; resize: vertical; font: 11px/1.5 Inter, Arial, sans-serif; color: #5b6a52; border: 1px solid #e3e9dc; border-radius: 5px; padding: 6px 8px; background: #fcfdf9; }
+.node-heading textarea, .constraint-card textarea, .inspector-state textarea { width: 100%; resize: vertical; font: 11px/1.5 Inter, Arial, sans-serif; color: #5b6a52; border: 1px solid #e3e9dc; border-radius: 5px; padding: 6px 8px; background: #fcfdf9; }
 .constraint-card { border: 1px solid #dbe6d4; border-radius: 8px; background: #f6faf2; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 /* constraint stack: cards apply top to bottom, joined by a rail. */
 .constraint-stack { display: flex; flex-direction: column; gap: 10px; position: relative; }
@@ -107,7 +107,7 @@
 .inspector-state .state-transition label input { width: 70px; }
 /* Fieldsets default to min-width: min-content and would push nested cards past the panel edge. */
 .param-list { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
-.constraint-inspector fieldset, .constraint-stack, .constraint-card, .param-card, .value-socket, .algorithm-block { min-width: 0; }
+.constraint-inspector fieldset, .constraint-stack, .constraint-card, .param-card, .value-socket { min-width: 0; }
 .param-card { border: 1px solid #dfe5d9; border-radius: 8px; background: #fcfdf9; padding: 10px 11px; display: flex; flex-direction: column; gap: 8px; }
 .param-card-title { display: flex; align-items: center; gap: 6px; }
 .param-card-title input { flex: 1; min-width: 0; font: 600 12px Inter, Arial, sans-serif; color: #3f5236; border: 0; background: none; padding: 2px 0; }
@@ -120,60 +120,11 @@
 .add-param select { font-size: 11px; border: 1px solid #dfe5d9; border-radius: 5px; padding: 6px; background: #fff; }
 .inspector-actions { display: flex; flex-direction: column; gap: 6px; }
 
-/* ── Blocks & sockets ──────────────────────────────────────────────────────
-   Params are sockets (dashed slots); algorithms are coloured blocks that
-   can be dropped into any socket. A block keeps its hue wherever it is plugged. */
+/* ── Param sliders ── */
 .value-socket { display: flex; flex-direction: column; gap: 6px; border: 1.5px dashed #cfd9c6; border-radius: 9px; padding: 7px 8px 8px; background: #fbfcf8; transition: border-color .12s, background .12s, box-shadow .12s; }
-.value-socket.socket-arg { border-color: #e0e6d8; background: #ffffffb3; padding: 6px 7px; }
-.value-socket-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 9px; letter-spacing: .4px; color: #8a977d; }
-.socket-root > .value-socket-heading > span { letter-spacing: 1.2px; font-size: 8px; }
-.value-socket.socket-over { border-color: #397461; border-style: solid; background: #e7f2e6; box-shadow: 0 0 0 3px #3974611f; }
 .socket-scalar { display: flex; flex-direction: column; gap: 4px; }
-.socket-hint { font-size: 9px; color: #b0b9a4; }
-.socket-over .socket-hint { color: #397461; }
-.slot-kind { font-size: 9px; max-width: 128px; border: 1px solid #e1e7da; border-radius: 10px; padding: 1px 5px; color: #6b7c5e; background: #fff; }
-.new-socket { align-items: center; text-align: center; padding: 12px 8px; gap: 8px; }
-.new-socket .socket-hint { font-size: 10px; }
-.new-socket select { font-size: 10px; border: 1px solid #e1e7da; border-radius: 10px; padding: 2px 6px; background: #fff; color: #6b7c5e; }
-
-.algorithm-block { --block-hue: 150; position: relative; border-radius: 8px; background: hsl(var(--block-hue) 45% 97%); border: 1px solid hsl(var(--block-hue) 35% 78%); box-shadow: 0 1px 0 hsl(var(--block-hue) 30% 70%); }
-/* The notch on top reads as "this snaps into the socket above". */
-.algorithm-block::before { content: ""; position: absolute; left: 18px; top: -5px; width: 16px; height: 6px; border-radius: 3px 3px 0 0; background: hsl(var(--block-hue) 48% 42%); }
-.algorithm-block-header, .palette-block-header { display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-radius: 7px 7px 0 0; background: hsl(var(--block-hue) 48% 42%); color: #fff; cursor: grab; user-select: none; }
-.algorithm-block-header:active, .palette-block-header:active { cursor: grabbing; }
-.algorithm-block-header strong, .palette-block-header strong { flex: 1; min-width: 0; font-size: 11px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.algorithm-block-header button { width: 20px; height: 20px; display: grid; place-items: center; color: #fff; border-radius: 4px; opacity: .8; }
-.algorithm-block-header button:hover { opacity: 1; background: #ffffff26; }
-.algorithm-block-body { display: flex; flex-direction: column; gap: 6px; padding: 7px; }
-.algorithm-block-body .implementation-details summary { font-size: 9px; }
-.block-grip { font-size: 11px; opacity: .7; letter-spacing: -1px; }
-.algorithm-badge { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; background: #ffffff33; font: italic 600 11px Georgia, serif; }
-.algorithm-call-empty { margin: 0; font-size: 10px; color: #a3ad96; }
-
-.block-palette { margin-top: 18px; padding-top: 14px; border-top: 1px solid #e7ece1; display: flex; flex-direction: column; gap: 8px; }
-.block-palette-header { display: flex; align-items: center; gap: 6px; color: #4f6347; }
-.block-palette-header strong { font-size: 12px; }
-.block-palette-header span { font-size: 10px; color: #9aa68d; }
-.algorithm-library-help { margin: 0; font-size: 10px; line-height: 1.5; color: #8a967c; }
-.block-palette-list { display: flex; flex-direction: column; gap: 9px; padding-top: 4px; }
-.palette-block { --block-hue: 150; position: relative; border-radius: 8px; background: hsl(var(--block-hue) 45% 97%); border: 1px solid hsl(var(--block-hue) 35% 80%); }
-.palette-block::before { content: ""; position: absolute; left: 18px; top: -5px; width: 16px; height: 6px; border-radius: 3px 3px 0 0; background: hsl(var(--block-hue) 48% 42%); }
-.palette-block > summary { list-style: none; border-radius: 7px; }
-.palette-block > summary::-webkit-details-marker { display: none; }
-.palette-block[open] > summary { border-radius: 7px 7px 0 0; }
-.palette-block-header small { font-size: 9px; opacity: .85; white-space: nowrap; }
-.palette-block-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
-.palette-block-body input { font: 600 12px Inter, Arial, sans-serif; color: #3f5236; border: 1px solid #e0e8d9; border-radius: 4px; padding: 4px 6px; background: #fff; }
-.palette-block-body textarea { width: 100%; resize: vertical; font: 11px/1.5 Inter, Arial, sans-serif; color: #5b6a52; border: 1px solid #e3e9dc; border-radius: 5px; padding: 6px 8px; background: #fff; }
-.algorithm-params { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
-.algorithm-params li { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: #6f7f62; }
-.algorithm-params li span { color: #8b9780; text-align: right; overflow-wrap: anywhere; }
-.algorithm-usage { font-size: 10px; color: #3d6795; }
-.algorithm-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.algorithm-actions button { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; border: 1px solid #dfe5d9; border-radius: 4px; padding: 4px 7px; color: #5d7050; background: #fff; }
-.algorithm-actions button:disabled { opacity: .45; }
-.block-clipboard { display: flex; align-items: center; gap: 6px; margin: 0 18px; padding: 5px 9px; border-radius: 6px; background: #eef4ea; color: #4f6347; font-size: 10px; }
-.block-clipboard .algorithm-badge { background: #397461; color: #fff; }
+.new-param-button { align-self: flex-start; font-size: 10px; border: 1px dashed #cfd9c6; border-radius: 9px; padding: 6px 10px; background: transparent; color: #6f7f62; }
+.new-param-button:hover:not(:disabled) { border-color: #397461; color: #397461; }
 
 /* ── Context menu ───────────────────────────────────────────────────────────── */
 .context-menu { position: fixed; z-index: 1000; min-width: 200px; padding: 5px; background: #fffffc; border: 1px solid #d9e3cf; border-radius: 8px; box-shadow: 0 10px 30px #2d3c2430; }

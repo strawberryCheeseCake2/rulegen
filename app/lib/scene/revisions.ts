@@ -9,7 +9,6 @@ export type SceneProposal = { summary: string; scene: Scene };
 function entries(scene: Scene) {
   const values = new Map<string, { path: string; value: string }>();
   const add = (key: unknown[], path: string, value: unknown) => values.set(JSON.stringify(key), { path, value: typeof value === "string" ? value : JSON.stringify(value) });
-  const names = (id: string) => scene.algorithms.find(algorithm => algorithm.id === id)?.name || id;
   for (const node of scene.nodes) {
     const kind = node.kind === "collection" ? "Collection" : "Object";
     const root = `${kind} · ${node.name}`;
@@ -20,11 +19,10 @@ function entries(scene: Scene) {
     for (const constraint of node.constraints) {
       const layer = `${root} · ${constraint.property || constraint.id}`;
       add(["constraint", node.id, constraint.id], `${layer} · constraint`, constraint.description);
-      for (const param of constraint.params) add(["param", node.id, param.id], `${layer} · ${param.label} (${param.effect})`, describeValue(param.value, names));
+      for (const param of constraint.params) add(["param", node.id, param.id], `${layer} · ${param.label} (${param.effect})`, describeValue(param.value));
     }
     if (node.machine) add(["machine", node.id], `${root} · State machine`, node.machine.states.map(state => state.label).join(" → "));
   }
-  for (const algorithm of scene.algorithms) add(["algorithm", algorithm.id], `Algorithm · ${algorithm.name}`, `${algorithm.description}\n${algorithm.params.map(param => `${param.label}: ${describeValue(param.value, names)}`).join("\n")}`);
   return values;
 }
 

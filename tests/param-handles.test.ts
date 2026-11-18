@@ -50,14 +50,16 @@ test("a param's handle is its own widget, saved with the scene; an older or brok
 
 test("handles are UI only: the code stays live, and they survive regeneration while their scalars exist", () => {
   const scene = sampleScene(), generated = { title: "t", code: "/* @rulegen-scene */", sceneBindings: [], machineSignature: "[]" } as never;
-  const withHandles = setHandle(setHandle(scene, "tree", "structure", widget(pullWidget, [["depth"]])), "tree", "ink", widget(pullWidget, [[]]));
+  const withHandles = setHandle(setHandle(scene, "tree", "structure", widget(pullWidget, [[]])), "tree", "ink", widget(pullWidget, [[]]));
   assert.equal(sceneLiveStatus(generated, withHandles), sceneLiveStatus(generated, scene));
   const node = findNode(withHandles, "tree")!;
   const regenerated: SceneNode = { ...node, constraints: node.constraints.map(item => ({ ...item, params: item.params.map(({ handle: _gone, ...rest }) => rest) })) };
   assert.deepEqual(keepHandles(node, regenerated), node, "same param ids and scalars: handles come back");
   const swapped: SceneNode = { ...regenerated, constraints: regenerated.constraints.map(item => ({ ...item, params: item.params.map(p => p.id === "structure" ? { ...p, value: num(3, 1, 9) } : p) })) };
-  assert.equal(findParam(keepHandles(node, swapped), "structure")!.handle, undefined, "a widget whose scalar is gone is dropped");
-  assert.equal(handleFits({ ...findParam(swapped, "structure")!, handle: findParam(node, "structure")!.handle }), false);
+  assert.ok(findParam(keepHandles(node, swapped), "structure")!.handle, "a new value of the same param keeps its widget");
+  const renamed: SceneNode = { ...regenerated, constraints: regenerated.constraints.map(item => ({ ...item, params: item.params.map(p => p.id === "structure" ? { ...p, id: "levels" } : p) })) };
+  assert.equal(findParam(keepHandles(node, renamed), "levels")!.handle, undefined, "a widget whose param is gone is dropped");
+  assert.equal(handleFits({ ...findParam(swapped, "structure")!, handle: findParam(node, "structure")!.handle }), true);
   assert.ok(findParam(findNode(settleProposal(withHandles, scene), "tree")!, "ink")!.handle, "a revision proposal keeps them");
 });
 
@@ -68,10 +70,10 @@ test("widget code is guarded like sketch code and may not take over the frame", 
   assert.match(prepareHandle(pullWidget), /__rulegenGuard\(\)/);
 });
 
-test("AI builds one interface per param, with the param's meaning, scalars and algorithms as context", async () => {
+test("AI builds one interface per param, with the param's meaning and scalar as context", async () => {
   const scene = sampleScene();
   const output = { handles: [
-    { paramId: "structure", paths: [["depth"], ["length", "base"], ["nope"]], hint: "가지 끝을 끌어 늘이기", code: pullWidget },
+    { paramId: "structure", paths: [], hint: "가지 끝을 끌어 늘이기", code: pullWidget },
     { paramId: "structure", paths: [], hint: "중복", code: pullWidget },
     { paramId: "ink", paths: [], hint: "먹색", code: "rulegenHandle(function (h) { document.title = 'x'; return {}; });" },
     { paramId: "radius", paths: [], hint: "다른 노드", code: pullWidget },
@@ -79,12 +81,12 @@ test("AI builds one interface per param, with the param's meaning, scalars and a
   await withMockedAI(() => output, async calls => {
     const result = handleSuggestionsSchema.parse(await runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetConstraintId: "branching-growth", image: "data:image/png;base64,AAAA", instruction: "가지를 직접 잡고 싶어" }), new AbortController().signal));
     assert.deepEqual(result.handles.map(item => item.paramId), ["structure"], "duplicates, other constraints' and other nodes' params are dropped");
-    assert.deepEqual(result.handles[0].handle.paths, [["depth"], ["length", "base"]], "only paths of the param's scalars");
+    assert.deepEqual(result.handles[0].handle.paths, [[]], "the param's one scalar");
     const context = JSON.parse(calls[0].input[0].content[0].text);
-    assert.deepEqual(context.params.map((item: { paramId: string }) => item.paramId), ["structure"], "one constraint's params");
+    assert.deepEqual(context.params.map((item: { paramId: string }) => item.paramId), ["structure", "base-length", "ratio"], "one constraint's params");
     const structure = context.params[0];
-    assert.deepEqual(structure.scalars.map((item: { path: string[] }) => item.path.join("/")), ["depth", "length/base", "length/ratio"]);
-    assert.deepEqual(structure.algorithms.map((item: { id: string }) => item.id).sort(), ["power-decay", "recursive-branch"], "the algorithms behind it, to draw a faithful miniature");
+    assert.deepEqual(structure.scalars.map((item: { path: string[]; value: number }) => [item.path.join("/"), item.value]), [["", 5]], "its scalar with its range");
+    assert.equal("algorithms" in structure, false);
     assert.equal(context.instruction, "가지를 직접 잡고 싶어");
     assert.ok(context.widgetArea.w > 300 && context.widgetArea.h > 200, "the room each widget gets in the proxy frame");
     assert.match(calls[0].instructions, /bespoke interface per param/);
@@ -156,9 +158,9 @@ test("the proxy runtime routes a drag to the widget under it and reports coerced
 });
 
 test("the proxy frame and the inspector show and edit each param's interface; projects keep proxy frames", () => {
-  const scene = setHandle(sampleScene(), "tree", "structure", widget(pullWidget, [["depth"]])), tree = findNode(scene, "tree")!;
+  const scene = setHandle(sampleScene(), "tree", "structure", widget(pullWidget, [[]])), tree = findNode(scene, "tree")!;
   const cells = proxyCellsFor(tree.constraints);
-  assert.deepEqual(cells.map(cell => [cell.id, Object.keys(cell.specs)]), [["structure", ["depth"]]], "a widget reads only what it drives");
+  assert.deepEqual(cells.map(cell => [cell.id, Object.keys(cell.specs)]), [["structure", [""]]], "a widget reads only what it drives");
   assert.match(renderToStaticMarkup(createElement(ProxyFrame, { node: tree, constraints: tree.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop })), /<iframe[^>]*sandbox="allow-scripts"/);
   // Only the widget areas take handle input; the rest of the body (cell titles, gaps) drags the frame on the board.
   const moving = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: tree, constraints: tree.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
@@ -169,7 +171,7 @@ test("the proxy frame and the inspector show and edit each param's interface; pr
   const empty = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: bare, constraints: bare.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
   assert.match(empty, /class="proxy-frame-surface" data-frame-handle="proxy-1"/, "an empty proxy frame drags from anywhere");
   assert.deepEqual([...empty.matchAll(/Design <b>([^<]*)<\/b>/g)].map(match => match[1]), bare.constraints.map(item => item.property), "an empty proxy frame designs one constraint at a time");
-  const props = { node: tree, constraints: tree.constraints, library: scene.algorithms, state: undefined, busy: false, clip: null, clipFor: () => null,
+  const props = { node: tree, constraints: tree.constraints, state: undefined, busy: false,
     onHandle: noop, onDesignHandles: noop, onOpenProxy: noop, handleErrors: { structure: "boom" } };
   const inspector = renderToStaticMarkup(createElement(ConstraintInspector, props as never));
   assert.match(inspector, /PROXY HANDLE/); assert.match(inspector, /⚠ boom/); assert.match(inspector, /Fix with AI/); assert.match(inspector, /Widget code/);

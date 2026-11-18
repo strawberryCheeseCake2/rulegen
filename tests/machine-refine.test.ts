@@ -60,7 +60,7 @@ test("machine-refine sends the attached item, graph image and annotation, and re
   const marks = [{ points: [{ x: .2, y: .2 }, { x: .4, y: .3 }], targets: ["transition settle “정착 후 대기”"] }];
   // The bounce needs a size relation of its own: a new constraint comes with the machine.
   const bounceSize = { id: "bounce-size", property: "size", description: "튕기는 동안 커졌다 작아진다", params: [{ id: "bounce-radius", label: "Bounce radius", effect: "spatial", description: "", value: num(60, 10, 140, 1, "px") }], inputs: [], drags: [] };
-  await withMockedAI(() => ({ algorithms: [], constraints: [bounceSize], machine: refined, composePrompt: prompt }), async calls => {
+  await withMockedAI(() => ({ constraints: [bounceSize], machine: refined, composePrompt: prompt }), async calls => {
     const result = machineRefineResultSchema.parse(await runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb", image, machineImage: image, machineMarks: marks,
       machineTarget: { kind: "transition", id: "settle" }, instruction: "정착하기 전에 한 번 튕기게", composePrompt: "- 화면 가운데에 원을 그려줘." }), signal()));
     const orb = result.scene.nodes.find(node => node.id === "orb")!.machine!;

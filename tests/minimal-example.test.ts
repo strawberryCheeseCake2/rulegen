@@ -22,8 +22,7 @@ test("a minimal example keeps only the chosen constraint, centered, without mach
   const tree = scene.nodes.find(node => node.id === "tree")!;
   const only = sceneSchema.parse(minimalExampleScene(scene, "tree", "ink-wash"));
   assert.deepEqual(only.nodes.find(node => node.id === "tree")!.constraints.map(item => item.id), ["ink-wash"]);
-  assert.ok(only.algorithms.length < scene.algorithms.length || tree.constraints.length === 1, "only the algorithms this constraint uses");
-  for (const algorithm of only.algorithms) assert.ok(scene.algorithms.some(item => item.id === algorithm.id));
+  assert.deepEqual(sceneBindings(only).map(binding => binding.key), ["tree/ink"], "only the chosen constraint's params");
   assert.throws(() => minimalExampleScene(scene, "orb", "missing"), /Could not find the Constraint/);
   assert.match(minimalExampleInstruction(tree, "ink-wash"), /minimal example/);
 });
@@ -48,14 +47,14 @@ test("collections keep one plain member inside their new box", () => {
 test("each constraint card offers Create Minimal Example", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!;
   const noop = () => {};
-  const props = new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, onMinimalExample: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop });
+  const props = new Proxy({ node, constraints: node.constraints, state: null, busy: false, onMinimalExample: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop });
   const html = renderToStaticMarkup(createElement(ConstraintInspector, props as never));
   assert.equal(html.match(/Create Minimal Example/g)?.length, node.constraints.length);
 });
 
 test("regenerating opens a composer with what is attached, a text box and drawing on the frame", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
-  const render = (draft: unknown) => renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, draft } as Record<string, unknown>,
+  const render = (draft: unknown) => renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, draft } as Record<string, unknown>,
     { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   assert.doesNotMatch(render(null), /REGENERATE WITH AI/, "nothing runs or opens until a regenerate button is pressed");
   const html = render({ nodeId: "tree", target: { constraintId: "ink-wash" }, instruction: "", annotating: false, marks: [] });
@@ -73,7 +72,7 @@ test("the bottom panel (code, state machine, inspection) has a height handle on 
 
 test("a constraint picked from a recommendation is highlighted in the inspector", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
-  const html = renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, highlightConstraintId: "ink-wash" } as Record<string, unknown>,
+  const html = renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, highlightConstraintId: "ink-wash" } as Record<string, unknown>,
     { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   assert.match(html, /class="constraint-card inspection-highlight" data-constraint-id="ink-wash"/);
   assert.equal(html.match(/inspection-highlight/g)?.length, 1);
@@ -119,7 +118,7 @@ function ribbonScene() {
   const c = (id: string) => ({ id, property: id, description: `${id} rule`, params: [{ id: `${id}-p`, label: id, effect: "spatial", description: "", value: num(3, 0, 10) }], inputs: [], drags: [] });
   const node = (id: string, kind: "collection" | "object", parentId: string | null, ids: string[], region = { x: .2, y: .2, w: .5, h: .5 }) =>
     ({ id, kind, parentId, name: id, description: "", primitive: kind === "collection" ? "group" : "shape", region, constraints: ids.map(c), visible: true, machine: null });
-  return sceneSchema.parse({ algorithms: [], nodes: [
+  return sceneSchema.parse({ nodes: [
     node("brush", "collection", null, ["count", "positions"], { x: .1, y: .1, w: .8, h: .8 }),
     node("unit", "collection", "brush", ["path"]),
     node("body", "object", "unit", ["shape", "color"], { x: .3, y: .3, w: .2, h: .2 }),

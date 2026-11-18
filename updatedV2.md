@@ -23,6 +23,7 @@ Hand-drawn sketch를 creative coding으로 옮기는 과정을 탐색하며 할 
 
 ---
 
+- **알고리즘 개념을 없앤다** (2026-11-18, 아래 4절의 알고리즘 블록·소켓·라이브러리 설명은 폐기). param은 슬라이더 하나(number·color·select·toggle)뿐이고, 값 키는 `nodeId/paramId`. 절차적 계산은 constraint의 `description`에 말로 쓰고 여러 슬라이더 param으로 조절한다. 알고리즘 라이브러리·블록 붙이기/복사/드래그·알고리즘 펜·AI 출력의 `algorithms`·드래그의 `path`는 없다. constraint 카드의 "+ Add slider"로 숫자 param을 추가한다. 펜은 interaction 펜과 constraint 펜만 있다.
 - **Decompose는 한 단계씩 계층적으로 한다** (2026-11-18). 누를 때마다 바로 아래 단계만 프레임으로 만들고, 새 프레임은 누른 프레임에 링크된다(보드에서 트리로 보임). 모두 base state 기준이며 상태 머신은 뺀다.
   - 원본 프레임: 루트 노드마다 한 프레임(◇/○). 루트가 하나면 그 노드를 바로 다음 단계로 나눈다.
   - 노드 프레임(◇ collection, ○ object, 그 아래 전부와 constraint를 쪼개지 않고 통째로): 노드 자신의 constraint를 묶은 프레임 하나(≡, plain member 위에서, constraint가 하나면 그 constraint 프레임 ▣) + 직접 자식 노드마다 노드 프레임 하나.

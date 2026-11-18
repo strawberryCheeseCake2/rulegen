@@ -1,12 +1,11 @@
 import type { SketchPanel } from "../sketch-panels";
 import type { NodeState, NodeTransition, Param, Scene, SceneNode, ScalarValue, Constraint, Value } from "./schema";
 import { MAX_NODE_PARAMS, MAX_CONSTRAINTS } from "./schema";
-import { findAlgorithm, instantiate, sceneAlgorithmUsage } from "./algorithms";
 import { findNode, updateNode } from "./graph";
 import { conformMachine, setStateConstraint, stateConstraints } from "./machines";
 import * as layers from "./constraints";
 import { relinkStamps } from "./live";
-import { defaultNumber, isAlgorithm, replaceAt, setScalarAt, valueAt } from "./values";
+import { defaultNumber, setScalarAt } from "./values";
 
 // Pure SketchPanel → patch helpers used by the route. Structural edits are undoable;
 // widget drags are not (they are frequent and immediately visible).
@@ -75,19 +74,6 @@ export function setParamScalar(panel: SketchPanel, nodeId: string, paramId: stri
   return { scene: updateNode(panel.scene, nodeId, item => layers.updateParam(item, paramId, p => ({ ...p, value }))) };
 }
 
-export type SlotChoice = { type: "number" } | { type: "algorithm"; algorithmId: string };
-/** Swap a slot between a number and an algorithm (structural: applies to the base and every state). */
-export function swapSlot(panel: SketchPanel, nodeId: string, paramId: string, path: string[], choice: SlotChoice): Patch {
-  const node = findNode(panel.scene, nodeId);
-  const param = node && layers.findParam(node, paramId);
-  if (!node || !param) return {};
-  const current = valueAt(param.value, path);
-  if (!current || (choice.type === "algorithm" && isAlgorithm(current) && current.algorithmId === choice.algorithmId) || (choice.type === "number" && current.type === "number")) return {};
-  const replacement: Value = choice.type === "number" ? defaultNumber() : instantiate(panel.scene.algorithms, choice.algorithmId, path.length + 1);
-  const value = replaceAt(param.value, path, () => replacement);
-  return commitScene(panel, updateNode(panel.scene, nodeId, item => layers.updateParam(item, paramId, p => ({ ...p, value }))), [nodeId]);
-}
-
 export function editNode(panel: SketchPanel, nodeId: string, patch: Partial<Pick<SceneNode, "name" | "description" | "visible">>, history = false): Patch {
   const scene = updateNode(panel.scene, nodeId, node => ({ ...node, ...patch }));
   const semantic = patch.description !== undefined;
@@ -99,12 +85,12 @@ export function editParam(panel: SketchPanel, nodeId: string, paramId: string, p
 export function removeParam(panel: SketchPanel, nodeId: string, paramId: string): Patch {
   return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.mapParams(node, p => p.id === paramId ? null : p)), [nodeId]);
 }
-/** A param holding a library block, in `constraintId` (or the last one with room / a new one). */
-export function addAlgorithmParam(panel: SketchPanel, nodeId: string, algorithmId: string, constraintId?: string | null): Patch {
-  const node = findNode(panel.scene, nodeId), algorithm = findAlgorithm(panel.scene.algorithms, algorithmId);
-  if (!node || !algorithm || !layers.canAddParam(node, constraintId)) return {};
-  const param: Param = { id: algorithm.id.slice(0, 70), label: algorithm.name.slice(0, 80), effect: "spatial", description: algorithm.description.slice(0, 600), value: instantiate(panel.scene.algorithms, algorithmId) };
-  const next = layers.appendParam(node, param, constraintId, algorithm.name).node;
+/** A new slider param (a number) in `constraintId` (or the last one with room / a new one). */
+export function addSliderParam(panel: SketchPanel, nodeId: string, constraintId?: string | null): Patch {
+  const node = findNode(panel.scene, nodeId);
+  if (!node || !layers.canAddParam(node, constraintId)) return {};
+  const param: Param = { id: "value", label: "Value", effect: "spatial", description: "", value: defaultNumber() };
+  const next = layers.appendParam(node, param, constraintId).node;
   return commitScene(panel, updateNode(panel.scene, nodeId, () => next), [nodeId]);
 }
 
@@ -145,12 +131,6 @@ export function relocateConstraint(panel: SketchPanel, fromNodeId: string, const
   if (!layers.canTakeConstraint(target, moved)) return { error: `“${target.name}” has no room for “${moved.property || moved.id}” (at most ${MAX_CONSTRAINTS} constraints and ${MAX_NODE_PARAMS} params a node).` };
   const left = updateNode(panel.scene, source.id, node => layers.removeConstraint(node, constraintId));
   return commitScene(panel, updateNode(left, target.id, node => layers.takeConstraint(node, moved, beforeId)), [source.id, target.id]);
-}
-
-/** Algorithm definitions are shared: editing one marks every node that uses it. */
-export function editAlgorithm(panel: SketchPanel, algorithmId: string, patch: { name?: string; description?: string }): Patch {
-  const users = sceneAlgorithmUsage(panel.scene).get(algorithmId)?.map(use => use.nodeId) || [];
-  return setScene(panel, { ...panel.scene, algorithms: panel.scene.algorithms.map(item => item.id === algorithmId ? { ...item, ...patch } : item) }, users);
 }
 
 export function editMachineState(panel: SketchPanel, nodeId: string, stateId: string, patch: Partial<Pick<NodeState, "label" | "description">>): Patch {

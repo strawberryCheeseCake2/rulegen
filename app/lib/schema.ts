@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { algorithmCallSchema, algorithmSchema, idSchema, paramSchema, sceneBindingSchema, constraintSchema } from "./scene/schema";
+import { idSchema, paramSchema, sceneBindingSchema, constraintSchema } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
 import { composeTagSchema, MAX_COMPOSE_TAGS, tagTargetSchema } from "./compose-tags";
 import { markStyleSchema, MAX_MARKS, overlaySchema } from "./inspection";
@@ -9,18 +9,17 @@ export type Point = z.infer<typeof pointSchema>;
 export const MAX_CODE_LENGTH = 120000;
 export const codeSchema = z.object({ title: z.string().max(150), explanation: z.string().max(1000), code: z.string().min(1).max(MAX_CODE_LENGTH) });
 export const generatedSchema = codeSchema.extend({ sceneBindings: z.array(sceneBindingSchema).max(4096).default([]), machineSignature: z.string().max(200000).default("") });
-/** A pen whose marks carry an algorithm (copied from a param), a whole constraint (from a minimal example frame) or the built-in interaction meaning. */
+/** A pen whose marks carry a whole constraint (from a minimal example frame) or the built-in interaction meaning. */
 export const semanticPenSchema = z.object({
-  kind: z.enum(["algorithm", "interaction", "constraint"]).default("algorithm"),
+  kind: z.enum(["interaction", "constraint"]).default("constraint"),
   id: z.string().min(1).max(80), name: z.string().min(1).max(100), color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   sourceSketchId: z.string().max(80),
-  /** Where the algorithm came from, e.g. "Tree · Branching". */
+  /** Where the constraint came from, e.g. "Tree · branches". */
   source: z.object({ nodeId: z.string().max(80), label: z.string().max(200) }),
   meaning: z.string().max(2000),
-  algorithm: z.object({ call: algorithmCallSchema, library: z.array(algorithmSchema).max(24) }).nullable().default(null),
-  /** A constraint pen: the constraint as it is (its params and values) and the algorithms they use. */
-  constraint: z.object({ label: z.string().max(100), description: z.string().max(1000), params: z.array(paramSchema).max(12), library: z.array(algorithmSchema).max(24) }).nullable().default(null),
-}).refine(pen => pen.kind === "interaction" || (pen.kind === "constraint" ? pen.constraint : pen.algorithm), { message: "The pen holds no algorithm or constraint." });
+  /** A constraint pen: the constraint as it is (its params and values). */
+  constraint: z.object({ label: z.string().max(100), description: z.string().max(1000), params: z.array(paramSchema).max(12) }).nullable().default(null),
+}).refine(pen => pen.kind === "interaction" || pen.constraint, { message: "The pen holds no constraint." });
 export type SemanticPen = z.infer<typeof semanticPenSchema>;
 export const compositionStrokeSchema = z.object({ id: z.string().min(1).max(80), tool: z.enum(["pencil", "semantic", "interaction", "eraser"]), color: z.string().max(80), width: z.number().min(.1).max(100), opacity: z.number().min(0).max(1), points: z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).min(1).max(128), semanticPenId: z.string().max(80).nullable() });
 export const imageSchema = z.string().max(8_000_000).regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/);
@@ -31,15 +30,15 @@ export const clarificationSchema = z.object({ clarification: z.string().trim().m
 export const compositionPromptSchema = z.object({ prompt: z.string().trim().min(1).max(2000), tags: z.array(composeTagSchema).max(MAX_COMPOSE_TAGS).default([]) });
 /** machine-refine result: the scene with the refined machine plus the updated Compose prompt. */
 export const machineRefineResultSchema = z.object({ scene: sceneSchema, composePrompt: z.string().max(2000) });
-/** split, as the app takes it: the parts of a constraint (each a constraint of its own) and the algorithms they use. */
-export const splitResultSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms: z.array(algorithmSchema).max(64), parts: z.array(constraintSchema).max(5) });
+/** split, as the app takes it: the parts of a constraint, each a constraint of its own. */
+export const splitResultSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), parts: z.array(constraintSchema).max(5) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
 export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "inspect", "handles", "concern", "explore", "split", "align-kit", "align", "tag-revise", "tag-widget"] as const;
 const inspectScalar = z.union([z.number(), z.string().max(200), z.boolean()]);
 /** Targeted inspection input: the brush's nodes, its param rows and the recorded steps. */
 export const inspectionInputSchema = z.object({
   brushName: z.string().max(100), nodeIds: z.array(idSchema).min(1).max(48),
-  params: z.array(z.object({ key: z.string().max(1200), nodeId: idSchema, constraintId: z.string().max(80), constraint: z.string().max(100), paramId: idSchema, param: z.string().max(100), path: z.string().max(400), type: z.string().max(20) })).max(400),
+  params: z.array(z.object({ key: z.string().max(1200), nodeId: idSchema, constraintId: z.string().max(80), constraint: z.string().max(100), paramId: idSchema, param: z.string().max(100), type: z.string().max(20) })).max(400),
   steps: z.array(z.object({ id: z.number().int(), nodeId: z.string().max(80).nullable(), from: z.string().max(80).nullable(), to: z.string().max(80).nullable(), transitionId: z.string().max(80).nullable(), values: z.record(z.string().max(1200), inspectScalar),
     /** Machine states and the brush roots' m.store at that step. */
     runtime: z.object({ states: z.record(z.string().max(80), z.object({ id: z.string().max(80), elapsed: z.number() })), stores: z.record(z.string().max(80), z.unknown()) }).nullable().default(null) })).max(20),

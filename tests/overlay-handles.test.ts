@@ -55,8 +55,8 @@ test("an each overlay gets a grip on its first items whose condition holds, each
 
 test("handles from AI are kept only when they change a number or toggle of the brush with readable expressions; ids translate between frames", async () => {
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
-  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", path: "", type: "number" },
-    { key: "orb/tint", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "tint", param: "Tint", path: "", type: "color" }];
+  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", type: "number" },
+    { key: "orb/tint", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "tint", param: "Tint", type: "color" }];
   const overlays = [size, { ...size, id: "elsewhere", handle: { ...size.handle!, key: "tree/nope" } }, { ...size, id: "color", handle: { ...size.handle!, key: "orb/tint" } },
     { ...size, id: "broken", handle: { ...size.handle!, value: "start * window.x" } }, { ...size, id: "unknown", handle: { ...size.handle!, value: "start * speed" } }];
   const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], params, steps: [] };
@@ -179,7 +179,7 @@ test("a grip on one item changes that item only: the code is made to read the va
   assert.equal(parameterProblem(scene, code, exposed), null);
 
   // From AI: a grip on each item of an overlay is kept only when the code (with the records) reads its value per item.
-  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", path: "", type: "number" }];
+  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", type: "number" }];
   const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], params, steps: [] };
   const each = { ...size, id: "each", each: "tree:items", x: "item(\"x\")" };
   const ask = (output: object) => withMockedAI(() => ({ summary: "s", overlays: [size, each], parameters: [], ...output }), async () =>

@@ -39,7 +39,7 @@ export function DragAdjustLayer({ scene, stack, zoom, onStart, onValue, onEnd }:
     for (const target of current.targets) {
       const kept = coerceScalar(target.value, draggedValue(target, target.value, current.box, current.from, at, speed));
       if (kept.type !== "number" || kept.value === values[keyOf(target)]) continue;
-      values[keyOf(target)] = kept.value; onValue(current.node.id, target.paramId, target.path ? target.path.split("/") : [], kept.value);
+      values[keyOf(target)] = kept.value; onValue(current.node.id, target.paramId, [], kept.value);
     }
     update({ ...current, now: at, speed, values });
   };

@@ -1,7 +1,6 @@
 import type { Artwork, SemanticPen } from "../lib/schema";
 import type { SketchPanel } from "../lib/sketch-panels";
 import type { Region } from "../lib/scene/schema";
-import type { AlgorithmClip } from "../lib/scene/transfer";
 import type { FrameId } from "../lib/workspace";
 import type { Brush } from "../lib/brushes";
 import type { Scene } from "../lib/scene/schema";
@@ -28,9 +27,6 @@ export type StudioDeps = {
   toast: (message: string) => void;
   focus: (frame: FrameId) => void;
   addPen: (make: (id: string, color: string) => SemanticPen) => void;
-  /** Studio-wide algorithm clipboard, shared by every sketch. */
-  clip: () => AlgorithmClip | null;
-  setClip: (clip: AlgorithmClip) => void;
   activate: (owner: string) => void;
   /** Add a sketch frame beside `fromId` and return its id (no AI involved). */
   createFrame: (fromId: string, name: string) => string | null;

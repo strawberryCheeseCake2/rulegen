@@ -76,9 +76,9 @@ test("every AI intent logs its final validated result and clarification retains 
   const renamed = structuredClone(aiScene); renamed.nodes[0].name = "Bigger tree";
   const results: Record<string, unknown> = {
     extract: aiScene, compose: aiScene, code,
-    transform: { algorithms: [], constraint: { id: "pulse", property: "size", description: "", params: [{ id: "radius", label: "Radius", effect: "spatial", description: "", value: { type: "number", value: 30, min: 10, max: 140, step: 1, unit: "px" } }], inputs: [], drags: [] } },
-    "state-machine": { algorithms: [], constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] } },
-    "machine-refine": { algorithms: [], constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
+    transform: { constraint: { id: "pulse", property: "size", description: "", params: [{ id: "radius", label: "Radius", effect: "spatial", description: "", value: { type: "number", value: 30, min: 10, max: 140, step: 1, unit: "px" } }], inputs: [], drags: [] } },
+    "state-machine": { constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] } },
+    "machine-refine": { constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
     clarification: { clarification: "나무를 키워줘" },
     "compose-prompt": { prompt: "가지를 키우고 자유롭게 그린 배치와 조합해줘", tags: [] },
     revision: { summary: "나무를 키웁니다", ...renamed },
@@ -152,7 +152,7 @@ test("upstream failures retain the provider response and redact keys without lea
 });
 
 test("malformed responses and invalid structured output remain inspectable with the original parse failure", async () => {
-  for (const body of ["<html>not JSON</html>", JSON.stringify({ output: [{ content: [{ type: "output_text", text: '{"algorithms":[],"nodes":[]}' }] }] })]) {
+  for (const body of ["<html>not JSON</html>", JSON.stringify({ output: [{ content: [{ type: "output_text", text: '{"nodes":[]}' }] }] })]) {
     globalThis.fetch = async () => new Response(body);
     await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /Could not parse the model response/);
   }

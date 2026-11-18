@@ -5,7 +5,6 @@ Plan the FSM for the node identified by `targetNodeId` in the supplied `scene`, 
 - A state lists `constraintIds`: constraints OF THE TARGET NODE (its existing ones, by id, and new ones you add in `constraints`), in evaluation order, dependencies first. Every existing constraint that still applies in a phase is listed there; a constraint left out of a state does not run in it.
 - When a phase needs a property to depend on something else (a different relationship, a different params' range), add a NEW constraint for that property in `constraints` (`property` the same name, its own `id`, `description`, `params`, `inputs: []`, `drags: []`) and list it in that phase instead of the other one. Param ids of new constraints must not collide with the node's existing param ids. Never redefine an existing constraint; `constraints: []` when the node's constraints are enough.
 - If `scene` already contains a machine for the node, refine it into finer meaningful phases while preserving its intent and stable ids where they still apply.
-- `algorithms` must be `[]` unless a new constraint truly needs a new definition (then list only new ones).
 
 {{include:contracts/state-planning}}
 
@@ -15,7 +14,6 @@ Return exactly one object matching `prompts/schemas/state-machine.json`. For a c
 
 ```json
 {
-  "algorithms": [],
   "constraints": [
     { "id": "size-growing", "property": "size", "description": "Eases from the resting radius toward the grown radius over the growth time since the click.", "params": [
       { "id": "grown-radius", "label": "Grown radius", "effect": "spatial", "description": "Radius it grows to", "value": { "type": "number", "value": 90, "min": 10, "max": 140, "step": 1, "unit": "px" } },

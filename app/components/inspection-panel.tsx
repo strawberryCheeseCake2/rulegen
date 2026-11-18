@@ -71,7 +71,7 @@ function HiddenParameters({ items, scene, busy, focus, onFocus, onAccept, onReje
     <span className="inspection-muted">Hard-coded values in the code that relate to this concern. The overlay shows them with the current code values even before Accept. Accept adds them as params you can adjust right away (no code regeneration).</span>
     {items.map((item, i) => {
       const status = parameterStatus(item, scene), node = findNode(scene, item.nodeId), constraint = node?.constraints.find(entry => entry.id === item.constraintId);
-      const param = node ? findParam(node, item.id) : undefined, value = param && param.value.type !== "algorithm" ? param.value : null;
+      const param = node ? findParam(node, item.id) : undefined, value = param ? param.value : null;
       const focused = sameFocus(focus, parameterFocus(item));
       return <div key={`${item.nodeId}:${item.id}`} className={`inspection-parameter ${status} ${focused ? "focused" : ""}`}>
         <button type="button" className="inspection-parameter-head" aria-pressed={focused} title="Highlight it in the params panel" onClick={() => onFocus(parameterFocus(item))}>
@@ -366,7 +366,7 @@ export function InspectionPanel(props: Props) {
             const low = Math.min(...numbers), high = Math.max(...numbers);
             const item: InspectionFocus = { kind: "param", nodeId: row.binding.nodeId, id: row.binding.path[0] };
             return <tr key={row.key} className={`${changed.has(row.key) ? "changed" : ""} ${edited || items ? "edited" : ""} ${sameFocus(state.focus, item) ? "focused" : ""}`} onClick={() => focus(item)}>
-              <td><span className="inspection-node">{row.node}</span><span>{row.constraint && `${row.constraint} · `}<b>{row.param}</b>{row.path && ` › ${row.path}`}</span>
+              <td><span className="inspection-node">{row.node}</span><span>{row.constraint && `${row.constraint} · `}<b>{row.param}</b></span>
                 {(edited || items > 0) && <span className="inspection-step-edit" title={edited ? `Recorded ${formatScalar(step!.values[row.key])}; this step is drawn with ${formatScalar(value)} only` : `${items} drawn item(s) at this step have their own value`}>
                   {edited ? `This step only (recorded ${formatScalar(step!.values[row.key])})` : ""}{edited && items ? " · " : ""}{items ? `${items} items only` : ""}
                   {props.onResetEdit && <button type="button" aria-label={`Reset ${row.param} at this step`} title="Back to the recorded value" onClick={e => { e.stopPropagation(); props.onResetEdit!(row.key); }}><Icon name="close" size={9} /></button>}</span>}</td>

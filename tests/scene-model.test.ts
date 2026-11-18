@@ -5,25 +5,17 @@ import { convertScene } from "../app/lib/scene/convert";
 import { sceneSchema } from "../app/lib/scene/validate";
 import { sceneBindings, sceneValues, valueAt } from "../app/lib/scene/values";
 import { clickTarget, descendantIds, groupNodes, layerTree, moveNodes, removeNodes, setParent, ungroupNode, updateNode } from "../app/lib/scene/graph";
-import { importAlgorithms, instantiate } from "../app/lib/scene/algorithms";
-import { makeAlgorithmPen, importAlgorithmCall, penAlgorithm } from "../app/lib/scene/pens";
 import { machineValues, nodeMachine, stateConstraints } from "../app/lib/scene/machines";
 import * as ops from "../app/lib/scene/panel-ops";
 import { createSketchPanel, sketchPanelSchema } from "../app/lib/sketch-panels";
-import type { AlgorithmCall } from "../app/lib/scene/schema";
 
-test("extraction output becomes collections and objects whose algorithm parameters can hold other algorithms", () => {
+test("extraction output becomes collections and objects whose params are scalars", () => {
   const scene = sampleScene();
   assert.deepEqual(layerTree(scene).map(row => [row.node.id, row.depth]), [["tree", 0], ["orb", 1]]);
-  const structure = scene.nodes[0].constraints[0].params[0].value as AlgorithmCall;
-  assert.equal(structure.algorithmId, "recursive-branch");
-  // Arguments follow the definition; the omitted `length` argument expands into a power-decay call.
-  assert.deepEqual(structure.args.map(arg => arg.id), ["depth", "length"]);
-  assert.equal((valueAt(structure, ["depth"]) as { value: number }).value, 5);
-  assert.equal((valueAt(structure, ["length"]) as AlgorithmCall).algorithmId, "power-decay");
-  assert.equal((valueAt(structure, ["length", "ratio"]) as { value: number }).value, .7);
-  // Unused definitions stay in the library as swappable alternatives.
-  assert.ok(scene.algorithms.some(algorithm => algorithm.id === "sine-wave"));
+  const [structure, base, ratio] = scene.nodes[0].constraints[0].params;
+  assert.deepEqual([structure.value, base.value, ratio.value], [num(5, 1, 9), num(140, 20, 300, 1, "px"), num(.7, .3, .95, .01)]);
+  assert.equal((valueAt(structure.value, []) as { value: number }).value, 5, "a value is its own one leaf");
+  assert.equal("algorithms" in scene, false);
   // Collections enclose their members.
   const [tree, orb] = scene.nodes;
   assert.ok(tree.region.x <= orb.region.x && tree.region.x + tree.region.w >= orb.region.x + orb.region.w);
@@ -31,17 +23,15 @@ test("extraction output becomes collections and objects whose algorithm paramete
 
 test("every scalar leaf becomes a live binding, plus optional node layout and visibility", () => {
   const scene = sampleScene();
-  assert.deepEqual(sceneBindings(scene).map(binding => binding.key), ["tree/structure/depth", "tree/structure/length/base", "tree/structure/length/ratio", "tree/ink", "orb/radius", "orb/speed"]);
+  assert.deepEqual(sceneBindings(scene).map(binding => binding.key), ["tree/structure", "tree/base-length", "tree/ratio", "tree/ink", "orb/radius", "orb/speed"]);
   const values = sceneValues(scene);
-  assert.equal(values["tree/structure/length/base"], 140);
+  assert.equal(values["tree/base-length"], 140);
   assert.equal(values["orb/@x"], scene.nodes[1].region.x * 900);
   assert.equal(values["orb/@visible"], true);
 });
 
-test("invalid scenes are rejected: dangling algorithms, self-referencing defaults, object parents and bad slider ranges", () => {
+test("invalid scenes are rejected: object parents and bad slider ranges", () => {
   const bad = (edit: (scene: typeof aiScene) => void) => { const copy = structuredClone(aiScene); edit(copy); return () => convertScene(copy); };
-  assert.throws(bad(s => { (s.nodes[0].constraints[0].params[0].value as { algorithmId: string }).algorithmId = "missing"; }), /Could not find algorithm missing/);
-  assert.throws(bad(s => { s.algorithms[0].params[0].value = { type: "algorithm-ref", algorithmId: "power-decay" }; }), /refers to itself|nested at most/);
   assert.throws(bad(s => { s.nodes[1].constraints[0].params[0].value = num(500, 10, 140); }), /slider range is invalid/);
   // A state that lists a constraint the node does not have keeps only the ones it has.
   const dangling = bad(s => { s.nodes[1].machine!.states[1].constraintIds.push("missing"); })();
@@ -76,36 +66,6 @@ test("layer operations group, ungroup, nest and move members together like Figma
   // Click picks the outer collection first, then goes one level deeper.
   assert.equal(clickTarget(scene, "orb", []), "tree");
   assert.equal(clickTarget(scene, "orb", ["tree"]), "orb");
-});
-
-test("algorithms are reusable: plugged into other params, imported across sketches, carried by pens", () => {
-  const scene = sampleScene();
-  const panel = { ...createSketchPanel(), scene };
-  // Number slot → algorithm → number again.
-  const swapped = { ...panel, ...ops.swapSlot(panel, "orb", "radius", [], { type: "algorithm", algorithmId: "power-decay" }) };
-  assert.equal((swapped.scene.nodes[1].constraints[0].params[0].value as AlgorithmCall).algorithmId, "power-decay");
-  assert.equal(swapped.sceneHistory.length, 1);
-  assert.deepEqual(swapped.dirtyNodeIds, ["orb"]);
-  // Swapping a slot changes the constraint's params, never which states evaluate it.
-  assert.deepEqual(swapped.scene.nodes[1].machine!.states.map(state => state.constraintIds), [["pulse"], ["pulse", "drift"]]);
-  const back = { ...swapped, ...ops.swapSlot(swapped, "orb", "radius", [], { type: "number" }) };
-  assert.equal(back.scene.nodes[1].constraints[0].params[0].value.type, "number");
-  // An algorithm argument can itself be swapped for another algorithm.
-  const nested = { ...panel, ...ops.swapSlot(panel, "tree", "structure", ["depth"], { type: "algorithm", algorithmId: "sine-wave" }) };
-  assert.equal((valueAt(nested.scene.nodes[0].constraints[0].params[0].value, ["depth"]) as AlgorithmCall).algorithmId, "sine-wave");
-  // Same id and same content is reused; same id with different content is renamed.
-  const changed = { ...scene.algorithms[0], description: "different" };
-  const merged = importAlgorithms(scene.algorithms, [scene.algorithms[0], changed]);
-  assert.equal(merged.library.filter(algorithm => algorithm.description === "different")[0].id, "power-decay-2");
-  // Pens carry the call and every definition it depends on.
-  const pen = makeAlgorithmPen(scene, { nodeId: "tree", paramId: "structure" }, "source", "pen", "#3b73c4");
-  assert.deepEqual(pen.algorithm!.library.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
-  assert.equal(pen.source.label, "Tree · Branching");
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", paramId: "ink" }, "source", "x", "#3b73c4"), /param that contains an algorithm/);
-  const other = importAlgorithmCall({ nodes: [], algorithms: [] }, penAlgorithm(pen)!);
-  assert.deepEqual(other.scene.algorithms.map(algorithm => algorithm.id).sort(), ["power-decay", "recursive-branch"]);
-  assert.deepEqual(other.call, pen.algorithm!.call);
-  assert.deepEqual(instantiate(scene.algorithms, "recursive-branch").args.map(arg => arg.id), ["depth", "length"]);
 });
 
 test("a state lists the constraints it evaluates in order; a param edit changes the constraint every state shares", () => {
@@ -156,12 +116,13 @@ test("a node stacks several constraints: add, reorder, fill and remove them with
   const added = { ...panel, ...ops.addConstraint(panel, "tree", "sway") };
   assert.deepEqual(tree()(added).constraints.map(item => item.property), ["branches", "color", "sway"]);
   assert.deepEqual(added.dirtyNodeIds, ["tree"]);
-  // A block dropped on the new constraint lands there; param ids stay unique across the node.
+  // A slider added to the new constraint lands there; param ids stay unique across the node.
   const sway = tree()(added).constraints[2].id;
-  const filled = { ...added, ...ops.addAlgorithmParam(added, "tree", "sine-wave", sway) };
-  const again = { ...filled, ...ops.addAlgorithmParam(filled, "tree", "sine-wave", "ink-wash") };
-  assert.deepEqual(tree()(again).constraints.map(item => item.params.map(param => param.id)), [["structure"], ["ink", "sine-wave-2"], ["sine-wave"]]);
-  assert.ok(sceneBindings(again.scene).some(binding => binding.key === "tree/sine-wave/amplitude"), "keys stay nodeId/paramId whichever constraint holds it");
+  const filled = { ...added, ...ops.addSliderParam(added, "tree", sway) };
+  const again = { ...filled, ...ops.addSliderParam(filled, "tree", "ink-wash") };
+  assert.deepEqual(tree()(again).constraints.map(item => item.params.map(param => param.id)), [["structure", "base-length", "ratio"], ["ink", "value-2"], ["value"]]);
+  assert.equal(tree()(again).constraints[2].params[0].value.type, "number", "a slider is a number");
+  assert.ok(sceneBindings(again.scene).some(binding => binding.key === "tree/value-2"), "keys stay nodeId/paramId whichever constraint holds it");
   const moved = { ...again, ...ops.moveConstraint(again, "tree", sway, -2) };
   assert.deepEqual(tree()(moved).constraints.map(item => item.property), ["sway", "branches", "color"]);
   const renamed = { ...moved, ...ops.editConstraint(moved, "tree", sway, { property: "rotation", description: "바람에 흔들림" }) };
@@ -186,10 +147,10 @@ test("objects stack constraints exactly like collections", () => {
   assert.equal(panel.scene.nodes[1].kind, "object");
   const added = { ...panel, ...ops.addConstraint(panel, "orb", "glow") };
   const glow = added.scene.nodes[1].constraints[2].id;
-  const filled = { ...added, ...ops.addAlgorithmParam(added, "orb", "sine-wave", glow) };
+  const filled = { ...added, ...ops.addSliderParam(added, "orb", glow) };
   const orb = filled.scene.nodes[1];
-  assert.deepEqual(orb.constraints.map(item => [item.property, item.params.map(param => param.id)]), [["size", ["radius"]], ["x", ["speed"]], ["glow", ["sine-wave"]]]);
-  assert.ok(sceneBindings(filled.scene).some(binding => binding.key === "orb/sine-wave/amplitude"));
+  assert.deepEqual(orb.constraints.map(item => [item.property, item.params.map(param => param.id)]), [["size", ["radius"]], ["x", ["speed"]], ["glow", ["value"]]]);
+  assert.ok(sceneBindings(filled.scene).some(binding => binding.key === "orb/value"));
   // Added with no state selected, it joins every state, last in each one's order.
   assert.deepEqual(stateConstraints(orb, "idle").map(item => item.property), ["size", "glow"]);
   assert.deepEqual(stateConstraints(orb, "moving").map(item => item.property), ["size", "x", "glow"]);
@@ -199,7 +160,7 @@ test("collections nest up to five levels: deeper model output is flattened into 
   const { sceneDepth, nodeLevel } = await import("../app/lib/scene/graph");
   const chain = Array.from({ length: 7 }, (_, i) => ({ id: `level-${i + 1}`, kind: i < 6 ? "collection" as const : "object" as const, parentId: i ? `level-${i}` : null, name: `Level ${i + 1}`, description: "", primitive: i < 6 ? "group" : "dot",
     region: { x: .1 + i * .01, y: .1 + i * .01, w: .5, h: .5 }, constraints: [], machine: null }));
-  const scene = convertScene({ algorithms: [], nodes: chain });
+  const scene = convertScene({ nodes: chain });
   assert.equal(sceneDepth(scene), 5);
   assert.deepEqual(scene.nodes.map(node => [node.id, nodeLevel(scene, node.id)]), [["level-1", 1], ["level-2", 2], ["level-3", 3], ["level-4", 4], ["level-5", 5], ["level-6", 5], ["level-7", 5]]);
   assert.equal(scene.nodes.find(node => node.id === "level-7")!.parentId, "level-4", "extra levels attach to the level-4 ancestor");

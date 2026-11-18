@@ -11,8 +11,8 @@ import { alignKitSchema, behaviorFallbacks, emptyIdeal, readsBehavior, type Alig
 // Execution frames: from a targeted inspection, a new frame on the board shows the
 // same brush marks (the step the inspection holds) and runs the brush's execution
 // forward and back with a direct manipulation handle designed as a metaphor for the
-// process the concern is about: its code's own run (checkpoints AI puts in the
-// algorithm, m.trace, and every drawing call, in order), how much of the recorded input
+// process the concern is about: its code's own run (FSM state visits, constraint
+// evaluations and every drawing call, in order), how much of the recorded input
 // has been executed, or which recorded step. Nothing else changes. At the moment the
 // concern is about, the user draws the state they want there (see alignment.ts).
 

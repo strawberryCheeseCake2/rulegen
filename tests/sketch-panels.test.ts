@@ -28,7 +28,7 @@ test("per-sketch panel export preserves selection, directions and unsaved code w
   panels = updateSketchPanel(panels, "sketch-a", "selectedNodeIds", ["orb"]);
   panels = updateSketchPanel(panels, "sketch-a", "editingStates", { orb: "moving" });
   panels = updateSketchPanel(panels, "sketch-a", "runtimeStates", { orb: "idle" });
-  panels = updateSketchPanel(panels, "sketch-a", "codeDraft", "unfinished algorithm edit");
+  panels = updateSketchPanel(panels, "sketch-a", "codeDraft", "unfinished code edit");
   panels = updateSketchPanel(panels, "sketch-a", "instruction", "반복을 적게");
   panels = updateSketchPanel(panels, "sketch-a", "loading", "Generating…");
   const saved = projectSchema.parse({ ...project, activeSketchId: "source", sketchPanels: savedSketchPanels(panels) });
@@ -38,7 +38,7 @@ test("per-sketch panel export preserves selection, directions and unsaved code w
   assert.deepEqual(restored.sketchPanels["sketch-a"].editingStates, { orb: "moving" });
   assert.deepEqual(restored.sketchPanels["sketch-a"].scene, sampleScene());
   assert.equal("runtimeStates" in restored.sketchPanels["sketch-a"], false);
-  assert.equal(restored.sketchPanels["sketch-a"].codeDraft, "unfinished algorithm edit");
+  assert.equal(restored.sketchPanels["sketch-a"].codeDraft, "unfinished code edit");
   assert.equal(restored.sketchPanels["sketch-a"].instruction, "반복을 적게");
   assert.equal("loading" in restored.sketchPanels["sketch-a"], false);
   assert.equal(createSketchPanel(restored.sketchPanels["sketch-a"]).loading, "");

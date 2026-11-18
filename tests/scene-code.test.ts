@@ -18,20 +18,20 @@ test("connected code reads every param live; widget edits and node moves patch o
   assert.equal(first.lines.length, 5);
   assert.equal(first.strokes[0], "#75664e");
   const panel = { ...createSketchPanel(), scene };
-  const edited = { ...panel, ...ops.setParamScalar(panel, "tree", "structure", ["depth"], 7) };
+  const edited = { ...panel, ...ops.setParamScalar(panel, "tree", "structure", [], 7) };
   const recolored = { ...edited, ...ops.setParamScalar(edited, "tree", "ink", [], "#112233") };
   const moved = moveNodes(recolored.scene, ["orb"], .1, 0);
   const source = syncScene(generated.code, moved);
-  assert.ok(source.endsWith(generated.code.slice(generated.code.indexOf("function algo_power_decay"))), "drawing code is untouched");
+  assert.ok(source.endsWith(generated.code.slice(generated.code.indexOf("function decayed"))), "drawing code is untouched");
   const second = run(source); second.draw();
   assert.equal(second.lines.length, 7);
   assert.equal(second.strokes[0], "#112233");
   assert.ok(Math.abs(second.circles[0][0] - first.circles[0][0] - 90) < 1e-6, "layout keys follow the moved object");
   // The sandbox patches the prepared (re-printed) executable the same way.
   const prepared = prepareCode(generated.code);
-  assert.match(syncScene(prepared, moved), /"tree\/structure\/depth": 7/);
+  assert.match(syncScene(prepared, moved), /"tree\/structure": 7/);
   assert.equal(sceneLiveStatus(generated, recolored.scene), "live");
-  const structural = { ...panel, ...ops.swapSlot(panel, "orb", "radius", [], { type: "algorithm", algorithmId: "sine-wave" }) };
+  const structural = { ...panel, ...ops.addSliderParam(panel, "orb", "pulse") };
   assert.equal(sceneLiveStatus(generated, structural.scene), "changed");
 });
 
@@ -148,7 +148,7 @@ test("value-only changes keep the program identical, so the running result updat
 });
 
 test("module state lives in m.store: the factory scope holds only functions and constants", () => {
-  const body = (inside: string, draw = "") => sceneProgram.replace("  function algo_power_decay", `  ${inside}\n  function algo_power_decay`).replace("    draw() {\n", `    draw() {\n${draw}`);
+  const body = (inside: string, draw = "") => sceneProgram.replace("  function decayed", `  ${inside}\n  function decayed`).replace("    draw() {\n", `    draw() {\n${draw}`);
   assert.throws(() => connect(body("let x = 0;")), /m\.store/);
   assert.throws(() => connect(body("const trail = [];")), /m\.store/);
   assert.throws(() => connect(body("const v = p.createVector(1, 2);")), /m\.store/);
@@ -183,7 +183,7 @@ test("a value change re-runs only the setups that read it, so trails and drag st
   const scene = sampleScene();
   const module = moduleSource("tree", `function (m) {
     return {
-      setup() { m.store.trail = []; m.store.slots = m.v("tree/structure/depth"); },
+      setup() { m.store.trail = []; m.store.slots = m.v("tree/structure"); },
       draw() { p.line(0, 0, m.v("orb/radius"), 0); },
       mouseDragged() { m.store.trail.push(1); },
     };
@@ -195,7 +195,7 @@ test("a value change re-runs only the setups that read it, so trails and drag st
   assert.equal(sketch.read("rulegenLive[0].store.trail.length"), 2);
   sketch.read(`rulegenSetup(new Set([${JSON.stringify("orb/radius")}]))`);
   assert.equal(sketch.read("rulegenLive[0].store.trail.length"), 2, "radius is read only in draw: the trail stays");
-  sketch.read(`rulegenSetup(new Set([${JSON.stringify("tree/structure/depth")}]))`);
+  sketch.read(`rulegenSetup(new Set([${JSON.stringify("tree/structure")}]))`);
   assert.equal(sketch.read("rulegenLive[0].store.trail.length"), 0, "depth sized the store in setup: it is rebuilt");
   sketch.read("p.mouseDragged(); rulegenSetup()");
   assert.equal(sketch.read("rulegenLive[0].store.trail.length"), 0, "without a change list every setup runs (start, re-render)");

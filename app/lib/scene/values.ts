@@ -1,15 +1,13 @@
-import type { AlgorithmCall, NumberValue, ScalarValue, Scene, SceneBinding, SceneNode, Value } from "./schema";
+import type { NumberValue, ScalarValue, Scene, SceneBinding, SceneNode, Value } from "./schema";
 import { nodeParams } from "./constraints";
 
-export const isAlgorithm = (value: Value): value is AlgorithmCall => value.type === "algorithm";
 export const bindingKey = (path: string[]) => path.map(encodeURIComponent).join("/");
 export const LAYOUT_FIELDS = ["x", "y", "w", "h", "visible"] as const;
 export const layoutKey = (nodeId: string, field: (typeof LAYOUT_FIELDS)[number]) => `${encodeURIComponent(nodeId)}/@${field}`;
 
-/** Every editable scalar inside a value, addressed by the argument ids leading to it. */
+/** The editable scalar of a value (a param is one slider), addressed by `prefix`. */
 export function valueLeaves(value: Value, prefix: string[] = []): { path: string[]; value: ScalarValue }[] {
-  if (!isAlgorithm(value)) return [{ path: prefix, value }];
-  return value.args.flatMap(arg => valueLeaves(arg.value, [...prefix, arg.id]));
+  return [{ path: prefix, value }];
 }
 export function nodeLeaves(node: SceneNode) {
   return nodeParams(node).flatMap(param => valueLeaves(param.value, [node.id, param.id]));
@@ -30,25 +28,11 @@ export function sceneValues(scene: Scene) {
 }
 
 /** Structural signature: equal signatures share the same bindings. */
-export function valueShape(value: Value): string {
-  return isAlgorithm(value) ? `${value.algorithmId}(${value.args.map(arg => `${arg.id}:${valueShape(arg.value)}`).join(",")})` : value.type;
-}
-export function valueDepth(value: Value): number {
-  return isAlgorithm(value) ? 1 + Math.max(0, ...value.args.map(arg => valueDepth(arg.value))) : 0;
-}
+export const valueShape = (value: Value): string => value.type;
 
-export function valueAt(value: Value, path: string[]): Value | undefined {
-  if (!path.length) return value;
-  if (!isAlgorithm(value)) return undefined;
-  const arg = value.args.find(item => item.id === path[0]);
-  return arg && valueAt(arg.value, path.slice(1));
-}
-export function replaceAt(value: Value, path: string[], next: (current: Value) => Value): Value {
-  if (!path.length) return next(value);
-  if (!isAlgorithm(value)) return value;
-  return { ...value, args: value.args.map(arg => arg.id === path[0] ? { ...arg, value: replaceAt(arg.value, path.slice(1), next) } : arg) };
-}
-
+/** The value at a path inside a param (only the empty path: a param is one scalar). */
+export const valueAt = (value: Value, path: string[]): Value | undefined => path.length ? undefined : value;
+export const replaceAt = (value: Value, path: string[], next: (current: Value) => Value): Value => path.length ? value : next(value);
 /** Accept only a value valid for the scalar's own widget (step, bounds, options). */
 export function coerceScalar(current: ScalarValue, raw: ScalarValue["value"]): ScalarValue {
   if (current.type === "number" && typeof raw === "number" && Number.isFinite(raw)) {
@@ -60,7 +44,7 @@ export function coerceScalar(current: ScalarValue, raw: ScalarValue["value"]): S
   if (current.type === "toggle" && typeof raw === "boolean") return { ...current, value: raw };
   return current;
 }
-export const setScalarAt = (value: Value, path: string[], raw: ScalarValue["value"]) => replaceAt(value, path, current => isAlgorithm(current) ? current : coerceScalar(current, raw));
+export const setScalarAt = (value: Value, path: string[], raw: ScalarValue["value"]) => replaceAt(value, path, current => coerceScalar(current, raw));
 
 export const defaultNumber = (): NumberValue => ({ type: "number", value: 1, min: 0, max: 10, step: .1, unit: "" });
 
@@ -70,8 +54,7 @@ export function scalarProblem(value: ScalarValue) {
   return "";
 }
 
-export function describeValue(value: Value, names: (algorithmId: string) => string = id => id): string {
-  if (isAlgorithm(value)) return `${names(value.algorithmId)}(${value.args.map(arg => `${arg.id}=${describeValue(arg.value, names)}`).join(", ")})`;
+export function describeValue(value: Value): string {
   if (value.type === "number") return `${value.value}${value.unit ? ` ${value.unit}` : ""} [${value.min}–${value.max}]`;
   if (value.type === "toggle") return value.value ? "On" : "Off";
   return String(value.value);

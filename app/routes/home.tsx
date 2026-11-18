@@ -21,7 +21,6 @@ import { handleLeaves, handleConstraints, proxyGroups } from "../lib/scene/handl
 import { ADJUST_IN_PLACE_INSTRUCTION, bakesInput, isProxyFrame, MAX_PROXY_FRAMES, placeProxyGroup, planProxyFrames, proxiesOf, type ProxyFrame as ProxyFrameData } from "../lib/proxy-frames";
 import { ConstraintInspector } from "../components/scene/constraint-inspector";
 import { PanelResizer } from "../components/panel-resizer";
-import { AlgorithmLibrary, type AlgorithmSource } from "../components/scene/algorithm-library";
 import { NodeMachinePanel } from "../components/scene/node-machine-panel";
 import { InspectionPanel } from "../components/inspection-panel";
 import { InspectionOverlay } from "../components/inspection-overlay";
@@ -52,21 +51,20 @@ import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
 import { type SketchFrame, projectSchema, exampleStrokes, readPhoto, downloadFile } from "../lib/project";
-import { compositionContext, createInteractionPen, semanticPenColors } from "../lib/algorithm-pens";
+import { compositionContext, createInteractionPen, semanticPenColors } from "../lib/semantic-pens";
 import { createSketchPanel, clearedResultAnnotations, savedSketchPanels, type SketchPanel } from "../lib/sketch-panels";
 import { emptyScene, type Scene } from "../lib/scene/schema";
-import { algorithmClosure, instantiate } from "../lib/scene/algorithms";
 import { findNode } from "../lib/scene/graph";
 import { syncScene } from "../lib/scene/machines";
 import { liveSceneSource, sceneLiveStatus } from "../lib/scene/live";
 import { editingState, inspectedNode, inspectedConstraints, commitScene } from "../lib/scene/panel-ops";
 import { DragAdjustLayer } from "../components/scene/drag-adjust";
-import { makeConstraintPen, penAlgorithm } from "../lib/scene/pens";
+import { makeConstraintPen } from "../lib/scene/pens";
 import { markLogged, reportError } from "../lib/error-report";
 import { sceneChanges } from "../lib/scene/revisions";
 import type { StudioDeps, PanelPatch } from "../studio/deps";
 import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
-import { copyConstraint, NODE_DRAG_TYPE, readNodeDrag, type AlgorithmClip, type ConstraintClip } from "../lib/scene/transfer";
+import { copyConstraint, NODE_DRAG_TYPE, readNodeDrag, type ConstraintClip } from "../lib/scene/transfer";
 import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
 
 export function meta({}: Route.MetaArgs) { return [{ title: "GenTool — From a mark to a system" }, { name: "description", content: "Draw, extract collections and objects, and create p5.js systems with AI." }]; }
@@ -185,9 +183,6 @@ export default function Home() {
   /** The Layers pick in this frame, while its layer is still the selected one. */
   const layerPick = (frameId: string) => layerConstraint?.frameId === frameId && panelsRef.current[frameId]?.selectedNodeIds[0] === layerConstraint.nodeId ? layerConstraint : null;
   const setShowComposeTags = (on: boolean) => { setShowComposeTagsState(on); try { localStorage.setItem("rulegen:compose-tags", on ? "1" : "0"); } catch { /* storage unavailable */ } };
-  // Studio-wide clipboard for algorithm blocks (copy in one sketch, paste in any).
-  const [clip, setClip] = useState<AlgorithmClip | null>(null);
-  const clipRef = useRef(clip); clipRef.current = clip;
   const [penSettingsOpen, setPenSettingsOpen] = useState(false);
   // Right panel width chosen by dragging its edge (null = responsive default); remembered per browser.
   const inspectorPanel = useRef<HTMLElement>(null), layerPanel = useRef<HTMLElement>(null);
@@ -195,8 +190,8 @@ export default function Home() {
   const [layerWidth, setLayerWidth] = useState<number | null>(null);
   const [semanticPens, setSemanticPens] = useState<SemanticPen[]>([]), [activeSemanticPenId, setActiveSemanticPenId] = useState<string | null>(null);
   const [interactionPen, setInteractionPen] = useState<SemanticPen>(createInteractionPen);
-  const algorithmPens = [interactionPen, ...semanticPens];
-  const activeSemanticPen = algorithmPens.find(pen => pen.id === activeSemanticPenId);
+  const drawingPens = [interactionPen, ...semanticPens];
+  const activeSemanticPen = drawingPens.find(pen => pen.id === activeSemanticPenId);
   const [toast, setToast] = useState(""), [model, setModel] = useState(""), [configured, setConfigured] = useState<boolean | null>(null);
   const [restoreReady, setRestoreReady] = useState(false), [saveState, setSaveState] = useState("Local draft");
   /** The frame whose JSON (state machines, params, code) is shown to copy. */
@@ -277,7 +272,7 @@ export default function Home() {
     const baseName = pen.name.slice(0, 90); let name = baseName, suffix = 2;
     while (semanticPens.some(item => item.name === name)) name = `${baseName} ${suffix++}`;
     const next = { ...pen, name };
-    setSemanticPens(current => [...current, next]); selectAlgorithmPen(next);
+    setSemanticPens(current => [...current, next]); selectDrawingPen(next);
     setToast(`Added ${name} to the toolbar. Draw freely, then combine with Compose prompt.`);
   }
   /** A new sketch frame placed beside `fromId` (used for extracted/composed scenes). */
@@ -349,7 +344,7 @@ export default function Home() {
     },
     artwork: artworkOf, documentId: () => activeDocument.current, requestId: owner => requestNumbers.current.get(owner) ?? 0,
     toast: setToast, focus: setPendingFrameFocus, addPen,
-    clip: () => clipRef.current, setClip: next => { clipRef.current = next; setClip(next); }, activate: id => activateSketch(id), active: () => activeSketchRef.current,
+    activate: id => activateSketch(id), active: () => activeSketchRef.current,
   };
   const edits = sceneEdits(deps, activeSketch), ai = sceneAI(deps, activeSketch), revisions = revisionActions(deps, activeSketch);
 
@@ -518,7 +513,7 @@ export default function Home() {
     if (!isProxyFrame(id)) { activateSketch(id); return; }
     const proxy = proxyFramesRef.current.find(frame => frame.id === id); if (!proxy) return;
     activateSketch(proxy.targetFrameId);
-    if (findNode(panelsRef.current[proxy.targetFrameId]?.scene ?? { nodes: [], algorithms: [] }, proxy.nodeId) && panelsRef.current[proxy.targetFrameId]?.selectedNodeIds.join() !== proxy.nodeId) sceneEdits(deps, proxy.targetFrameId).select(proxy.nodeId);
+    if (findNode(panelsRef.current[proxy.targetFrameId]?.scene ?? { nodes: [] }, proxy.nodeId) && panelsRef.current[proxy.targetFrameId]?.selectedNodeIds.join() !== proxy.nodeId) sceneEdits(deps, proxy.targetFrameId).select(proxy.nodeId);
   }
   /** Delete the frames picked on the board (frames still busy with AI work stay). */
   function deleteFrames(ids: FrameId[]) {
@@ -1277,7 +1272,7 @@ export default function Home() {
     if (root) updatePanel(frameId, { selectedNodeIds: [root] });
     setPendingFrameFocus(frameId as FrameId);
   }
-  function selectAlgorithmPen(pen: SemanticPen) {
+  function selectDrawingPen(pen: SemanticPen) {
     setActiveSemanticPenId(pen.id); setTool("semantic"); patchActive({ annotating: false }); setPencilOpen(false); setPenSettingsOpen(true);
     workspaceCanvas.current?.focus(activeSketch as FrameId);
   }
@@ -1358,13 +1353,6 @@ export default function Home() {
     const machine = findNode(scene, nodeId)?.machine; if (!machine) return;
     patchActive(previous => ({ machinePlaying: true, stateJump: { nodeId, stateId: machine.initialState, revision: (previous.stateJump?.revision || 0) + 1 }, editingStates: { ...previous.editingStates, [nodeId]: machine.initialState } }));
   }
-  // Algorithms from other sketches and from pens can be imported into this sketch.
-  const algorithmImports: (AlgorithmSource & { source: NonNullable<ReturnType<typeof penAlgorithm>> })[] = [
-    ...Object.entries(panels).filter(([id]) => id !== activeSketch).flatMap(([id, other]) => other.scene.algorithms.map(algorithm => ({
-      key: `sketch:${id}:${algorithm.id}`, label: artworkOf(id)?.name || id, algorithm,
-      source: { call: instantiate(other.scene.algorithms, algorithm.id), library: algorithmClosure(other.scene.algorithms, [algorithm.id]) } }))),
-    ...semanticPens.flatMap(pen => { const source = penAlgorithm(pen); const algorithm = source?.library.find(item => item.id === source.call.algorithmId); return source && algorithm ? [{ key: `pen:${pen.id}`, label: pen.name, algorithm, source }] : []; }),
-  ].filter(item => !scene.algorithms.some(algorithm => JSON.stringify(algorithm) === JSON.stringify(item.algorithm)));
 
   // ── Frames on the infinite canvas ──────────────────────────────────────────
   // Layers dragged from the Layers panel can land on a sketch frame or on its result frame.
@@ -1576,7 +1564,7 @@ export default function Home() {
       {frame.generated && <button aria-label="Re-render result" title="Re-render from the start (its inspect history starts over too)" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null, ...withoutHistory(previous) })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
-      {frame.scene.nodes.some(node => node.constraints.some(item => item.params.length)) && <button disabled={frameBusy} title={frame.exampleOf && !frame.exampleOf.scope ? "Divide this constraint into the algorithms inside it, each in a frame linked to this one"
+      {frame.scene.nodes.some(node => node.constraints.some(item => item.params.length)) && <button disabled={frameBusy} title={frame.exampleOf && !frame.exampleOf.scope ? "Divide this constraint into the computations inside it, each in a frame linked to this one"
           : "Decompose one level (base state): into nodes, then a node into its constraints (as one group) and its child nodes, then single constraints. Decompose a part to go further"}
         onClick={e => { e.stopPropagation(); activateSketch(id); void sceneAI(deps, id).decompose(); }}><Icon name="layers" size={13} />Decompose</button>}
       {(() => { // Handles for every constraint of every node; when all have them, the button opens every node's proxy group.
@@ -1715,14 +1703,14 @@ export default function Home() {
     {node ? (() => { const transform = (apply: () => void) => guard(node.id, "constraint", apply), machine = (apply: () => void) => guard(node.id, "state machine", apply);
       // The selected targeted tool's hidden parameters on this node, not decided yet: faint in the constraint they would join.
       const suggested = inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result.parameters ?? [] : [];
-      return <ConstraintInspector node={node} constraints={inspectedConstraints(panel, node)} library={scene.algorithms} state={nodeState} busy={busy} clip={clip}
+      return <ConstraintInspector node={node} constraints={inspectedConstraints(panel, node)} state={nodeState} busy={busy}
       onNode={patch => "description" in patch ? guard(node.id, "description", () => edits.editNode(node.id, patch)) : edits.editNode(node.id, patch)} onConstraint={(id, patch) => transform(() => edits.editConstraint(node.id, id, patch))}
       onAddConstraint={() => transform(() => edits.addConstraint(node.id))} onRemoveConstraint={id => transform(() => edits.removeConstraint(node.id, id))} onMoveConstraint={(id, offset) => transform(() => edits.moveConstraint(node.id, id, offset))}
       onStateConstraint={(id, included) => nodeState && machine(() => edits.stateConstraint(node.id, nodeState.id, id, included))} onChooseState={stateId => edits.chooseState(node.id, stateId)}
       onState={patch => nodeState && machine(() => edits.editState(node.id, nodeState.id, patch))} onTransition={(id, patch) => machine(() => edits.editTransition(node.id, id, patch))}
-      onScalar={(paramId, path, value) => edits.scalar(node.id, paramId, path, value)} onDragOff={(constraintId, index, off) => edits.dragOff(node.id, constraintId, index, off)} onSwap={(paramId, path, choice) => transform(() => edits.swap(node.id, paramId, path, choice))}
+      onScalar={(paramId, path, value) => edits.scalar(node.id, paramId, path, value)} onDragOff={(constraintId, index, off) => edits.dragOff(node.id, constraintId, index, off)}
       onParam={(paramId, patch) => transform(() => edits.editParam(node.id, paramId, patch))} onRemoveParam={paramId => transform(() => edits.removeParam(node.id, paramId))}
-      onAddParam={(algorithmId, constraintId) => transform(() => edits.addParam(node.id, algorithmId, constraintId))} onRegenerate={target => transform(() => updatePanel(activeSketch, { transformDraft: { nodeId: node.id, target, instruction: "", annotating: false, marks: [] } }))}
+      onAddParam={constraintId => transform(() => edits.addParam(node.id, constraintId))} onRegenerate={target => transform(() => updatePanel(activeSketch, { transformDraft: { nodeId: node.id, target, instruction: "", annotating: false, marks: [] } }))}
       draft={panel.transformDraft?.nodeId === node.id ? panel.transformDraft : null}
       onDraftChange={patch => updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, ...patch } } : {})}
       onDraftSubmit={() => { const draft = panel.transformDraft; if (!draft) return; updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, annotating: false } } : {}); void ai.regenerate(draft.nodeId, draft.target, draft.instruction, draft.marks); }}
@@ -1733,11 +1721,9 @@ export default function Home() {
       onAcceptSuggestion={index => suggested[index] && acceptSuggested(suggested[index])} onRejectSuggestion={index => rejectSuggested(index, true)}
       highlightConstraintId={(focus => inspectionKind && focus?.kind === "constraint" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)
         ?? (layerPick(activeSketch)?.nodeId === node.id ? layerPick(activeSketch)!.constraintId : null)}
-      onMakePen={(paramId, path) => edits.makePen({ nodeId: node.id, paramId, path })}
       onHandle={(paramId, handle) => edits.handle(node.id, paramId, handle)} onDesignHandles={(target, instruction) => { void ai.suggestHandles(node.id, target, instruction); }}
       onOpenProxy={() => openProxy(activeSketch, node.id)} handleErrors={nodeHandleErrors(activeSketch, node)}
-      onCopy={(paramId, path) => edits.copySlot(node.id, paramId, path)} onPaste={(paramId, path, dropped) => transform(() => edits.pasteSlot(node.id, paramId, path, dropped))}
-      clipFor={(paramId, path) => edits.clipFor(node.id, paramId, path)} onAddBlock={(block, constraintId) => transform(() => edits.addBlock(node.id, block, constraintId))} onGenerateMachine={() => machine(() => { void ai.generateMachine(node.id); })} onRemoveMachine={() => machine(() => edits.removeMachine(node.id))} />; })()
+      onGenerateMachine={() => machine(() => { void ai.generateMachine(node.id); })} onRemoveMachine={() => machine(() => edits.removeMachine(node.id))} />; })()
       : <><div className="section-kicker">LOOK A LITTLE CLOSER</div><h2>Every sketch is<br />a set of systems.</h2>
         <p className="section-description">{scene.nodes.length ? "Select a brush stamp or object in Layers or on the sketch to edit its constraint." : "Draw or attach a photo, then extract its collections and objects."}</p>
         {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span>
@@ -1746,10 +1732,6 @@ export default function Home() {
           <button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
         {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} title="Extracts again with “Your direction” below" onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
       </>}
-    <AlgorithmLibrary scene={scene} busy={busy} targetName={node?.name || null} imports={algorithmImports}
-      onEdit={edits.editAlgorithm} onUse={algorithmId => { if (node) edits.addParam(node.id, algorithmId); }} onMakePen={algorithmId => edits.makePen({ algorithmId })}
-      onCopy={edits.copyDefinition} clipFor={edits.definitionClip}
-      onImport={key => { const item = algorithmImports.find(entry => entry.key === key); if (item) { edits.importAlgorithm(item.source); setToast(`Imported the ${item.algorithm.name} block into this sketch.`); } }} />
   </>;
 
   return <div className="studio live-studio freeform-studio scene-studio">
@@ -1757,10 +1739,10 @@ export default function Home() {
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Attach photograph" onChange={e => { if (e.target.files?.[0]) void attach(e.target.files[0]); e.target.value = ""; }} />
     <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("The project file is too large."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "Choose a valid Rulegen project JSON file." }); } }} />
     <div className="workspace">
-      <ToolRail tool={tool} inspectionEraser={brushPick?.kind === "inspect-annotate" ? inspectionEraser : undefined} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={algorithmPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
+      <ToolRail tool={tool} inspectionEraser={brushPick?.kind === "inspect-annotate" ? inspectionEraser : undefined} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={drawingPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
         busy={busy} canAddSketch={!busy && (sketchFrames.length < MAX_SKETCH_FRAMES || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
         onTool={chooseTool} onPencilClose={() => setPencilOpen(false)} onColor={setColor} onWidth={setWidth} onOpacity={setOpacity}
-        onPen={pen => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectAlgorithmPen(pen); }}
+        onPen={pen => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectDrawingPen(pen); }}
         onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
@@ -1803,7 +1785,6 @@ export default function Home() {
       <aside ref={inspectorPanel} className={`inspector ${inspectorWidth ? "inspector-resized" : ""}`} style={inspectorWidth ? { "--inspector-width": `${inspectorWidth}px` } as React.CSSProperties : undefined}>
         <PanelResizer label="Resize params panel" min={280} max={Math.max(320, Math.min(900, (typeof window === "undefined" ? 1400 : window.innerWidth) - 520))}
           measure={() => inspectorPanel.current?.getBoundingClientRect().width || 354} onResize={setInspectorWidth} onReset={() => setInspectorWidth(null)} /><div className="inspector-title"><span aria-label="Inspector sketch" title={currentSketch.name}>{node ? `${currentSketch.name} / ${node.name}` : currentSketch.name}</span><Icon name="spark" size={17} /></div>
-        {clip && <div className="block-clipboard" title="Right-click a socket to paste, or drag blocks from the palette"><span className="algorithm-badge">ƒ</span>Clipboard · <strong>{clip.label}</strong></div>}
         {panel.loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{panel.loading}</span><button onClick={() => cancel()}>Cancel</button></div>}{panel.error && <div className="error-banner" role="alert"><span>{panel.error}</span><button aria-label="Dismiss error" onClick={() => patchActive({ error: "" })}><Icon name="close" size={14} /></button></div>}
         <div ref={inspector} className="inspector-content live-inspector-content">
           {!annotating && <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} tags={panel.composeTags.length} showTags={showComposeTags} onShowTags={setShowComposeTags}
@@ -1864,7 +1845,7 @@ export default function Home() {
       data={frameExport({ id: frameJson, name: artworkOf(frameJson)?.name || frameJson, scene: panels[frameJson].scene, generated: panels[frameJson].generated,
         brushOf: nodeId => { const role = brushRole(panels[frameJson].scene, frameJson, nodeId, brushes); return role ? { name: role.brush.name, master: role.master } : null; },
         brushes: brushes.filter(brush => brushNodeIds(panels[frameJson].scene, brush, frameJson).length).map(brush => ({ id: brush.id, name: brush.name, roots: brushRoots(panels[frameJson].scene, brush, frameJson), targeted: brush.targeted })) })} />}
-    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>Sketches, photos, Collections, Objects, algorithm blocks, and code are saved together. You can download or copy them as a JSON file.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("Copied the project JSON."); } catch { patchActive({ error: "Select the JSON text to copy it, or download it." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
+    {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>Sketches, photos, Collections, Objects, constraints, and code are saved together. You can download or copy them as a JSON file.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("Copied the project JSON."); } catch { patchActive({ error: "Select the JSON text to copy it, or download it." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
     {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>Starting a new exploration replaces the current local draft. Export it as JSON to reopen it anytime.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
   </div>;
 }

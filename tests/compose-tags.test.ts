@@ -59,10 +59,9 @@ test("the compose-prompt prompt asks for tags on stroke ids, with no coordinates
 test("a tag's constraint finds the minimal examples Decompose made of it, through the pen that carries it", async () => {
   const { penExamples } = await import("../app/lib/compose-tags");
   const { sampleScene } = await import("./fixtures/scene");
-  const scene = sampleScene(), pen = (over: object) => ({ name: "Pen", color: "#3b73c4", frameId: "a", nodeId: "tree", constraint: "", algorithmId: "", ...over });
+  const scene = sampleScene(), pen = (over: object) => ({ name: "Pen", color: "#3b73c4", frameId: "a", nodeId: "tree", constraint: "", ...over });
   const frames = { a: { scene, exampleOf: null }, ex1: { scene, exampleOf: { frameId: "a", nodeId: "tree", constraintId: "branching-growth" } }, ex2: { scene, exampleOf: { frameId: "a", nodeId: "orb", constraintId: "pulse" } }, other: { scene, exampleOf: { frameId: "b", nodeId: "tree", constraintId: "branching-growth" } } };
   assert.deepEqual(penExamples(pen({ constraint: "branches" }), frames), ["ex1"], "a constraint pen: the examples of the constraint it was taken from");
-  assert.deepEqual(penExamples(pen({ algorithmId: "recursive-branch" }), frames), ["ex1"], "an algorithm pen: the examples of the constraints using its algorithm");
   assert.deepEqual(penExamples(pen({ frameId: "ex2", nodeId: "orb", constraint: "size" }), frames), ["ex2"], "a pen made from an example: that example");
   assert.deepEqual(penExamples(pen({ constraint: "Nope" }), frames), []); assert.deepEqual(penExamples(null, frames), []);
   assert.deepEqual(penExamples(pen({ frameId: "gone", constraint: "branches" }), frames), []);
@@ -116,7 +115,7 @@ test("the compose intent takes the tags in place of a text prompt, without their
 test("a tag pen written before pens kept where they were made is found among the sketch's pens by name and color", async () => {
   const { placedPen, penExamples } = await import("../app/lib/compose-tags");
   const { sampleScene } = await import("./fixtures/scene");
-  const old = { name: "Grow pen", color: "#C4547D", frameId: "", nodeId: "", constraint: "", algorithmId: "" };
+  const old = { name: "Grow pen", color: "#C4547D", frameId: "", nodeId: "", constraint: "" };
   const pens = [{ id: "x", name: "Other", color: "#c4547d" }, { id: "y", name: "Grow pen", color: "#c4547d", sourceSketchId: "ex", source: { nodeId: "orb" }, constraint: { label: "size" } }];
   const placed = placedPen(old, pens)!;
   assert.deepEqual([placed.frameId, placed.nodeId, placed.constraint, placed.color], ["ex", "orb", "size", "#C4547D"]);
@@ -165,7 +164,7 @@ test("tag-revise changes one constraint of a tag as asked: the AI sees the tags 
   const { runAI } = await import("../app/server/ai.server");
   const { withMockedAI } = await import("./fixtures/scene");
   const { reviseTag, tagRevisionSchema } = await import("../app/lib/compose-tags");
-  const pens = [{ kind: "algorithm", id: "mark-pen-1", name: "Power", color: "#3b73c4", sourceSketchId: "f", source: { nodeId: "n", label: "N" }, meaning: "", algorithm: { call: { type: "algorithm", algorithmId: "power", args: [] }, library: [] } }];
+  const pens = [{ kind: "constraint", id: "mark-pen-1", name: "Power", color: "#3b73c4", sourceSketchId: "f", source: { nodeId: "n", label: "N" }, meaning: "", constraint: { label: "size", description: "", params: [] } }];
   const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [
     { label: "Size", effect: "spatial", how: "grows", penId: "mark-pen-1", params: [{ label: "Exponent", value: "1.4", how: "" }] },
     { label: "Hover", effect: "temporal", how: "grows on hover", penId: "", params: [] }] })], strokes, pens);

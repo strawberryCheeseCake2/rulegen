@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { MAX_NESTING_DEPTH, MAX_NODE_PARAMS, sceneShapeSchema, type Scene } from "./schema";
 import { nodeParams } from "./constraints";
-import { validateAlgorithms, validateCall } from "./algorithms";
 import { ancestorIds, findNode, sceneDepth } from "./graph";
 import { validateMachine } from "./machines";
 import { scalarProblem, valueLeaves } from "./values";
@@ -10,7 +9,6 @@ import { scalarProblem, valueLeaves } from "./values";
 export function validateScene(scene: Scene) {
   const ids = scene.nodes.map(node => node.id);
   if (new Set(ids).size !== ids.length) throw new Error("Duplicate Collection/Object ID.");
-  validateAlgorithms(scene.algorithms);
   if (sceneDepth(scene) > MAX_NESTING_DEPTH) throw new Error(`Collections can be nested at most ${MAX_NESTING_DEPTH} levels deep.`);
   for (const node of scene.nodes) {
     if (node.parentId) {
@@ -24,7 +22,6 @@ export function validateScene(scene: Scene) {
     if (new Set(params).size !== params.length) throw new Error(`${node.name} has duplicate param IDs.`);
     if (params.length > MAX_NODE_PARAMS) throw new Error(`${node.name} can have at most ${MAX_NODE_PARAMS} params.`);
     for (const param of nodeParams(node)) {
-      validateCall(scene.algorithms, param.value);
       for (const leaf of valueLeaves(param.value)) { const problem = scalarProblem(leaf.value); if (problem) throw new Error(`${node.name} · ${param.label}: ${problem}`); }
     }
     if (node.machine) validateMachine(node, node.machine);

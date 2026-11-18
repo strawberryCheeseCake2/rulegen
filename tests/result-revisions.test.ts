@@ -16,7 +16,7 @@ after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previo
 const image = "data:image/png;base64,AAAA";
 const annotations = [{ id: "a", points: [{ x: .1, y: .1 }, { x: .3, y: .2 }] }];
 
-test("review lists added, changed and removed collections, params and algorithms without mutating the scene", () => {
+test("review lists added, changed and removed collections and params without mutating the scene", () => {
   const scene = sampleScene(), original = JSON.stringify(scene);
   let proposed = updateNode(scene, "orb", node => ({ ...node, constraints: [{ ...node.constraints[0], params: [{ ...node.constraints[0].params[0], value: num(60, 10, 140, 1, "px") }] }] }));
   proposed = { ...proposed, nodes: [...proposed.nodes, { ...proposed.nodes[1], id: "leaf", name: "Leaf", machine: null }] };

@@ -1,7 +1,7 @@
 import { brushSchema, MAX_BRUSHES } from "./brushes";
 import { z } from "zod";
 import { pointSchema, imageSchema, semanticPenSchema, type Stroke } from "./schema";
-import { createInteractionPen } from "./algorithm-pens";
+import { createInteractionPen } from "./semantic-pens";
 import { ensureFramePositions, liveGroups, MAX_SKETCH_FRAMES, workspaceSchema } from "./workspace";
 import { sketchPanelSchema } from "./sketch-panels";
 import { MAX_PROXY_FRAMES, proxyFrameSchema } from "./proxy-frames";

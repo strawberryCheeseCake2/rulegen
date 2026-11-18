@@ -69,7 +69,7 @@ export async function inspectConcern(deps: StudioDeps, owner: string, brush: Bru
     // The code, so hard-coded constants the concern depends on can be suggested as parameters.
     const result: InspectResult = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
       inspection: { brushName: brush.name, nodeIds, cursor: heldIndex(state),
-        params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+        params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: stepValues(item)!, runtime: runtimeForAI(item, nodeIds) })),
         marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update } }, owner));
     options.onTimed?.(performance.now() - started);
@@ -114,7 +114,7 @@ function alignRequest(deps: StudioDeps, owner: string, brush: Brush, intent: "al
   const step = { id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: context.step.values, runtime: context.step.runtime };
   return { intent, scene: panel.scene, targetNodeId: nodeIds[0], instruction: note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
     inspection: { brushName: brush.name, nodeIds, cursor: 0, marks: compactMarks(marks, MAX_MARKS), markStyles: [],
-      params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
+      params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, type: row.binding.type })),
       steps: [{ id: step.id, nodeId: null, from: null, to: null, transitionId: null, values: step.values, runtime: runtimeForAI(step, nodeIds) }],
       align: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500),
         execution: { ...moment, summary: moment.summary.slice(0, 1200), last: moment.last.slice(0, 200), next: moment.next.slice(0, 200), stage: moment.stage && { name: moment.stage.name.slice(0, 40), explain: moment.stage.explain.slice(0, 300) } },

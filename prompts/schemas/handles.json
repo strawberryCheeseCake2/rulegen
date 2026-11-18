@@ -17,7 +17,7 @@
             "maxItems": 8,
             "type": "array",
             "items": {
-              "maxItems": 4,
+              "maxItems": 0,
               "type": "array",
               "items": {
                 "type": "string",

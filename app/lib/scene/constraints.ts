@@ -3,8 +3,7 @@ import { DRAG_MODES, DRAG_SOURCES, MAX_CONSTRAINT_DRAGS, POINTER_SOURCES } from 
 import { valueAt } from "./values";
 import { MAX_NODE_PARAMS, MAX_PARAMS, MAX_CONSTRAINTS } from "./schema";
 
-// A node's constraints: each determines one property of the node (its `property`), tuned by its params (sliders and
-// algorithm blocks). The node's FSM states list which constraints apply, in evaluation order (see machines.ts), so
+// A node's constraints: each determines one property of the node (its `property`), tuned by its params (sliders). The node's FSM states list which constraints apply, in evaluation order (see machines.ts), so
 // adding, removing or moving a constraint keeps the states' lists in step. Param ids are unique across the whole node,
 // so live keys stay `nodeId/paramId/…`.
 
@@ -30,19 +29,19 @@ export function keptInputs(constraint: Constraint, renames: ReadonlyMap<string, 
   });
 }
 /**
- * A constraint's value drags that still adjust a number of it: one of its params (ids renamed by `renames`) and
- * the argument path into it, each value once and each mouse attribute once.
+ * A constraint's value drags that still adjust a number of it: one of its number params (ids renamed by `renames`),
+ * each value once and each mouse attribute once.
  * `previous`: the drags it had before it was made again, whose being turned off is kept for the same value.
  */
 export function keptDrags(constraint: Constraint, renames: ReadonlyMap<string, string> = new Map(), previous: ValueDrag[] = []): ValueDrag[] {
   const values = new Set<string>(), sources = new Set<string>();
   return (constraint.drags ?? []).flatMap(drag => {
-    const paramId = renames.get(drag.paramId) ?? drag.paramId, path = drag.path.split("/").map(part => part.trim()).filter(Boolean);
-    const param = constraint.params.find(item => item.id === paramId), value = param && valueAt(param.value, path), key = `${paramId}\n${path.join("/")}`;
-    if (!value || value.type !== "number" || !DRAG_SOURCES.includes(drag.source) || !DRAG_MODES.includes(drag.mode) || values.has(key) || sources.has(drag.source)) return [];
-    values.add(key); sources.add(drag.source);
-    const off = drag.off ?? previous.find(old => old.paramId === paramId && old.path === path.join("/"))?.off;
-    return [{ paramId, path: path.join("/"), source: drag.source, mode: drag.mode, invert: Boolean(drag.invert), how: drag.how.trim(), ...(off ? { off: true } : {}) }];
+    const paramId = renames.get(drag.paramId) ?? drag.paramId;
+    const value = constraint.params.find(item => item.id === paramId)?.value;
+    if (!value || value.type !== "number" || !DRAG_SOURCES.includes(drag.source) || !DRAG_MODES.includes(drag.mode) || values.has(paramId) || sources.has(drag.source)) return [];
+    values.add(paramId); sources.add(drag.source);
+    const off = drag.off ?? previous.find(old => old.paramId === paramId)?.off;
+    return [{ paramId, source: drag.source, mode: drag.mode, invert: Boolean(drag.invert), how: drag.how.trim(), ...(off ? { off: true } : {}) }];
   }).slice(0, MAX_CONSTRAINT_DRAGS);
 }
 /** A value drag of a node, where it lives: its constraint, its place there, and what it is called. */
@@ -53,8 +52,8 @@ export type DragLink = ValueDrag & { constraintId: string; constraintIndex: numb
  */
 export function dragLinks(constraints: Constraint[], active = false): DragLink[] {
   const all = constraints.flatMap((constraint, constraintIndex) => keptDrags(constraint).map((drag, dragIndex) => {
-    const param = constraint.params.find(item => item.id === drag.paramId), arg = drag.path ? ` · ${drag.path.split("/").join(" · ")}` : "";
-    return { ...drag, constraintId: constraint.id, constraintIndex, dragIndex, constraint: constraintName(constraint), param: `${param?.label ?? drag.paramId}${arg}` }; }));
+    const param = constraint.params.find(item => item.id === drag.paramId);
+    return { ...drag, constraintId: constraint.id, constraintIndex, dragIndex, constraint: constraintName(constraint), param: param?.label ?? drag.paramId }; }));
   return active ? all.filter((drag, i, list) => !drag.off && list.findIndex(other => !other.off && other.source === drag.source) === i) : all;
 }
 /** Turn a value drag of a constraint off (its value is then adjusted by its param only) or on again. */

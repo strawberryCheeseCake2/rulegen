@@ -163,7 +163,7 @@ test("records from AI are kept only when they apply to the brush's module, and t
   const scene = sampleScene(), code = program().code;
   const records = { nodeId: "tree", fields: ["segments"], reason: "마디 수", edits: [{ find: LOOP, replace: `${LOOP} m.store.segments = depth;` }] };
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], steps: [],
-    params: [{ key: "tree/size", nodeId: "tree", constraintId: "t", constraint: "t", paramId: "size", param: "크기", path: "size", type: "number" }] };
+    params: [{ key: "tree/size", nodeId: "tree", constraintId: "t", constraint: "t", paramId: "size", param: "크기", type: "number" }] };
   const ask = (output: object) => withMockedAI(() => ({ summary: "s", overlays: [], parameters: [], ...output }), async () =>
     inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", previous: code, inspection }), new AbortController().signal)));
   assert.deepEqual((await ask({ records })).records, { ...records, perItem: [] });
@@ -216,7 +216,7 @@ test("overlays read a suggested parameter at the code's value until a step recor
 test("an overlay of a suggested parameter is kept only with the suggestion", async () => {
   const scene = sampleScene(), code = program().code;
   const broken = { ...gap, id: "broken", label: "Broken", edits: [{ find: "not in the code", replace: "m.v(\"tree/broken\")" }] };
-  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", path: "", type: "number" }];
+  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", type: "number" }];
   const output = { summary: "s", parameters: [gap, broken], overlays: [
     gapOverlay,
     { ...gapOverlay, id: "broken-link", link: { kind: "parameter", nodeId: "tree", id: "broken" } },
@@ -245,7 +245,7 @@ test("a scale multiplies several constants: it starts at 1 and goes both ways", 
 test("an undecided suggestion is a faint card in its constraint of the params panel: highlighted from the inspection, accepted or rejected there", async () => {
   const { ConstraintInspector } = await import("../app/components/scene/constraint-inspector");
   const scene = sampleScene(), node = findNode(scene, "tree")!, [brush] = brushesFor(scene, "sketch-a", [], () => "brush-1");
-  const render = (props: Record<string, unknown>) => renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, ...props } as Record<string, unknown>,
+  const render = (props: Record<string, unknown>) => renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, ...props } as Record<string, unknown>,
     { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   const card = (html: string) => /<article[^>]*data-param-id="segment-gap"[^>]*>/.exec(html)?.[0] ?? "";
   const html = render({ suggestions: [{ item: gap, index: 0 }], onAcceptSuggestion: noop, onRejectSuggestion: noop });

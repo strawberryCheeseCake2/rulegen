@@ -1,4 +1,4 @@
-## SCENE MODEL: Collections, Objects, FSMs, constraints and algorithms
+## SCENE MODEL: Collections, Objects, FSMs and constraints
 
 Model the artwork as expressively as possible with declarative **collection and object FSMs**. The declarations reveal each meaningful phase of behavior, the events that move between phases, and the relationships (**constraints**) that determine each property in each phase. The formulas themselves are written later as named compute functions in code; the scene declares what each one controls, what it depends on and the parameters it is tuned by.
 
@@ -24,12 +24,12 @@ Every node (collection or object) has `constraints: [{ id, property, description
 
 - `property` — EXACTLY the name of the property it controls, as a short lowercase identifier: `"position"`, `"positions"`, `"size"`, `"rotation"`, `"color"`, `"count"`, `"branches"`, `"length"`, `"opacity"`, `"stroke-weight"`, `"path"`… The code stores the computed value in the owner's data under this name.
 - `description` — how the property depends on the other objects, collections, members, the input or time, in the user's language (e.g. "Stays a fixed distance behind the leader", "Each petal shrinks with its index around the ring", "Darkens where the strokes overlap").
-- `params` — the parameters the computation is tuned by (sliders and algorithm blocks, see PARAMS), usually 1–3.
+- `params` — the parameters the computation is tuned by (scalar sliders, see PARAMS), usually 1–4. Every quantity the computation uses (a decay ratio, a radius, a noise scale, a phase) is its own param; the `description` says in words how they combine (e.g. "branch length is multiplied by the decay ratio at each depth").
 - Give each meaningful constrained property its OWN constraint on the node whose property changes. Review both the object and collection levels for relationships such as proximity, membership, ordering, alignment, attachment and collision, and make them constraints of the node that owns the changing property. Keep neighbor lookups, contact tests and intermediate calculations inside the constraint that uses them (they are part of its compute function), and unrelated drawing in ordinary code.
 - NEVER bucket by effect type: there is no "spatial" / "style" / "motion" / "appearance" / "layout" constraint. A constraint is named by the one property it determines. If one would control two properties, it is two constraints.
 - DECLARE CONSTRAINTS IN EVALUATION ORDER, dependencies first: a constraint may read properties computed by constraints before it (e.g. `rotation` faces the leader from the `position` just computed). A node without its own machine evaluates all its constraints in this declared order.
 - A rich node typically has 3–8 constraints; a simple one may have 1–2.
-- Example, a flower collection: `count` (`count`) → `positions` "petals spread on a ring around the center" (`layout` = `radial-repeat(radius, phase)`) → `size` "each petal shrinks with its index" (`size` = `power-decay(...)`) → `rotation` "each petal points away from the center, swaying in the wind" (`sway`, `speed`) → `color` "hue drifts petal by petal" (`hue-shift`, `base-color`).
+- Example, a flower collection: `count` (`count`) → `positions` "petals spread on a ring around the center" (`radius`, `phase`) → `size` "each petal shrinks by the decay ratio with its index" (`base-size`, `decay`) → `rotation` "each petal points away from the center, swaying in the wind" (`sway`, `speed`) → `color` "hue drifts petal by petal" (`hue-shift`, `base-color`).
 - Constraint `id`s are unique within the node (kebab-case, usually the property name, e.g. `"positions"`; a second constraint on the same property in another state gets its own id, e.g. `"size-hovered"`). Param `id`s are unique across ALL constraints of the node (code addresses a param by node id + param id only).
 - Max 8 params per constraint, 32 per node.
 - A param in the supplied scene may carry a `handle` (the user's direct manipulation widget). It is UI only: ignore it, and never output it.
@@ -42,12 +42,12 @@ Each **param** `{ id, label, effect, description, value }` is a value the user t
   - `spatial` — position, layout, size, rotation, spacing, branching, path, density, deformation.
   - `stylistic` — color, palette, stroke weight, opacity, texture, fill, line quality.
   - `temporal` — speed, timing, growth over time, oscillation, delay, easing, decay over time.
-- A param `value` is either a **scalar** or an **algorithm call**:
+- A param `value` is always ONE **scalar**:
   - number `{ "type": "number", "value", "min", "max", "step", "unit" }` → shown as a slider. `min < max`, `0 < step ≤ max-min`, `min ≤ value ≤ max`.
   - color `{ "type": "color", "value": "#rrggbb" }`
   - select `{ "type": "select", "value", "options": [...] }` (value must be one of 2–8 options)
   - toggle `{ "type": "toggle", "value": true|false }`
-  - algorithm call `{ "type": "algorithm", "algorithmId", "args": [{ "id": "<param id>", "value": <scalar or { "type": "algorithm-ref", "algorithmId" }> }] }`
+- A procedural computation (curves, repetition, recursion, noise, fields, simulation, growth, packing, decay, distributions, palettes, easing) is described in the constraint's `description` and tuned by several scalar params (e.g. a branching `length` constraint with `base-length`, `decay`, `depth`; a `select` param such as `wave-shape` with options `sine`/`bezier` lets the user swap techniques).
 
 ### POINTER INPUT: which constraint's value the mouse drives
 
@@ -60,9 +60,9 @@ Every constraint has `inputs: [{ source, paramId, how }]`: what it reads from th
 
 ### VALUE DRAG: the mouse's x, y and speed adjust values, as a metaphor
 
-EVERY constraint, of any object or collection (interactive or not), also has `drags: [{ paramId, path, source, mode, invert, how }]` (0–2): which of its values the MOUSE moves while the user drags on the drawn object in the app (the app changes the value; the code only reads it as usual). While dragging, every mapped value of the object moves at once: one by the mouse's x, one by its y, one by its speed. Map them so the hand's motion IS what the value does to the picture. Give one for the constraint's most visible number value whenever an attribute fits it; `[]` only when none does.
+EVERY constraint, of any object or collection (interactive or not), also has `drags: [{ paramId, source, mode, invert, how }]` (0–2): which of its values the MOUSE moves while the user drags on the drawn object in the app (the app changes the value; the code only reads it as usual). While dragging, every mapped value of the object moves at once: one by the mouse's x, one by its y, one by its speed. Map them so the hand's motion IS what the value does to the picture. Give one for the constraint's most visible number value whenever an attribute fits it; `[]` only when none does.
 
-- `paramId` — a param OF THIS SAME CONSTRAINT; `path` — the argument ids into its value joined with `/` (e.g. `"length/base"`), `""` for the param's own value. It must reach a NUMBER.
+- `paramId` — a NUMBER param OF THIS SAME CONSTRAINT.
 - `source` — the mouse attribute whose meaning matches the value's effect:
   - `"x"` (left → right): what spreads, spaces, widens, leans or shifts sideways, or runs along a left-to-right scale (a width, a horizontal spacing, a spread, a lean, a hue across);
   - `"y"` (down → up): what grows, rises, stacks or heightens (a height, a length upward, a lift, a count piled up, a growth amount);
@@ -84,26 +84,17 @@ A machine is `{ initialState, states: [{ id, label, description, constraintIds }
 - Put behavior for an individual member in its OBJECT's FSM and behavior shared by the group in its COLLECTION's FSM.
 - State and transition `id`s are unique within the machine (kebab-case). Max 32 states and 128 transitions per node.
 
-**Algorithms** are reusable implementations listed once in the top-level `algorithms` array and referenced by id anywhere (several params, several nodes, nested inside other algorithms). Each algorithm has:
-
-- `id` (stable, kebab-case, e.g. `"sine-wave"`, `"power-decay"`, `"recursive-branch"`), English `name`, and an English `description` that states the procedure (the actual technique that produces the observed look, not a formula fitted to its shapes) and the meaning of every parameter id precisely enough to implement it in code.
-- `params[]`: `{ id, label, description, value }` where `value` is the default — a scalar, or `{ "type": "algorithm-ref", "algorithmId" }` when the parameter is itself driven by another algorithm (e.g. a branch `length` driven by `power-decay`, a `size` driven by `perlin-noise`). Max 8 params. No algorithm may refer to itself directly or indirectly. Max nesting depth 4.
-- In a call, give `args` for the parameters you want to set; omitted args use the defaults. Use `algorithm-ref` in args to plug another algorithm into a parameter.
-
-Prefer algorithms whenever behavior is procedural (curves, repetition, recursion, noise, fields, simulation, growth, packing, decay, distributions, palettes, easing — these are examples, not a limit). Use plain scalars for simple constants. Reuse the same algorithm id when the same logic appears in several places. Include a few meaningful **alternative** algorithms in the library when useful (e.g. both `sine-wave` and `bezier-wave`) so the user can swap implementations.
-
 ### PROCEDURAL ECONOMY (required)
 
 Build the scene with as FEW nodes as possible and generate repetition procedurally. Never enumerate instances.
 
 - Elements that share their features (same primitive, same kind of look or behavior: petals, leaves, dots, bricks, stars, branches, waves, hatching lines, scattered marks, rows of windows …) are ONE repetition, never one node per instance — even when the instances differ in size, color, rotation or position: a collection whose region covers all instances, holding ONE member object (the unit). The collection's constraints GENERATE the copies:
-  - a `count` constraint (a number param) and a `positions` constraint whose distribution/layout algorithm reproduces the observed arrangement as closely as possible. Use whatever technique actually produces it; the following are only examples and not a list to choose from: `row`, `grid`, `radial-repeat`, `scatter`, `along-path`, `recursive-branch`, `spiral`, streamlines traced through a vector field, packing, relaxation, growth or other simulations;
-  - variation between instances expressed by constraints whose algorithms run over the instance index, depth or noise (e.g. `size` by `power-decay`, `color` by `palette-gradient`, `rotation` by `perlin-noise`), not by separate nodes.
+  - a `count` constraint (a number param) and a `positions` constraint whose distribution/layout rule (described in words, tuned by its params) reproduces the observed arrangement as closely as possible. Use whatever technique actually produces it; the following are only examples and not a list to choose from: `row`, `grid`, `radial-repeat`, `scatter`, `along-path`, `recursive-branch`, `spiral`, streamlines traced through a vector field, packing, relaxation, growth or other simulations;
+  - variation between instances expressed by constraints computed over the instance index, depth or noise (e.g. `size` decaying by a power of the index, `color` along a palette gradient, `rotation` by Perlin noise), not by separate nodes.
 - If an instance has parts (a flower = petals + center), the repeated unit is itself a collection of those parts: make ONE collection for it and generate its copies with the constraints of the collection around it; do not duplicate the collection.
 - Split nodes only when they differ in kind (different primitive or a different semantic role), when the user must select/move them independently, or when they need their own FSM. Adjacent or overlapping sibling objects with the same primitive are usually copies of one unit: make them one collection with one member, not several objects.
-- Shared logic is ONE library algorithm referenced by id everywhere it applies; do not define near-duplicate algorithms.
 - Prefer a nested collection hierarchy (whole → repeated unit → part) over many flat siblings. Keep the node count low by generating repetition, not by flattening structure: a rich image is usually 4–15 nodes over 2–5 levels.
 
-Example: seven petals around a center → a collection `petals` with constraints `count` (`count` = 7), `positions` "on a ring around the center" (`layout` = `radial-repeat(radius, phase)`) and `size` "varies petal by petal" (`size` = `perlin-noise(...)` over the copy index), holding ONE object `petal` (`primitive: "petal"`) with constraints `shape` "curls at the tip" (`curl`) and `color` (`tint`); plus one object `center`. NOT `petal-1` … `petal-7`, and NOT one object `petals` that holds the count and layout itself.
+Example: seven petals around a center → a collection `petals` with constraints `count` (`count` = 7), `positions` "on a ring around the center" (`radius`, `phase`) and `size` "varies petal by petal with noise over the copy index" (`base-size`, `noise-amount`), holding ONE object `petal` (`primitive: "petal"`) with constraints `shape` "curls at the tip" (`curl`) and `color` (`tint`); plus one object `center`. NOT `petal-1` … `petal-7`, and NOT one object `petals` that holds the count and layout itself.
 
-Ids are unique within their list (node ids within the scene, constraint ids and param ids within a node, param ids within an algorithm). Use concise English names/labels and English descriptions.
+Ids are unique within their list (node ids within the scene, constraint ids and param ids within a node). Use concise English names/labels and English descriptions.

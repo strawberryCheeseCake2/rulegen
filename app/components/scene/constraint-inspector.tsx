@@ -1,20 +1,18 @@
-import type { Algorithm, Effect, NodeState, NodeTransition, Param, ParamHandle, ScalarValue, SceneNode, Constraint } from "../../lib/scene/schema";
+import type { Effect, NodeState, NodeTransition, Param, ParamHandle, ScalarValue, SceneNode, Constraint } from "../../lib/scene/schema";
 import { POINTER_SOURCES } from "../../lib/scene/schema";
 import { dragLinks, pointerLinks, type DragLink, type PointerLink } from "../../lib/scene/constraints";
 import { SOURCE_NAMES } from "../../lib/scene/drag-adjust";
 import { handleFits, handleLeaves, type HandleTarget } from "../../lib/scene/handles";
 import { MAX_NODE_PARAMS, MAX_PARAMS, MAX_CONSTRAINTS } from "../../lib/scene/schema";
-import type { SlotChoice } from "../../lib/scene/panel-ops";
 import { createContext, useContext, useEffect, useState } from "react";
-import { ALGORITHM_DRAG_TYPE, readAlgorithmDrag, type AlgorithmClip } from "../../lib/scene/transfer";
 import { Icon } from "../icons";
 import type { TransformDraft, TransformTarget } from "../../lib/sketch-panels";
-import { ValueSocket } from "./value-editor";
+import { ValueSlider } from "./value-editor";
 import { useContextMenu } from "./context-menu";
 
 export type ConstraintInspectorProps = {
   /** The constraints shown: the selected state's, in its evaluation order; without one, all of the node's in declaration order. */
-  node: SceneNode; constraints: Constraint[]; library: Algorithm[]; state: NodeState | undefined; busy: boolean; clip: AlgorithmClip | null;
+  node: SceneNode; constraints: Constraint[]; state: NodeState | undefined; busy: boolean;
   onNode: (patch: Partial<Pick<SceneNode, "name" | "description">>) => void;
   onConstraint: (constraintId: string, patch: Partial<Pick<Constraint, "property" | "description">>) => void;
   onAddConstraint: () => void;
@@ -28,11 +26,10 @@ export type ConstraintInspectorProps = {
   onScalar: (paramId: string, path: string[], value: ScalarValue["value"]) => void;
   /** Turn a value drag off (the value is then adjusted by its param only) or on again. */
   onDragOff?: (constraintId: string, dragIndex: number, off: boolean) => void;
-  onSwap: (paramId: string, path: string[], choice: SlotChoice) => void;
   onParam: (paramId: string, patch: Partial<Pick<Param, "label" | "effect">>) => void;
   onRemoveParam: (paramId: string) => void;
-  onAddParam: (algorithmId: string, constraintId: string) => void;
-  onAddBlock: (clip: AlgorithmClip, constraintId: string) => void;
+  /** A new slider param in a constraint. */
+  onAddParam: (constraintId: string) => void;
   /** AI: open the regeneration composer for one param, one constraint, or (empty target) a new stacked constraint. */
   onRegenerate: (target: TransformTarget) => void;
   /** The open regeneration of this node (its text and frame annotation), and its actions. */
@@ -45,10 +42,6 @@ export type ConstraintInspectorProps = {
   highlightParamId?: string | null;
   /** A constraint picked elsewhere (an Execution frame, the Layers panel): its card is highlighted and scrolled into view. */
   highlightConstraintId?: string | null;
-  onMakePen: (paramId: string, path: string[]) => void;
-  onCopy: (paramId: string, path: string[]) => void;
-  onPaste: (paramId: string, path: string[], dropped?: AlgorithmClip) => void;
-  clipFor: (paramId: string, path: string[]) => AlgorithmClip | null;
   onGenerateMachine: () => void;
   onRemoveMachine: () => void;
   /** A param's direct manipulation handle changed (its hint) or removed (null). */
@@ -125,16 +118,9 @@ function RegenerateComposer({ props, what }: { props: ConstraintInspectorProps; 
   </form>;
 }
 
-/** An empty socket at the end of the list: drop (or pick) a block to add a param. */
-function NewSocket({ library, busy, onAdd, onDrop }: { library: Algorithm[]; busy: boolean; onAdd: (id: string) => void; onDrop: (clip: AlgorithmClip) => void }) {
-  const [over, setOver] = useState(false);
-  return <div className={`value-socket new-socket accepts-blocks ${over ? "socket-over" : ""}`}
-    onDragOver={event => { if (busy || !event.dataTransfer.types.includes(ALGORITHM_DRAG_TYPE)) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setOver(true); }}
-    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOver(false); }}
-    onDrop={event => { setOver(false); const clip = readAlgorithmDrag(event.dataTransfer); if (clip) { event.preventDefault(); onDrop(clip); } }}>
-    <span className="socket-hint">+ Drop a ƒ block here to add a param to this constraint</span>
-    {library.length > 0 && <select aria-label="Add param from algorithm" value="" disabled={busy} onChange={e => { if (e.target.value) onAdd(e.target.value); }}><option value="">or pick a block…</option>{library.map(algorithm => <option key={algorithm.id} value={algorithm.id}>ƒ {algorithm.name}</option>)}</select>}
-  </div>;
+/** Adds a slider param (a number) to the constraint. */
+function NewParam({ busy, onAdd }: { busy: boolean; onAdd: () => void }) {
+  return <button type="button" className="new-param-button" disabled={busy} onClick={onAdd}>+ Add slider</button>;
 }
 
 /** The param's direct manipulation interface: what it does, what it drives, its code, and how to change it with AI. */
@@ -163,7 +149,7 @@ function HandleEditor({ param, props }: { param: Param; props: ConstraintInspect
 const fixInstruction = (error: string, instruction: string) => `${instruction.trim() ? `${instruction.trim()}\n` : ""}The current widget fails at runtime: ${error}. Fix it.`;
 
 function ParamCard({ param, props, openMenu }: { param: Param; props: ConstraintInspectorProps; openMenu: ReturnType<typeof useContextMenu>[1] }) {
-  const { library } = props, state = undefined;
+  const state = undefined;
   const { linked } = useContext(PointerContext), constraintId = props.constraints.find(item => item.params.some(other => other.id === param.id))?.id ?? "";
   return <article className={`param-card effect-${param.effect} ${props.highlightParamId === param.id || linked?.paramId === param.id ? "inspection-highlight" : ""}`} data-param-id={param.id}>
     <div className="param-card-title">
@@ -177,9 +163,7 @@ function ParamCard({ param, props, openMenu }: { param: Param; props: Constraint
     {props.draft && sameTarget(props.draft.target, { paramId: param.id }) && <RegenerateComposer props={props} what={param.label} />}
     {param.description && <p className="param-description">{param.description}</p>}
     {param.handle && props.onHandle && !state && <HandleEditor param={param} props={props} />}
-    <ValueSocket value={param.value} label={param.label} path={[]} library={library} clip={props.clip} allowSwap={!state} root openMenu={openMenu} clipFor={path => props.clipFor(param.id, path)}
-      onScalar={(path, value) => props.onScalar(param.id, path, value)} onSwap={(path, choice) => props.onSwap(param.id, path, choice)}
-      onCopy={path => props.onCopy(param.id, path)} onPaste={(path, dropped) => props.onPaste(param.id, path, dropped)} onMakePen={path => props.onMakePen(param.id, path)} />
+    <ValueSlider value={param.value} label={param.label} onScalar={(path, value) => props.onScalar(param.id, path, value)} />
   </article>;
 }
 
@@ -296,9 +280,9 @@ function ConstraintCard({ constraint, index, count, roomInNode, props, openMenu 
     <fieldset disabled={busy} className="param-list">
       {constraint.params.map(param => <ParamCard key={param.id} param={param} props={props} openMenu={openMenu} />)}
       {!state && (props.suggestions ?? []).filter(entry => entry.item.constraintId === constraint.id).map(entry => <SuggestedCard key={`suggested:${entry.item.id}`} item={entry.item} index={entry.index} props={props} />)}
-      {!constraint.params.length && !(props.suggestions ?? []).some(entry => entry.item.constraintId === constraint.id) && <p className="empty-panel">No params yet. Drop a block below or regenerate this constraint.</p>}
+      {!constraint.params.length && !(props.suggestions ?? []).some(entry => entry.item.constraintId === constraint.id) && <p className="empty-panel">No params yet. Add a slider below or regenerate this constraint.</p>}
     </fieldset>
-    {!state && roomInNode && constraint.params.length < MAX_PARAMS && <NewSocket library={props.library} busy={busy} onAdd={id => props.onAddParam(id, constraint.id)} onDrop={clip => props.onAddBlock(clip, constraint.id)} />}
+    {!state && roomInNode && constraint.params.length < MAX_PARAMS && <NewParam busy={busy} onAdd={() => props.onAddParam(constraint.id)} />}
   </section>;
 }
 

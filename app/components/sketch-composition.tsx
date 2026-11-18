@@ -35,7 +35,7 @@ export function SketchComposition({ artwork, prompt, onPrompt, onDraft, onCompos
   const pencils = artwork.strokes.filter(s => s.tool === "pen" && !s.semanticPen).length;
   return <section className="semantic-composition-panel" aria-label="Compose sketch marks">
     <div className="composition-heading"><Icon name="spark" size={15} /><strong>Compose your sketch</strong></div>
-    <p>The AI reads the sketch and the algorithm meaning of each pen to write a prompt. Review or edit the description, then compose.</p>
+    <p>The AI reads the sketch and the constraint each pen carries to write a prompt. Review or edit the description, then compose.</p>
     <div className="composition-legend">{pens.map((pen, i) => <span key={i} title={pen.meaning}><i style={{ background: pen.color }} />{pen.name}</span>)}{pencils > 0 && <span>Pencil · {pencils} strokes</span>}</div>
     {onWithText && <label className="composition-tags-toggle" title="Off: Compose reads the tags on the sketch (objects, collections, their constraints and params) and no text">
       <input type="checkbox" checked={withText} onChange={e => onWithText(e.currentTarget.checked)} />Use the text prompt</label>}

@@ -6,7 +6,7 @@ The user wants to UNDERSTAND HOW THE BRUSH WORKS INSIDE by GOING THROUGH ITS EXE
 
 The frame is made while the inspection is still running, so `inspection.summary` and `inspection.overlays` may be empty: then work from `concern`, the marks in the image, the brush's code and its recorded steps — find for yourself what in the execution the concern is about, and let the user step through exactly that.
 
-Inputs are as for the targeted inspection: `brushNodes`, `algorithms`, `params` (every value of the brush, `{ key, nodeId, constraintId, constraint, paramId, param, path, type }`, plus layout keys `<node>/@x|@y|@w|@h`), `steps` (the recorded history with each step's `values` and `runtime`: machine `states` and each brush root's `m.store`), `code` (the module source that draws the brush), `input` (how many gestures and points the user has drawn with the brush at that step). The image is the frame as the user sees it.
+Inputs are as for the targeted inspection: `brushNodes`, `params` (every value of the brush, `{ key, nodeId, constraintId, constraint, paramId, param, type }`, plus layout keys `<node>/@x|@y|@w|@h`), `steps` (the recorded history with each step's `values` and `runtime`: machine `states` and each brush root's `m.store`), `code` (the module source that draws the brush), `input` (how many gestures and points the user has drawn with the brush at that step). The image is the frame as the user sees it.
 
 ## What execution is here
 
