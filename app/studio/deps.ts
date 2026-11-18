@@ -38,6 +38,10 @@ export type StudioDeps = {
   preview: (owner: string) => CodePreviewHandle | undefined;
   /** Show (creating if needed) the proxy frame of node `nodeId` of frame `owner`. */
   openProxy?: (owner: string, nodeId: string) => void;
+  /** A copy of a frame (its sketch, scene, result and input) placed beside it, as a temporary fork; its id. */
+  fork?: (fromId: string) => string | null;
+  /** Delete a frame from the board. */
+  removeFrame?: (id: string) => void;
   /** Save the code module of each brush that comes from this frame. */
   refreshBrushCode?: (frameId: string, code: string) => void;
 };

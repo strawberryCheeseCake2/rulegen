@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type Reac
 import { ensureFramePositions, fitFrames, framesInBox, groupBox, type FrameGroup, FRAME_HEIGHT, FRAME_WIDTH, zoomAt, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { Icon } from "./icons";
 export type WorkspaceHandle = { fit: () => void; focus: (id: FrameId) => void; zoom: (amount: number) => void };
-type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode };
+type Frame = { id: FrameId; title: string; subtitle: string; content: ReactNode | ((zoom: number) => ReactNode); actions?: ReactNode; /** Shown right under the frame (moves with it). */ below?: ReactNode };
 /** A relation drawn between two frames (a proxy frame → the frame it controls). */
 export type FrameLink = { from: FrameId; to: FrameId; label: string };
 type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its link is hovered). */ highlight?: FrameId | null; layout: WorkspaceLayout; /** Always given an update of the latest layout (never a whole layout from a render that may be older). */ onChange: (update: (current: WorkspaceLayout) => WorkspaceLayout) => void; onActivateFrame?: (id: FrameId) => void; onDeleteFrame?: (id: FrameId) => void; deleteDisabled?: boolean; activeFrame?: FrameId; tool: string; frames: Frame[]; onDrop: (file: File) => void; onBackground: () => void; /** Frames picked together (a box dragged with the select tool, or shift-clicked headers). */ selectedFrames?: FrameId[]; onSelectFrames?: (ids: FrameId[]) => void;
@@ -10,7 +10,7 @@ type Props = { links?: FrameLink[]; /** A frame shown as linked (e.g. while its 
   masterHighlight?: { frame: FrameId; name: string; color: string; region: { x: number; y: number; w: number; h: number } } | null;
   /** Frame groups (with only frames on the board): a box under a title; dragging the title moves them together. */
   groups?: FrameGroup[]; onDeleteGroup?: (id: string) => void;
-  /** A button on a group's title (e.g. pick the fork's inspection tool), or none. */
+  /** A button on a group's title, or none. */
   groupAction?: (group: FrameGroup) => { label: string; title: string; disabled?: boolean; onClick: () => void } | null };
 export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function FreeformWorkspace(props, ref) {
   const positions = ensureFramePositions(props.layout.frames, props.frames.map(f => f.id));
@@ -42,7 +42,7 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
     const blur = () => { setSpace(false); drag.current = null; setDragging(false); setBox(null); };
     window.addEventListener("keydown", down); window.addEventListener("keyup", up); window.addEventListener("blur", blur);
     const wheel = (e: WheelEvent) => { if ((e.target as Element).closest("button")) return;
-      // A part of a frame that scrolls (e.g. an Execution frame's bar) scrolls itself while it can.
+      // A part of a frame that scrolls scrolls itself while it can.
       const scroller = !(e.ctrlKey || e.metaKey) ? (e.target as Element).closest(".board-scroll") : null;
       if (scroller && (e.deltaY > 0 ? scroller.scrollTop + scroller.clientHeight < scroller.scrollHeight - 1 : e.deltaY < 0 && scroller.scrollTop > 0)) return;
       e.preventDefault(); const p = current.current; const bounds = board.current!.getBoundingClientRect(); const factor = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bounds.height : 1;
@@ -98,7 +98,9 @@ export const FreeformWorkspace = forwardRef<WorkspaceHandle, Props>(function Fre
           <div className="frame-group-title" data-group-handle={group.id} title="Drag to move the frames of this group together"><span>▦ {group.title}</span><small>{group.frames.length} frames</small>
             {(() => { const action = props.groupAction?.(group); return action && <button className="frame-group-action" title={action.title} disabled={action.disabled} onClick={e => { e.stopPropagation(); action.onClick(); }}>{action.label}</button>; })()}
             {props.onDeleteGroup && <button aria-label={`Delete group ${group.title}`} title="Delete this group and its frames" disabled={props.deleteDisabled} onClick={e => { e.stopPropagation(); props.onDeleteGroup!(group.id); }}><Icon name="trash" size={22} /></button>}</div></div>; })}
-      {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${selected.includes(f.id) ? "picked-frame" : ""} ${props.masterHighlight?.frame === f.id ? "master-highlight" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : f.id.startsWith("explore-") ? "frame-explore" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y, ...(props.masterHighlight?.frame === f.id ? { "--brush-color": props.masterHighlight.color } as React.CSSProperties : {}) }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
+      {props.frames.map(f => <section key={f.id} className={`world-frame ${f.id === props.highlight ? "link-highlight" : ""} ${f.id === props.activeFrame ? "active-frame" : ""} ${selected.includes(f.id) ? "picked-frame" : ""} ${props.masterHighlight?.frame === f.id ? "master-highlight" : ""} ${f.id.startsWith("sketch-") ? "frame-sketch" : f.id.startsWith("proxy-") ? "frame-proxy" : `frame-${f.id}`}`} aria-label={`${f.title} frame`} aria-current={f.id === props.activeFrame ? true : undefined} style={{ left: positions[f.id].x, top: positions[f.id].y, ...(props.masterHighlight?.frame === f.id ? { "--brush-color": props.masterHighlight.color } as React.CSSProperties : {}) }}>{typeof f.content === "function" ? f.content(camera.zoom) : f.content}</section>)}
+      {props.frames.filter(f => f.below).map(f => <div key={`below-${f.id}`} className="world-frame-below" style={{ left: positions[f.id].x, top: positions[f.id].y + FRAME_HEIGHT + 16, width: FRAME_WIDTH }}
+        onPointerDown={e => e.stopPropagation()}>{f.below}</div>)}
       {props.masterHighlight && positions[props.masterHighlight.frame] && (() => { const m = props.masterHighlight!, at = positions[m.frame];
         return <div className="master-highlight-layer" aria-hidden="true" style={{ left: at.x, top: at.y, width: FRAME_WIDTH, height: FRAME_HEIGHT, "--brush-color": m.color } as React.CSSProperties}>
           <div className="master-highlight-box" style={{ left: m.region.x * FRAME_WIDTH - 8, top: m.region.y * FRAME_HEIGHT - 8, width: m.region.w * FRAME_WIDTH + 16, height: m.region.h * FRAME_HEIGHT + 16 }} />

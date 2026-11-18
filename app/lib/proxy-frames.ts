@@ -51,7 +51,7 @@ export function placeProxyGroup(layout: WorkspaceLayout, plan: Pick<ReturnType<t
   const frames = { ...layout.frames }, reuse = plan.removed.map(frame => frames[frame.id]).filter(Boolean);
   for (const id of gone) delete frames[id];
   const fresh = plan.added.map(frame => frame.id).filter(id => !frames[id]);
-  const row = members.some(id => frames[id]) || reuse.length ? [] : groupRow({ frames, groups: layout.groups }, targetFrameId, fresh.length, false);
+  const row = members.some(id => frames[id]) || reuse.length ? [] : groupRow({ frames, groups: layout.groups }, targetFrameId, fresh.length);
   for (const [i, id] of fresh.entries()) {
     const spot = reuse.shift() ?? row[i];
     if (spot) { frames[id] = spot; continue; }

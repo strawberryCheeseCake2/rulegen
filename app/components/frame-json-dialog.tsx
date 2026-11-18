@@ -9,7 +9,6 @@ export function FrameJsonDialog({ name, data, onClose, onCopied }: { name: strin
   const area = useRef<HTMLTextAreaElement>(null), [note, setNote] = useState("");
   const machines = data.nodes.filter(node => !node.machine.implicit), states = machines.reduce((n, node) => n + node.machine.states.length, 0);
   const constraints = data.nodes.reduce((n, node) => n + node.constraints.length, 0), params = data.nodes.reduce((n, node) => n + Object.keys(node.values).length, 0);
-  const tools = data.brushes.reduce((n, brush) => n + brush.targetedInspections.length, 0);
   async function copy() {
     try { await navigator.clipboard.writeText(text); onCopied(`Copied the JSON of ${name}.`); onClose(); }
     // The clipboard can be refused (permissions, an unfocused page): the text is selected to copy by hand.
@@ -18,8 +17,8 @@ export function FrameJsonDialog({ name, data, onClose, onCopied }: { name: strin
   return <div className="modal-backdrop" onClick={onClose}><div className="modal project-export-modal frame-json-modal" role="dialog" aria-modal="true" aria-labelledby="frame-json-title" onClick={e => e.stopPropagation()}>
     <button className="modal-close" aria-label="Close frame JSON" onClick={onClose}><Icon name="close" /></button>
     <div className="section-kicker">FRAME JSON</div><h2 id="frame-json-title">{name}</h2>
-    <p>{data.nodes.length} nodes · {machines.length} state machine{machines.length === 1 ? "" : "s"} ({states} state{states === 1 ? "" : "s"}) · {constraints} constraints · {params} param values · {tools} targeted inspections · code: {data.code ? `${data.code.source.split("\n").length} lines` : "none"}.
-      Each node includes its constraints (the property each controls, with its params and value ranges), its param values, and its FSM: every state's constraints in evaluation order and the event transitions; each brush includes its targeted inspection tools (concern, annotation, summary, overlays, hidden parameters, item records) keyed by this frame's node ids. The code matches the code panel.</p>
+    <p>{data.nodes.length} nodes · {machines.length} state machine{machines.length === 1 ? "" : "s"} ({states} state{states === 1 ? "" : "s"}) · {constraints} constraints · {params} param values · code: {data.code ? `${data.code.source.split("\n").length} lines` : "none"}.
+      Each node includes its constraints (the property each controls, with its params and value ranges), its param values, and its FSM: every state's constraints in evaluation order and the event transitions; each brush lists its roots in this frame. The code matches the code panel.</p>
     <textarea ref={area} aria-label="Frame JSON" className="project-json-preview" readOnly value={text} />
     {note && <p className="frame-json-note" role="status">{note}</p>}
     <div className="frame-json-actions">

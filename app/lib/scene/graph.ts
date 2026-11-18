@@ -144,3 +144,9 @@ export function subScene(scene: Scene, ids: string[]): Scene {
   const keep = new Set(ids.flatMap(id => [id, ...descendantIds(scene, id)]));
   return { nodes: scene.nodes.filter(node => keep.has(node.id)).map(node => node.parentId && !keep.has(node.parentId) ? { ...node, parentId: null } : node) };
 }
+/** The code module that draws a node: its root's (`codeModule`, else the root's id); null when the node is not in the scene. */
+export function moduleKeyOf(scene: Scene, nodeId: string) {
+  let node = findNode(scene, nodeId);
+  while (node?.parentId) node = findNode(scene, node.parentId);
+  return node ? node.codeModule ?? node.id : null;
+}

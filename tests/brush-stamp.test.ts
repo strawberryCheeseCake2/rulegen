@@ -140,29 +140,6 @@ test("deleting a brush stamp keeps the frame's program live (no Update needed), 
   assert.equal(relinkStamps(two.generated, two.scene, changed), two.generated, "a new state machine on a stamp that was there is not covered");
 });
 
-test("an applied fix can be undone and redone as a whole (scene and code together)", async () => {
-  const { applyFix, appliedCurrent, stepApplied } = await import("../app/studio/inspection-actions");
-  const scene = sampleScene(), gen = generated();
-  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { f: { ...createSketchPanel({ scene }), generated: gen, codeDraft: gen.code } };
-  const deps = { panel: (id: string) => panels[id], updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; }, refreshBrushCode: () => {} } as any;
-  const key = Object.keys(sceneValues(scene)).find(item => item.startsWith("tree/") && typeof sceneValues(scene)[item] === "number" && !item.includes("/@"))!;
-  const original = sceneValues(scene)[key] as number;
-  await applyFix(deps, "f", { kind: "value", nodeId: "tree", targetId: "x", targetIds: [], title: "더 크게", detail: "d", changes: [{ key, stateId: "", value: original + 1 }] });
-  assert.equal(sceneValues(panels.f.scene)[key], original + 1);
-  assert.equal(panels.f.applied.past.length, 1); assert.equal(appliedCurrent(panels.f, "undo"), true);
-  // As if AI had also rewritten the code with it.
-  panels.f.applied.past[0].after = { ...panels.f.applied.past[0].after, generated: { ...gen, code: gen.code + "\n// new" } };
-  panels.f = { ...panels.f, generated: panels.f.applied.past[0].after.generated };
-  assert.equal(stepApplied(deps, "f", "undo")?.title, "더 크게");
-  assert.equal(sceneValues(panels.f.scene)[key], original); assert.equal(panels.f.generated!.code, gen.code, "the code goes back too");
-  assert.equal(panels.f.applied.future.length, 1); assert.equal(panels.f.applied.past.length, 0);
-  stepApplied(deps, "f", "redo");
-  assert.equal(sceneValues(panels.f.scene)[key], original + 1); assert.match(panels.f.generated!.code, /\/\/ new$/);
-  // A later edit makes undo ask first (it would drop that edit too).
-  panels.f = { ...panels.f, composePrompt: "changed later" };
-  assert.equal(appliedCurrent(panels.f, "undo"), false);
-});
-
 test("a composed scene of one drawn form (an object at the root) still makes a brush; a background filling the canvas does not", () => {
   const scene = sampleScene();
   // As compose returned it: a background over the whole canvas and the plant, each an object at the root.
@@ -196,14 +173,4 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   assert.equal(result.roots.length, 1);
   const sketch = run(result.generated.code); sketch.draw();
   assert.equal(sketch.circles.length, 1, "the stamp draws");
-});
-
-test("re-rendering a frame from the start deletes its inspect history (every brush's), keeping what the user wrote and marked", async () => {
-  const { withoutHistory } = await import("../app/studio/inspection-actions");
-  const { emptyInspection } = await import("../app/lib/inspection");
-  const panel = createSketchPanel();
-  const held = { ...emptyInspection("a"), steps: [{ id: "s1" }, { id: "s2" }] as never[], cursor: 1, concern: "why", marks: [[{ x: 0, y: 0 }]] as never, focus: { kind: "state", nodeId: "n", id: "i" } as never };
-  const reset = withoutHistory({ ...panel, inspections: { a: held, b: { ...emptyInspection("b"), steps: [{ id: "t" }] as never[], cursor: 0 } } }).inspections;
-  assert.deepEqual([reset.a.steps, reset.a.cursor, reset.a.focus, reset.b.steps, reset.b.cursor], [[], null, null, [], null]);
-  assert.deepEqual([reset.a.concern, reset.a.marks], ["why", [[{ x: 0, y: 0 }]]]);
 });

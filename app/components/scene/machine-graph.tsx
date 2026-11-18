@@ -55,7 +55,7 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
     setPan(p => left + p.x >= 8 && right + p.x <= width - 8 && top + p.y >= 8 && bottom + p.y <= height - 8 ? p
       : { x: Math.min(0, width / 2 - (left + right) / 2), y: Math.min(0, height / 2 - (top + bottom) / 2) });
   }, [inspected?.state, inspected?.from]);
-  // A state or transition picked from elsewhere (e.g. an Execution frame's part) is panned into view, the panel too.
+  // A state or transition picked from elsewhere is panned into view, the panel too.
   useEffect(() => {
     const element = viewport.current; if (!element || !target) return;
     const transition = target.kind === "transition" ? machine.transitions.find(item => item.id === target.id) : undefined;

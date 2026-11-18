@@ -30,19 +30,10 @@ test("a frame exports as one JSON: nodes with constraints and params, each state
   assert.match(data.code!.source, /@rulegen-scene:start/); assert.match(data.code!.source, /rulegenModule\("tree"/);
   assert.equal(JSON.parse(JSON.stringify(data)).nodes.length, scene.nodes.length, "plain JSON");
   assert.equal(frameExport({ id: "s", name: "s", scene, generated: null }).code, null, "no code yet");
-  // Targeted inspection tools of the brushes in the frame, in this frame's ids (stored in the brush's shared ids).
+  // The brushes in the frame, with their roots in this frame's ids.
   const instance = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, id: "orb-2", codeId: "orb" } : node) };
-  const tool = { id: "t1", name: "원 크기", concern: "원 크기가 궁금해", marks: [[{ x: .5, y: .5 }, { x: .6, y: .25 }]], markStyles: [{ color: "#e0457b", width: 12, opacity: .6 }],
-    result: { summary: "원이 커집니다",
-      overlays: [{ id: "size", kind: "rect" as const, name: "크기", x: "p(\"orb/@x\")", y: "0", w: "p(\"orb/radius\")", h: "1", label: "", color: "#e0457b", link: { kind: "param" as const, nodeId: "orb", id: "radius" }, when: "", each: "orb:dots", handle: null }],
-      parameters: [], records: null }, overlayUpdates: [] };
-  const withTools = frameExport({ id: "sketch-2", name: "Sketch 2", scene: instance, generated: null, brushes: [{ id: "b1", name: "Orb", roots: ["orb-2"], targeted: [tool] }] });
-  const exported = withTools.brushes[0].targetedInspections[0];
-  assert.deepEqual(withTools.brushes.map(brush => [brush.name, brush.roots]), [["Orb", ["orb-2"]]]);
-  assert.equal(exported.concern, "원 크기가 궁금해"); assert.equal(exported.summary, "원이 커집니다");
-  assert.deepEqual(exported.annotation, [{ style: { color: "#e0457b", width: 12, opacity: .6 }, points: [{ x: 450, y: 300 }, { x: 540, y: 150 }] }], "the annotation in canvas pixels with its style");
-  assert.equal(exported.overlays[0].x, "p(\"orb-2/@x\")", "in this frame's node ids"); assert.equal(exported.overlays[0].link.nodeId, "orb-2"); assert.equal(exported.overlays[0].each, "orb-2:dots");
-  assert.ok(!("recommendations" in exported) && !("valueFixes" in exported), "a targeted inspection proposes no fixes");
+  const withBrushes = frameExport({ id: "sketch-2", name: "Sketch 2", scene: instance, generated: null, brushes: [{ id: "b1", name: "Orb", roots: ["orb-2"] }] });
+  assert.deepEqual(withBrushes.brushes, [{ id: "b1", name: "Orb", roots: ["orb-2"] }]);
   const html = renderToStaticMarkup(createElement(FrameJsonDialog, { name: "Sketch 1", data, onClose: () => {}, onCopied: () => {} }));
   assert.match(html, /1 state machine \(2 states\)/); assert.match(html, /Copy JSON/); assert.match(html, /aria-label="Frame JSON"/);
 });

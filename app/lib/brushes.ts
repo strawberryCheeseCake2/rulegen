@@ -2,25 +2,10 @@ import { z } from "zod";
 import { descendantIds, findNode, subScene } from "./scene/graph";
 import type { Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
-import { markStyleSchema, MAX_MARKS, MAX_OVERLAY_UPDATES, overlayUpdateSchema, targetedResultSchema } from "./inspection";
 
 // A Brush is a reusable collection or object ("Brush Stamp"). Every root node AI
 // creates (but a background) becomes a brush tool group in the toolbar: its brush tool stamps the
-// collection into a sketch frame, and its inspection tools debug that brush only.
-
-/** A targeted inspection tool: made from one inspection annotation + concern, reusable afterwards. */
-export const targetedToolSchema = z.object({
-  id: z.string().min(1).max(80), name: z.string().min(1).max(100), concern: z.string().max(2000),
-  marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).max(2000)).max(MAX_MARKS),
-  markStyles: z.array(markStyleSchema).max(MAX_MARKS).default([]),
-  result: targetedResultSchema,
-  /** Overlays rebuilt for an applied fix (see overlayUpdateSchema), newest last. */
-  overlayUpdates: z.array(overlayUpdateSchema).max(MAX_OVERLAY_UPDATES).default([]),
-  /** How long the inspection that made this tool took. */
-  timing: z.object({ ms: z.number().nonnegative() }).optional(),
-});
-export type TargetedTool = z.infer<typeof targetedToolSchema>;
-export const MAX_TARGETED = 12;
+// collection into a sketch frame.
 
 export const brushSchema = z.object({
   id: z.string().min(1).max(80), name: z.string().min(1).max(100), color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
@@ -30,36 +15,22 @@ export const brushSchema = z.object({
   scene: sceneSchema,
   /** Its code module (as stored in a program), kept for when the source frame or its code is gone. */
   code: z.string().max(120000).default(""),
-  /** Targeted inspection tools created with the inspection annotation tool. */
-  targeted: z.array(targetedToolSchema).max(MAX_TARGETED).default([]),
   /** A sub brush (a minimal example of one of its constraints) lives inside this brush's tool group ("" = a group of its own). */
   parentId: z.string().max(80).default(""),
   /** A small picture of the brush: its master's box cut from the master frame's result (shown in the Brush panel). */
   thumbnail: z.string().max(200000).regex(/^data:image\/(jpeg|png);base64,/).optional(),
-  /**
-   * A fork: a copy of brush `brushId` (stamped in frame `frameId`) that a fix (`key`, `title`) was applied to instead
-   * of that brush, read from the state drawn with targeted tool `toolId` ("" for forks made before).
-   */
-  fork: z.object({ brushId: z.string().max(80), frameId: z.string().max(80), key: z.string().max(400), title: z.string().max(200), toolId: z.string().max(80).default("") }).optional(),
-// A fork is a brush of its own (its own tools, targeted tools and sub brushes), not inside the group it came from.
-}).transform(brush => brush.fork && brush.parentId ? { ...brush, parentId: "" } : brush);
+});
 export type Brush = z.infer<typeof brushSchema>;
 export const MAX_BRUSHES = 32;
 
-/**
- * Tools of a brush tool group. The fixed ones have ids `<kind>:<brushId>`; each
- * targeted inspection tool is `targeted:<brushId>:<toolId>` and exists only once
- * it has been made from an inspection annotation.
- */
-export const BRUSH_TOOLS = ["brush", "inspect", "inspect-annotate"] as const;
-export type BrushToolKind = (typeof BRUSH_TOOLS)[number] | "targeted";
-export const brushTool = (kind: BrushToolKind, brushId: string, targetedId?: string) => kind === "targeted" ? `targeted:${brushId}:${targetedId}` : `${kind}:${brushId}`;
-export function parseBrushTool(tool: string): { kind: BrushToolKind; brushId: string; targetedId?: string } | null {
+/** Tools of a brush tool group, with ids `<kind>:<brushId>`. */
+export const BRUSH_TOOLS = ["brush"] as const;
+export type BrushToolKind = (typeof BRUSH_TOOLS)[number];
+export const brushTool = (kind: BrushToolKind, brushId: string) => `${kind}:${brushId}`;
+export function parseBrushTool(tool: string): { kind: BrushToolKind; brushId: string } | null {
   const index = tool.indexOf(":"), kind = tool.slice(0, index) as BrushToolKind, rest = tool.slice(index + 1);
-  if (kind === "targeted") { const cut = rest.lastIndexOf(":"); return cut > 0 ? { kind, brushId: rest.slice(0, cut), targetedId: rest.slice(cut + 1) } : null; }
   return index > 0 && (BRUSH_TOOLS as readonly string[]).includes(kind) ? { kind, brushId: rest } : null;
 }
-export const isInspectionTool = (kind: BrushToolKind | undefined) => kind === "inspect" || kind === "inspect-annotate" || kind === "targeted";
 
 const COLORS = ["#c0563f", "#3b7bb8", "#7a5bb5", "#2f8f6b", "#c48a1d", "#b5487f", "#4e8a96", "#8a6a3b"];
 export const brushColor = (count: number) => COLORS[count % COLORS.length];
@@ -73,7 +44,7 @@ export const subBrushes = (brushes: Brush[], parentId: string) => brushes.filter
 export function subBrushFor(scene: Scene, frameId: string, name: string, parent: Brush | undefined, existing: Brush[], id: string): Brush | null {
   const root = scene.nodes.find(node => !node.parentId && node.kind === "collection") ?? scene.nodes.find(node => !node.parentId);
   if (!root || existing.length >= MAX_BRUSHES) return null;
-  return { id, name: name.slice(0, 100), color: parent?.color ?? brushColor(existing.length), sourceFrameId: frameId, nodeId: root.id, scene: subScene(scene, [root.id]), code: "", targeted: [], parentId: parent?.id ?? "" };
+  return { id, name: name.slice(0, 100), color: parent?.color ?? brushColor(existing.length), sourceFrameId: frameId, nodeId: root.id, scene: subScene(scene, [root.id]), code: "", parentId: parent?.id ?? "" };
 }
 
 /**
@@ -93,12 +64,12 @@ export function brushesFor(scene: Scene, frameId: string, existing: Brush[], new
   for (const node of scene.nodes) {
     if (node.parentId || isBackdrop(node) || existing.length + made.length >= MAX_BRUSHES) continue;
     made.push({ id: newId(), name: node.name, color: brushColor(existing.length + made.length), sourceFrameId: frameId, nodeId: node.id,
-      scene: subScene(scene, [node.id]), code: "", targeted: [], parentId: "" });
+      scene: subScene(scene, [node.id]), code: "", parentId: "" });
   }
   return made;
 }
 
-/** Mark each brush's collection in the scene (copies keep the mark, so stamps stay inspectable). */
+/** Mark each brush's collection in the scene (copies keep the mark, so stamps stay recognisable). */
 export function markBrushes(scene: Scene, brushes: Brush[]): Scene {
   const byNode = new Map(brushes.map(brush => [brush.nodeId, brush.id]));
   return { ...scene, nodes: scene.nodes.map(node => byNode.has(node.id) ? { ...node, brushId: byNode.get(node.id) } : node) };
@@ -107,7 +78,7 @@ export function markBrushes(scene: Scene, brushes: Brush[]): Scene {
 /**
  * The collection to stamp: the live node in its source frame, else the saved copy
  * (the source frame was deleted). Either way its root carries the brush mark, so
- * every stamp stays inspectable as this brush.
+ * every stamp stays recognisable as this brush.
  */
 export function brushSource(brush: Brush, liveScene: Scene | undefined): Scene {
   const scene = liveScene && findNode(liveScene, brush.nodeId) ? subScene(liveScene, [brush.nodeId]) : brush.scene;
@@ -169,10 +140,10 @@ export function sourceBrushGroup(scene: Scene, frameId: string, nodeId: string, 
   return brush && brushes.find(item => item.id === brushGroup(brushes, brush.id));
 }
 
-/** Detach an instance: it becomes the master of a new brush (keeping the old brush's targeted inspection tools). */
-export function detachedBrush(scene: Scene, frameId: string, rootId: string, from: Brush, brushes: Brush[], id: string, code: string): Brush {
+/** Detach an instance: it becomes the master of a new brush. */
+export function detachedBrush(scene: Scene, frameId: string, rootId: string, brushes: Brush[], id: string, code: string): Brush {
   const root = findNode(scene, rootId)!, taken = new Set(brushes.map(brush => brush.name));
   let name = root.name.slice(0, 90);
   for (let n = 2; taken.has(name); n++) name = `${root.name.slice(0, 90)} ${n}`;
-  return { id, name, color: brushColor(brushes.length), sourceFrameId: frameId, nodeId: rootId, scene: subScene(scene, [rootId]), code, targeted: from.targeted, parentId: "" };
+  return { id, name, color: brushColor(brushes.length), sourceFrameId: frameId, nodeId: rootId, scene: subScene(scene, [rootId]), code, parentId: "" };
 }

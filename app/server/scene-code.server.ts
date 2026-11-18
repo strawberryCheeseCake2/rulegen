@@ -11,9 +11,9 @@ const traverse = (traverseImport as unknown as { default?: typeof traverseImport
 // Host names the modules must not touch (only rulegenModule, as the top-level call).
 const HOST_NAMES = new Set(["rulegenParams", "rulegenMachines", "rulegenInstances", "rulegenState", "rulegenBase", "rulegenPlaying", "rulegenApply", "rulegenJumpState", "rulegenEmit", "rulegenOwners",
   "rulegenFrozen", "rulegenOnTransition", "rulegenTransit", "rulegenEvaluate", "rulegenRecordOf", "rulegenShown", "rulegenFsmEvent", "rulegenLocal",
-  "rulegenResetStates", "rulegenSetup", "rulegenDraw", "rulegenModule", "rulegenModules", "rulegenLive", "rulegenStarted", "rulegenKey", "rulegenInstance", "rulegenSync", "rulegenDispatch", "rulegenPlain", "rulegenSnapshot", "rulegenRestore"]);
-/** The module context: m.v / m.box read the module's own nodes; m.fsm(id, key?) is the owner of a node's FSM (owner.evaluate(...inputs) computes its current state's constraints in order, owner.dispatch(event) takes a transition); m.owners(id) lists a node's owners; m.history() is the input given so far; m.field names a field the module is driven by; m.term names an inner term of a computation; m.runtime keeps one item's quantity in the execution state (so it can be changed at a moment); m.p is the shared p5 instance; m.store holds the instance's state. */
-const CONTEXT = new Set(["v", "box", "fsm", "owners", "history", "memo", "field", "term", "runtime", "p", "store"]);
+  "rulegenResetStates", "rulegenSetup", "rulegenDraw", "rulegenModule", "rulegenModules", "rulegenLive", "rulegenStarted", "rulegenKey", "rulegenInstance", "rulegenSync", "rulegenDispatch", "rulegenPlain", "rulegenSnapshot", "rulegenRestore", "rulegenCycleKey", "rulegenVisitOpen", "__rgRec"]);
+/** The module context: m.v / m.box read the module's own nodes; m.fsm(id, key?) is the owner of a node's FSM (owner.evaluate(...inputs) computes its current state's constraints in order, owner.dispatch(event) takes a transition); m.owners(id) lists a node's owners; m.history() is the input given so far; m.memo(key, compute) caches a result; m.p is the shared p5 instance; m.store holds the instance's state. */
+const CONTEXT = new Set(["v", "box", "fsm", "owners", "history", "memo", "p", "store"]);
 /** The host owns the canvas and the loop. */
 const HOST_CALLS = new Set(["background", "clear", "createCanvas", "resizeCanvas", "noCanvas", "noLoop", "loop", "redraw", "frameRate", "pixelDensity", "remove"]);
 
@@ -129,7 +129,7 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (!referenced) return;
       const member = parent;
       if (!member.isMemberExpression() || member.node.object !== self || member.node.computed || !t.isIdentifier(member.node.property) || !CONTEXT.has(member.node.property.name))
-        throw new Error("m can only be used as m.v / m.box / m.fsm / m.owners / m.history / m.memo / m.field / m.term / m.runtime / m.p / m.store.");
+        throw new Error("m can only be used as m.v / m.box / m.fsm / m.owners / m.history / m.memo / m.p / m.store.");
       const field = (member.node.property as t.Identifier).name;
       if (field === "store") {
         const use = member.parentPath as NodePath;
@@ -142,11 +142,9 @@ export function connectScene(result: { title: string; explanation: string; code:
       const args = call.node.arguments;
       if (field === "history") { if (args.length) throw new Error("m.history() is called without arguments."); return; }
       if (field === "memo") { if (args.length !== 2) throw new Error("m.memo is called as m.memo(key, () => value)."); return; }
-      if (field === "runtime") { if (args.length !== 3 || !literal(args[0]) || !/^[a-z0-9-]{1,40}$/.test(literal(args[0])!)) throw new Error('m.runtime is called as m.runtime("<state name>", <item id>, value), with a short lowercase name.'); return; }
-      if (field === "term") { if (args.length !== 2 || !literal(args[0]) || !/^[a-z0-9-]{1,40}$/.test(literal(args[0])!)) throw new Error('m.term is called as m.term("<term name>", value), with a short lowercase name.'); return; }
-      if (field === "field") { if (args.length !== 2 || !literal(args[0]) || !/^[a-z0-9-]{1,40}$/.test(literal(args[0])!)) throw new Error('m.field is called as m.field("<field id>", (x, y) => angle or [vx, vy]), with a short lowercase id.'); return; }
       if (field === "v") {
         const key = literal(args[0]);
+        if (args.length !== 1) throw new Error('m.v is called as m.v("<node id>/<param id>").');
         if (!key || !required.has(key) || !subtree.get(moduleOf(path))!.has(decodeURIComponent(key.slice(0, key.indexOf("/"))))) throw new Error("The param connections in the generated code are invalid. Please generate again.");
         used.add(key);
       } else if (field === "box") {

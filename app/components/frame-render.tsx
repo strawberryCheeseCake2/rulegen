@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { CodePreview, type CodePreviewHandle, type RestorePoint, type TraceStep } from "./code-preview";
+import { useEffect, useRef, type ReactNode } from "react";
+import { CodePreview, type CodePreviewHandle, type ExecutionRun, type RestorePoint, type TraceStep } from "./code-preview";
 import { ResultAnnotations } from "./result-annotations";
 import { liveSceneSource } from "../lib/scene/live";
 import { syncScene } from "../lib/scene/machines";
@@ -12,7 +12,8 @@ type Patch = Partial<SketchPanel> | ((panel: SketchPanel) => Partial<SketchPanel
 type Props = { owner: string; panel: SketchPanel; interacting?: boolean;
   /** Show the running result itself (not its last capture) without taking input: a brush gesture is being fed to it. */
   live?: boolean;
-  onEscape?: () => void; tracing?: boolean; onTrace?: (step: TraceStep) => void; restore?: RestorePoint; onDrawn?: (restoreId: string, stores: Record<string, unknown>) => void; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
+  onEscape?: () => void; tracing?: boolean; onTrace?: (step: TraceStep) => void; onCycle?: (cycle: unknown) => void;
+  /** Drawn over the result (the execution overlay). */ overlay?: ReactNode; restore?: RestorePoint; onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
 
 /**
  * The generated result of a sketch frame, rendered *inside* that frame beneath
@@ -46,8 +47,9 @@ export function FrameRender(props: Props) {
   if (!panel.generated) return panel.pendingResult ? <div className="frame-render frame-render-status" role="status"><span className="loading-spinner" /><strong>Generating this frame's result…</strong><span>{panel.loading}</span></div> : null;
   return <div className={`frame-render ${panel.pendingResult ? "frame-render-updating" : ""}`} data-render-owner={owner}>
     {executable ? <CodePreview ref={props.onPreview} key={`${props.documentRevision}-${owner}-${panel.renderRevision}`} executable={executable} onError={error => props.onPatch({ runtimeError: error })}
-      machineEnabled={machineEnabled} visible={props.live} onEscape={props.onEscape} interactive={props.interacting} tracing={props.tracing} onTrace={props.onTrace} restore={props.restore} seed={panel.seed} onDrawn={props.onDrawn} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
+      machineEnabled={machineEnabled} visible={props.live} onEscape={props.onEscape} interactive={props.interacting} tracing={props.tracing} onTrace={props.onTrace} onCycle={props.onCycle} restore={props.restore} seed={panel.seed} onDrawn={props.onDrawn} jump={panel.stateJump} playing={panel.machinePlaying} onStatesChange={states => props.onPatch({ runtimeStates: states })} />
       : <div className="frame-render-status"><strong>{panel.runtimeError ? "This code needs a correction." : "Preparing p5.js…"}</strong></div>}
+    {executable && props.overlay}
     {panel.pendingResult && <div className="frame-render-badge" role="status"><span className="loading-spinner" />Updating…</div>}
   </div>;
 }

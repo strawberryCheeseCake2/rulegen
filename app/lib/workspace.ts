@@ -1,9 +1,8 @@
 import { z } from "zod";
 import type { Viewport } from "./schema";
 
-// Frames on the board are sketch frames (drawn on, rendering their own result),
-// proxy frames (running the direct manipulation handles of a node of a sketch frame)
-// and exploration frames (a brush's marks to try execution or values on; not saved).
+// Frames on the board are sketch frames (drawn on, rendering their own result) and
+// proxy frames (running the direct manipulation handles of a node of a sketch frame).
 
 const position = z.object({ x: z.number().finite(), y: z.number().finite() });
 export const defaultFrames = () => ({ source: { x: 0, y: 0 } });
@@ -20,30 +19,27 @@ export const workspaceSchema = z.object({
 });
 export type FrameGroup = WorkspaceLayout["groups"][number];
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
-export type FrameId = "source" | `sketch-${string}` | `proxy-${string}` | `explore-${string}`;
+export type FrameId = "source" | `sketch-${string}` | `proxy-${string}` | `exec-${string}`;
+/** The Execution frame of an inspected frame: its recorded execution, stepped through (not saved with the project). */
+export const execFrameId = (frameId: string) => `exec-${frameId}` as const;
+export const isExecFrame = (id: string): id is `exec-${string}` => id.startsWith("exec-");
 export const FRAME_WIDTH = 900, FRAME_HEIGHT = 600, FRAME_GAP_X = 140, FRAME_GAP_Y = 140;
-/** Room an exploration frame's controls take under it. */
-export const EXPLORE_BAR_HEIGHT = 260;
 /** Room a frame group's title takes above its frames (frame headers sit between). */
 export const GROUP_TITLE_HEIGHT = 110, GROUP_PADDING = 36;
-const frameHeight = (id: string) => id.startsWith("explore-") ? FRAME_HEIGHT + EXPLORE_BAR_HEIGHT : FRAME_HEIGHT;
 
 /** The box a group takes on the board (title included), from its frames' spots. */
 export function groupBox(frames: WorkspaceLayout["frames"], members: readonly string[]) {
-  const spots = members.filter(id => frames[id]).map(id => ({ ...frames[id], h: frameHeight(id) }));
+  const spots = members.filter(id => frames[id]).map(id => ({ ...frames[id], h: FRAME_HEIGHT }));
   if (!spots.length) return null;
   const left = Math.min(...spots.map(f => f.x)), top = Math.min(...spots.map(f => f.y)), right = Math.max(...spots.map(f => f.x + FRAME_WIDTH)), bottom = Math.max(...spots.map(f => f.y + f.h));
   return { x: left - GROUP_PADDING, y: top - GROUP_TITLE_HEIGHT, w: right - left + GROUP_PADDING * 2, h: bottom - top + GROUP_TITLE_HEIGHT + GROUP_PADDING };
 }
-/**
- * Spots for `count` frames side by side in a new group right of `fromId` (then lower), clear of every frame and group
- * already on the board (exploration frames with their controls under them).
- */
-export function groupRow(layout: Pick<WorkspaceLayout, "frames" | "groups">, fromId: string, count: number, tall = true) {
+/** Spots for `count` frames side by side in a new group right of `fromId` (then lower), clear of every frame and group already on the board. */
+export function groupRow(layout: Pick<WorkspaceLayout, "frames" | "groups">, fromId: string, count: number) {
   const origin = layout.frames[fromId] || layout.frames.source || { x: 0, y: 0 };
-  const taken = [...Object.entries(layout.frames).map(([id, at]) => ({ x: at.x, y: at.y, w: FRAME_WIDTH, h: frameHeight(id) })),
+  const taken = [...Object.values(layout.frames).map(at => ({ x: at.x, y: at.y, w: FRAME_WIDTH, h: FRAME_HEIGHT })),
     ...layout.groups.map(group => groupBox(layout.frames, group.frames)).filter((box): box is NonNullable<typeof box> => Boolean(box))];
-  const w = count * FRAME_WIDTH + (count - 1) * FRAME_GAP_X + GROUP_PADDING * 2, h = (tall ? FRAME_HEIGHT + EXPLORE_BAR_HEIGHT : FRAME_HEIGHT) + GROUP_TITLE_HEIGHT + GROUP_PADDING;
+  const w = count * FRAME_WIDTH + (count - 1) * FRAME_GAP_X + GROUP_PADDING * 2, h = FRAME_HEIGHT + GROUP_TITLE_HEIGHT + GROUP_PADDING;
   const at = { x: origin.x + FRAME_WIDTH + FRAME_GAP_X, y: origin.y };
   const overlaps = () => taken.some(f => f.x < at.x + w && f.x + f.w > at.x - GROUP_PADDING && f.y < at.y - GROUP_TITLE_HEIGHT + h && f.y + f.h > at.y - GROUP_TITLE_HEIGHT);
   while (overlaps()) at.y += 120;
@@ -76,8 +72,7 @@ export function nextSketchPosition(frames: WorkspaceLayout["frames"]) {
 /** A free spot right of `fromId` (then below it), for frames derived from another frame. */
 export function besideFramePosition(frames: WorkspaceLayout["frames"], fromId: string) {
   const origin = frames[fromId] || frames.source || { x: 0, y: 0 };
-  // An exploration frame has its controls under it: that space is taken too.
-  const taken = Object.entries(frames).map(([id, at]) => ({ ...at, h: frameHeight(id) }));
+  const taken = Object.values(frames).map(at => ({ ...at, h: FRAME_HEIGHT }));
   const candidate = { x: origin.x + FRAME_WIDTH + FRAME_GAP_X, y: origin.y };
   while (taken.some(f => Math.abs(f.x - candidate.x) < FRAME_WIDTH && (f.y <= candidate.y ? candidate.y - f.y < f.h : f.y - candidate.y < FRAME_HEIGHT))) candidate.y += FRAME_HEIGHT + FRAME_GAP_Y;
   return candidate;

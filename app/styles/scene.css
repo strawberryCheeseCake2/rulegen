@@ -147,13 +147,7 @@
 .raw-code-input::selection { background: rgba(64, 120, 210, .25); color: transparent; }
 .raw-code-surface.editable .raw-code-number { z-index: 2; }
 .raw-code-surface.editable:focus-within { box-shadow: inset 2px 0 0 #8fb9a0; }
-/* What an inspection's focus is about in the code, and the lines using what they read. */
-.raw-code-line.focused { background: #fff0c2; }
-.raw-code-line.focused .raw-code-number { background: #fbe1a0; color: #7a5200; font-weight: 700; }
-.raw-code-line.related { background: #fdf8e6; }
-.raw-code-focus { flex: none; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: 9px; background: #fff0c2; color: #7a5200; font: 10px ui-monospace, monospace; }
 .raw-code-edited { flex: none; padding: 2px 7px; border-radius: 9px; background: #e8f1fb; color: #2d5b8e; font-size: 10px; }
-.raw-code-badge { margin-left: 4px; padding: 0 5px; border-radius: 8px; background: #fbe1a0; color: #7a5200; font-size: 9px; }
 .raw-runtime-error { margin: 6px 12px; }
 
 /* ── Per-node state machine (bottom panel, graph only) ─────────────────────── */
@@ -284,157 +278,22 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .brush-remove { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #a3483a; padding: 4px 0; }
 .artwork-overlay .gesture-path { fill: none; stroke: #397461; stroke-width: 2.5; stroke-dasharray: 6 5; stroke-linecap: round; opacity: .7; pointer-events: none; }
 
-/* Inspection overlay on the inspected frame. */
-.sketch-frame-surface > .inspection-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.inspection-overlay > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
-.inspection-snapshot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fffefa; }
-.inspection-step-badge { position: absolute; left: 10px; top: 10px; padding: 3px 8px; border-radius: 10px; background: #2b2540d9; color: #fff; font-size: 11px; }
-.inspection-mark { fill: none; stroke: #7c3aed; stroke-width: 6; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
-.inspection-shape { fill: none; stroke-width: 2; stroke-dasharray: 5 3; }
-.inspection-ghost .inspection-shape { stroke-dasharray: none; stroke-width: 1.5; }
-.inspection-ghost.later .inspection-shape { stroke-dasharray: 3 3; }
-.inspection-ghost { pointer-events: none; transition: opacity .12s; }
-.inspection-ghost.clickable { pointer-events: auto; cursor: pointer; }
-.inspection-ghost.clickable .inspection-shape { pointer-events: none; }
-.inspection-ghost-hit { fill: none; stroke: transparent; stroke-width: 12; pointer-events: stroke; }
-.inspection-ghost-hit.solid { pointer-events: all; }
-.inspection-reset-confirm { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #8a2f25; }
-.inspection-reset-confirm button { padding: 3px 8px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 10.5px; background: #fff; color: #4b6155; }
-.inspection-reset-confirm button.danger { border-color: #d6453a; background: #d6453a; color: #fff; }
-.inspection-order-path { fill: none; stroke-width: 1.2; stroke-dasharray: 2 4; opacity: .55; pointer-events: none; }
-.inspection-badge { pointer-events: none; }
-.inspection-badge text { font-family: Inter, Arial, sans-serif; font-weight: 700; }
-.inspection-badge.current circle { stroke-width: 1.5; }
-.inspection-badge.ghost circle { stroke-width: 1; }
-.inspection-badge.clickable { pointer-events: all; cursor: pointer; }
-.inspection-leader { stroke-width: 1; opacity: .6; pointer-events: none; }
-.inspection-ghost.clickable:hover { opacity: .9 !important; }
-.inspection-ghost.clickable:hover .inspection-shape { stroke-width: 2.5; }
-.inspection-shape.focused { stroke-width: 3.5; stroke-dasharray: none; filter: drop-shadow(0 0 3px #fff); }
-.inspection-item.clickable { pointer-events: all; cursor: pointer; }
-/* Overlay handles: a grip to drag (circle), turn (with an arc) or slide (diamond); a faint guide while dragging. */
-.inspection-grip { pointer-events: all; cursor: grab; touch-action: none; }
-.inspection-grip.dragging { cursor: grabbing; }
-.inspection-grip > circle, .inspection-grip > rect, .inspection-grip > path { stroke-width: 2; }
-.inspection-grip:hover > circle:first-of-type, .inspection-grip.dragging > circle:first-of-type, .inspection-grip:hover > rect, .inspection-grip.dragging > rect { stroke-width: 3; }
-.inspection-grip-hit { fill: transparent; stroke: none; }
-.inspection-input-path { fill: none; stroke-width: 1.5; stroke-dasharray: 3 4; opacity: .55; pointer-events: none; }
-.inspection-grip-guide { fill: none; stroke-width: 1.2; stroke-dasharray: 4 4; opacity: .65; pointer-events: none; }
-.inspection-item.clickable .inspection-shape { pointer-events: stroke; }
-.inspection-label { font-family: Inter, Arial, sans-serif; font-weight: 600; paint-order: stroke; stroke: #fffefa; stroke-width: 3px; }
-
 /* Inspection panel (bottom). */
 .inspection-panel-content { overflow: hidden; }
-.inspection-body { height: 100%; display: flex; flex-direction: column; min-width: 0; }
-.inspection-empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #6d7f74; font-size: 12px; text-align: center; padding: 0 16px; }
-.inspection-toolbar { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid #e7ece8; background: #fff; flex-wrap: wrap; flex: none; }
-.inspection-toolbar > button, .inspection-stepper button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 10.5px; color: #4b6155; background: #fff; }
-.inspection-toolbar > button:disabled, .inspection-stepper button:disabled { opacity: .45; }
-.inspection-toolbar > button.recording .record-dot { background: #d6453a; box-shadow: 0 0 0 3px #d6453a22; }
-.record-dot { width: 7px; height: 7px; border-radius: 50%; background: #a9b5ae; display: inline-block; }
-.inspection-brush { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12px; }
-.inspection-brush i { width: 10px; height: 10px; border-radius: 50%; }
-.inspection-modes { display: flex; background: #f0f3f1; border-radius: 5px; padding: 2px; }
-.inspection-modes button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; font-size: 10.5px; border-radius: 3px; color: #5f7468; }
-.inspection-modes button[aria-selected=true] { background: #fff; color: #2e725d; box-shadow: 0 1px 3px #34473b12; }
-.inspection-stepper { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
-.inspection-stepper output { font-size: 11px; min-width: 44px; text-align: center; color: #3d5246; }
-.inspection-timeline { flex: none; padding: 8px 18px 4px; border-bottom: 1px solid #eef2ef; }
-.timeline-track { position: relative; height: 26px; cursor: pointer; touch-action: none; outline: none; }
-.timeline-track.empty { cursor: default; }
-.timeline-track:focus-visible { box-shadow: 0 0 0 2px #39746155; border-radius: 4px; }
-.timeline-rail { position: absolute; left: 3%; right: 3%; top: 12px; height: 3px; border-radius: 2px; background: #e3eae6; }
-.timeline-progress { position: absolute; left: 0; top: 12px; height: 3px; border-radius: 2px; background: linear-gradient(90deg, transparent 0 3%, #397461 3%); pointer-events: none; }
-.timeline-mark { position: absolute; top: 4px; width: 18px; height: 18px; margin-left: -9px; display: grid; place-items: center; }
-.timeline-mark > i { width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid #6f8c7d; transition: transform .12s; }
-.timeline-mark.capture > i { border-radius: 2px; border-color: #a0aea6; }
-.timeline-mark:hover > i { transform: scale(1.35); }
-.timeline-mark.current > i { background: #397461; border-color: #397461; transform: scale(1.45); box-shadow: 0 0 0 3px #39746126; }
-.timeline-tip { position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%); display: none; flex-direction: column; gap: 1px; padding: 5px 8px; border-radius: 6px; background: #1f2d26; color: #f3f7f4; font-size: 10.5px; white-space: nowrap; z-index: 5; pointer-events: none; box-shadow: 0 4px 12px #0003; }
-.timeline-tip b { font-size: 11px; }
-.timeline-tip small { color: #a9bdb1; font-size: 9.5px; }
-.timeline-mark:hover .timeline-tip { display: flex; }
-.timeline-scale { display: flex; justify-content: space-between; padding: 0 3%; font-size: 9.5px; color: #8a9a91; min-height: 12px; }
-.inspection-timeline-hint { padding: 0 14px 6px; }
-.inspection-hint, .inspection-muted { font-size: 10.5px; color: #85958b; }
-.inspection-content { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 34%) minmax(0, 1fr); }
-.inspection-side { overflow: auto; padding: 10px 14px; border-right: 1px solid #e7ece8; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.inspection-step-detail { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.inspection-muted { font-size: 10.5px; color: #85958b; }
 .inspection-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.inspection-chips > button, .inspection-transition { padding: 3px 8px; border: 1px solid #d3ded7; border-radius: 4px; font-size: 11px; background: #fff; color: #2f4a3b; }
-.inspection-transition { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }
-.inspection-transition small { color: #85958b; font-size: 9.5px; }
-.inspection-chips > button.focused, .inspection-transition.focused, .inspection-legend button.focused { border-color: #e07b00; background: #fff4e5; color: #8a4b00; }
-.inspection-concern { display: flex; flex-direction: column; gap: 6px; }
-.inspection-concern textarea { font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid #d4ddd7; border-radius: 5px; resize: vertical; }
-/* Concern autocomplete: the textarea sits over a mirror of its text that shows the suggested rest in grey. */
-.concern-input { position: relative; display: grid; }
-.concern-input > * { grid-area: 1 / 1; }
-.concern-input textarea { position: relative; background: transparent; z-index: 1; }
-.concern-ghost { font: inherit; font-size: 12px; padding: 6px 8px; border: 1px solid transparent; white-space: pre-wrap; overflow-wrap: break-word; overflow: hidden; pointer-events: none; background: #fff; border-radius: 5px; line-height: normal; }
-.concern-ghost .concern-typed { color: transparent; }
-.concern-ghost .concern-rest { color: #9aaba1; }
-.concern-suggestions { display: flex; flex-direction: column; gap: 4px; }
-.concern-suggestions-head { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding-right: 2px; font-size: 10.5px; color: #6c7e73; }
-.concern-suggestions-head kbd { font: inherit; font-size: 9.5px; padding: 0 4px; border: 1px solid #cfd9d3; border-radius: 3px; background: #f5f8f6; color: #4a6656; }
-.inspection-concern .concern-autocomplete { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #9fbfad; border-radius: 4px; background: #fff; color: #2e725d; font-size: 11px; }
-.inspection-concern .concern-autocomplete:disabled { opacity: .5; }
-.inspection-concern .concern-suggestion { align-self: stretch; text-align: left; padding: 5px 8px; border: 1px dashed #c9d6ce; border-radius: 5px; background: #fbfcfb; color: #34493e; font-size: 11.5px; line-height: 1.4; }
-.inspection-concern .concern-suggestion:hover { border-style: solid; border-color: #8fb3a0; background: #fff; }
-.inspection-concern .concern-suggestion.chosen { border-style: solid; border-color: #397461; background: #eef5f1; }
-.inspection-concern button.primary, .inspection-apply-all { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 4px; font-size: 11px; border: 1px solid #397461; background: #397461; color: #fff; }
-.inspection-apply-all { background: #fff; color: #2e725d; padding: 3px 9px; }
-.inspection-concern button:disabled { opacity: .5; }
-.inspection-link { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: #6d3fc0; text-decoration: underline; }
-.inspection-mark-chip { background: #f3edff; border-color: #cdb8f5; color: #5b2fb0; }
-.inspection-result { display: flex; flex-direction: column; gap: 10px; font-size: 12px; }
-.inspection-result p { margin: 0; line-height: 1.5; color: #2f3d35; }
+.inspection-chips > button { padding: 3px 8px; border: 1px solid #d3ded7; border-radius: 4px; font-size: 11px; background: #fff; color: #2f4a3b; }
+.inspection-chips > button.focused, .inspection-legend button.focused { border-color: #e07b00; background: #fff4e5; color: #8a4b00; }
+/* The state machine panel's legend. */
 .inspection-legend { display: flex; flex-wrap: wrap; gap: 5px; }
 .inspection-legend button { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border: 1px solid #dde5e0; border-radius: 12px; font-size: 10.5px; background: #fff; }
 .inspection-legend i { width: 9px; height: 9px; border-radius: 2px; }
-.inspection-table { overflow: auto; min-width: 0; }
-.inspection-table table { width: 100%; border-collapse: collapse; font-size: 11px; }
-.inspection-table th { position: sticky; top: 0; background: #f8faf9; text-align: left; font-weight: 600; color: #6a7c71; padding: 5px 8px; border-bottom: 1px solid #e3e9e5; z-index: 1; }
-.inspection-table td { padding: 5px 8px; border-bottom: 1px solid #eff3f0; vertical-align: middle; }
-.inspection-table tr { cursor: pointer; }
-.inspection-table tr:hover td { background: #f6faf7; }
-.inspection-table tr.changed td { background: #fff8e6; }
-.inspection-table tr.focused td { background: #fff1dc; }
-.inspection-table tr.edited .inspection-value { color: #b35c00; font-weight: 600; }
-.inspection-step-edit { display: inline-flex; align-items: center; gap: 3px; width: fit-content; font-size: 9.5px; padding: 0 4px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
-.inspection-step-edit button { display: inline-flex; padding: 1px; border: 0; background: none; color: inherit; cursor: pointer; }
-.inspection-table tr.focused td:first-child { box-shadow: inset 3px 0 0 #e07b00; }
-.inspection-table td:first-child { display: flex; flex-direction: column; gap: 1px; }
-.inspection-node { font-size: 9.5px; color: #8a998f; }
-.inspection-value { white-space: nowrap; font-variant-numeric: tabular-nums; }
-.inspection-color { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; border: 1px solid #0002; }
-.inspection-delta { color: #b0631b; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.inspection-trace { display: flex; align-items: flex-end; gap: 2px; height: 22px; }
-.inspection-trace i { width: 5px; min-height: 3px; background: #b9cbbf; border-radius: 1px; }
-.inspection-trace i.current { background: #397461; }
 .constraint-card.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; }
 .param-card.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; }
-/* A hidden parameter a targeted inspection suggests (not a param yet): faint and read-only until accepted or rejected. */
-.param-card.suggested-param { border-style: dashed; border-color: #cdd6c6; background: repeating-linear-gradient(135deg, #fcfdf9 0 7px, #f5f8f2 7px 14px); opacity: .72; }
-.param-card.suggested-param:hover, .param-card.suggested-param.inspection-highlight { opacity: 1; }
-.param-card.suggested-param.inspection-highlight { box-shadow: 0 0 0 2px #e07b00; background: #fff8ee; border-style: solid; border-color: #e07b00; }
-.suggested-param .param-card-title b { flex: 1; min-width: 0; font: 600 12px Inter, Arial, sans-serif; color: #6b7c5e; }
-.suggested-tag { font-style: normal; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
-.suggested-reason { color: #9a7a40; }
-.suggested-value { display: flex; align-items: center; gap: 8px; font-size: 10.5px; color: #6b7c5e; }
-.suggested-value input[type=range] { flex: 1; min-width: 0; opacity: .6; }
-.suggested-actions { display: flex; gap: 6px; }
-.suggested-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #c9d6ce; background: #fff; color: #5c6e63; cursor: pointer; }
-.suggested-actions button.accept { border-color: #397461; background: #397461; color: #fff; }
-.suggested-actions button:disabled { opacity: .5; cursor: default; }
-@media (max-width: 700px){ .inspection-content { grid-template-columns: 1fr; } .inspection-side { border-right: 0; border-bottom: 1px solid #e7ece8; } }
-.brush-targeted-row { display: flex; align-items: center; gap: 2px; }
-.brush-targeted-row > button:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Remove buttons and hints in the Brush panel. */
 .brush-targeted-remove { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 4px; color: #8a6a63; }
 .brush-targeted-remove:hover { background: #f6e9e6; }
 .brush-targeted-hint { font-size: 10px; color: #8b9a90; padding: 2px 8px 4px; line-height: 1.4; }
-.inspection-modes { flex-wrap: wrap; max-width: 100%; }
-.inspection-modes button { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .frame-working { display: inline-flex; align-items: center; gap: 5px; padding: 2px 4px 2px 8px; border-radius: 11px; background: #eef6f1; color: #23533f; font-size: 10.5px; white-space: nowrap; }
 .frame-working .loading-spinner { width: 10px; height: 10px; }
@@ -452,12 +311,8 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .brush-role-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #d9cdb8; border-radius: 4px; background: #fff; font-size: 11px; color: #5d4a2c; }
 .detach-dialog p b { font-weight: 600; }
 .detach-dialog .alternative-button + .alternative-button { margin-top: 6px; }
-.inspection-frame { max-width: 190px; padding: 2px 6px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 11px; color: #3c5246; }
-.inspection-frame-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 8px; }
-.inspection-frame-list button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #dbe4de; border-radius: 12px; background: #fff; font-size: 11.5px; }
-.inspection-frame-list small { color: #7a8b81; }
 .brush-role-actions .brush-role-delete { margin-left: auto; color: #a1452f; border-color: #e7c9bf; }
-/* Inspection has its own pane beside Code / State Machine, so the inspected states stay in view. */
+/* A pane of its own beside Code / State Machine (e.g. an inspection), so the states stay in view. */
 .bottom-panel-split { display: flex; height: min(350px, 40dvh); min-height: 220px; background: #f8faf9; }
 .bottom-panel-split > .inspection-dock { flex: 1 1 auto; min-width: 0; height: 100%; overflow: hidden; }
 .bottom-panel-side { position: relative; flex: 0 0 auto; width: min(44%, 560px); min-width: 260px; height: 100%; border-left: 1px solid #dfe6e1; }
@@ -474,16 +329,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .machine-inspection-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 3px; vertical-align: -1px; }
 .machine-inspection-legend .now { box-shadow: 0 0 0 2px #e0457b; }
 .machine-inspection-legend .related { outline: 2px dashed #c27a2c; outline-offset: 1px; }
-/* Undo / redo of applied changes. */
-.inspection-applied-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.inspection-applied-actions { display: inline-flex; gap: 4px; margin-left: auto; }
-.inspection-applied-actions button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 10.5px; color: #3c5246; }
-.inspection-applied-mark { color: #2f7a52; font-size: 10.5px; }
-/* Inspection annotation pen / eraser. */
-.inspection-draw-mode { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.inspection-draw-mode button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 1px solid #dbe4de; border-radius: 4px; background: #fff; font-size: 11px; color: #4a5a50; }
-.inspection-draw-mode button.active { border-color: #7a5bb5; background: #f2eefa; color: #4f3a85; }
-.sketch-frame-surface.inspection-erasing .p5-surface { cursor: cell; }
 /* Sub brushes (minimal examples) inside a brush tool group. */
 .brush-sub-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 10px; }
 .brush-sub-row { display: flex; align-items: center; gap: 3px; }
@@ -558,20 +403,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .proxy-notice span { flex: 1; }
 .proxy-notice button { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid #d9b98a; border-radius: 6px; background: #fff; color: #7a5a30; font-size: 12px; }
 
-/* ── Inspection annotation pen ── */
-.inspection-pen { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid #e3dbf5; border-radius: 6px; background: #faf8ff; font-size: 11px; color: #4b3a75; }
-.inspection-pen-colors { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.inspection-pen-colors > button { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #d8d0ea; padding: 0; }
-.inspection-pen-colors > button.active { box-shadow: 0 0 0 2px #4b3a75; }
-.inspection-pen-custom { display: inline-flex; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; box-shadow: 0 0 0 1px #d8d0ea; cursor: pointer; }
-.inspection-pen-custom input { width: 34px; height: 34px; margin: -6px; border: 0; padding: 0; cursor: pointer; }
-.inspection-pen-preview { width: 60px; height: 24px; margin-left: auto; }
-.inspection-pen-preview path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.inspection-pen label { display: flex; align-items: center; gap: 8px; }
-.inspection-pen label span { width: 40px; color: #6d5d94; }
-.inspection-pen label input[type=range] { flex: 1; min-width: 0; }
-.inspection-pen label b { width: 38px; text-align: right; font-weight: 600; }
-
 /* ── Brush tool group panel: fixed height, scrolling body ── */
 .brush-group-popover { display: flex; flex-direction: column; }
 .brush-group-popover .pencil-popover-heading { flex: none; }
@@ -579,104 +410,13 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 /* Frame JSON: one frame's state machines, params and code, to copy. */
 .frame-json-modal .frame-json-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .frame-json-modal .frame-json-note { color: #a0563a; font-size: 12px; margin: 0; }
-/* Hidden parameters a targeted inspection suggests (accept / reject), then adjusted in place. */
-.inspection-parameters { display: flex; flex-direction: column; gap: 6px; }
-.inspection-records { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px dashed #c9d6ce; border-radius: 6px; background: #fbfcfb; font-size: 11px; color: #5c6e63; }
-.inspection-records.applied { border-style: solid; border-color: #cfe3d8; }
-.inspection-records button { align-self: flex-start; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #397461; background: #397461; color: #fff; }
-.inspection-records button:disabled { opacity: .5; }
-.inspection-records details { font-size: 10.5px; color: #6c7e73; }
-.inspection-records pre { margin: 4px 0 0; padding: 5px 7px; background: #f5f7f6; border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 10px; }
-.inspection-records pre del { color: #a0563a; }
-.inspection-records pre ins { color: #23684f; text-decoration: none; }
-.inspection-parameter { display: flex; flex-direction: column; gap: 5px; padding: 7px 9px; border: 1px dashed #b9cfc3; border-radius: 6px; background: #fbfcfb; }
-.inspection-parameter.accepted { border-style: solid; border-color: #9fc4b0; background: #f3f9f5; }
-.inspection-parameter.rejected { opacity: .65; flex-direction: row; align-items: center; justify-content: space-between; }
-.inspection-parameter b { font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
-.inspection-parameter b span { font-weight: 400; font-size: 10.5px; color: #7a8b81; }
-.inspection-parameter em { font-style: normal; font-size: 9.5px; padding: 1px 5px; border-radius: 3px; background: #fff3dc; color: #8a5a00; }
-.inspection-parameter.accepted em { background: #e3f1ea; color: #23684f; }
-.inspection-parameter > span { font-size: 11px; color: #5c6e63; }
-.inspection-parameter code { font-size: 10.5px; color: #4a6656; }
-.inspection-parameter.focused { border-color: #e07b00; box-shadow: 0 0 0 2px #fff1dc; }
-.inspection-parameter-head { all: unset; cursor: pointer; display: block; }
-.inspection-parameter-head:focus-visible { outline: 2px solid #e07b00; outline-offset: 2px; border-radius: 3px; }
-.inspection-parameter-actions { display: flex; gap: 6px; }
-.inspection-parameter-actions button, .inspection-parameter-restore { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 4px; font-size: 11px; border: 1px solid #c9d6ce; background: #fff; color: #5c6e63; }
-.inspection-parameter-actions button.accept { border-color: #397461; background: #397461; color: #fff; }
-.inspection-parameter-actions button:disabled { opacity: .5; }
-.inspection-parameter details { font-size: 10.5px; color: #6c7e73; }
-.inspection-parameter pre { margin: 4px 0 0; padding: 5px 7px; background: #f5f7f6; border-radius: 4px; white-space: pre-wrap; word-break: break-all; font-size: 10px; }
-.inspection-parameter pre del { color: #a0563a; }
-.inspection-parameter pre ins { color: #23684f; text-decoration: none; }
-.inspection-parameter-control { display: flex; align-items: center; gap: 8px; font-size: 11px; }
-.inspection-parameter-control input[type=range] { flex: 1; min-width: 0; }
-.inspection-parameter-control output { min-width: 52px; text-align: right; color: #34493e; font-variant-numeric: tabular-nums; }
 
-/* Exploration: buttons in the inspection panel, and the frame on the board (same brush marks, its own handles). */
-.inspection-explore { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 2px 0; }
-.inspection-explore-button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 12px; border: 1px solid #c9d7ee; background: #f3f7fe; color: #2a4f86; font-size: 11px; cursor: pointer; }
-.inspection-explore-button.parameters { border-color: #e6d3c0; background: #fdf7f1; color: #8a5320; }
-.inspection-explore-button:hover:not(:disabled) { filter: brightness(.97); }
-.inspection-explore-button small { margin-left: 2px; padding: 0 5px; border-radius: 8px; background: #ffffffb0; font-size: 10px; }
-.world-frame.frame-explore { outline: 2px dashed #b7c6e6; outline-offset: 3px; }
-/* The frame shows the drawing only; its controls sit right under it (outside the 900×600 canvas), so they never cover the marks. */
-.explore-frame-surface { position: relative; width: 900px; height: 600px; background: #fffefa; }
-.explore-frame-surface > .isolated-code-render { position: absolute; inset: 0; overflow: hidden; }
-.explore-frame-surface > .inspection-overlay { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
-.explore-bar { position: absolute; left: 0; right: 0; top: calc(100% + 14px); z-index: 3; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: #fffffcf0; border: 1px solid #dfe6e1; box-shadow: 0 4px 14px #0000000f; font-size: 16px; color: #34403a; }
-.explore-bar p { margin: 0; line-height: 1.45; }
-.explore-status { display: inline-flex; align-items: center; gap: 8px; color: #4f6347; }
-.explore-status .loading-spinner { width: 12px; height: 12px; }
-.explore-status.error { color: #a33b2b; }
-.explore-scrub { display: flex; align-items: center; gap: 8px; }
-.explore-scrub input { flex: 1; }
-.explore-scrub output { min-width: 36px; text-align: right; font-variant-numeric: tabular-nums; color: #5b6b61; }
-.explore-scrub button, .explore-status button { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 7px; cursor: pointer; }
-.explore-ghost { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .16; pointer-events: none; z-index: 1; }
-.explore-frame-surface:focus { outline: none; }
-.explore-stepper { display: flex; align-items: center; gap: 6px; }
-.explore-stepper output { min-width: 84px; text-align: center; font-variant-numeric: tabular-nums; color: #5b6b61; }
-.explore-stepper output b { color: #2a4f86; font-size: 18px; }
-.explore-stepper button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 8px; cursor: pointer; font-size: 16px; }
-.explore-stepper button.primary { border-color: #2a4f86; background: #2a4f86; color: #fff; }
-.explore-stepper button:disabled { opacity: .45; cursor: default; }
-.explore-step-now { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; }
-.explore-step-now b { color: #2f3a34; }
-.explore-step-now i { font-style: normal; font-size: 14px; padding: 0 6px; border-radius: 8px; background: #eef3fc; color: #2a4f86; }
-/* The state machine step execution is in: its state (or transition), then its constraints in evaluation order. */
-.explore-fsm { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: none; }
-.explore-fsm button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d5ddd8; background: #fff; border-radius: 10px; padding: 1px 8px; font-size: 15px; cursor: pointer; color: #3f5236; }
-.explore-fsm-head { font-weight: 600; border-color: #9fb4c9 !important; background: #f2f6fb !important; }
-.explore-fsm-head em { font-style: normal; font-size: 11px; color: #5d7590; text-transform: uppercase; letter-spacing: .04em; }
-.explore-fsm-head.transition { border-color: #d6b38a !important; background: #fdf6ec !important; }
-.explore-fsm-constraint small { color: #8a978f; font-variant-numeric: tabular-nums; }
-.explore-fsm-constraint b { font-weight: 600; color: #1f5f8b; font-variant-numeric: tabular-nums; }
-.explore-fsm-constraint:not(.done) { opacity: .55; }
-.explore-fsm-constraint.current { box-shadow: 0 0 0 2px #e07b00; opacity: 1; }
+/* The states a constraint is in, and the constraints a state leaves out. */
 .constraint-states { display: block; font-size: 10px; color: #8a967c; margin: -2px 0 2px 26px; }
 .excluded-constraints { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; }
 .excluded-constraints button { font-size: 11px; display: inline-flex; gap: 3px; align-items: center; border: 1px dashed #cdd6c6; background: #fff; border-radius: 8px; padding: 2px 7px; cursor: pointer; color: #5f6e60; }
 .transition-event { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #6b7c5e; }
 .transition-event input { width: 9em; }
-.explore-stages { display: flex; flex-wrap: wrap; gap: 4px; flex: none; }
-.explore-stages button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid #d5ddd8; background: #fff; border-radius: 10px; padding: 1px 8px; font-size: 15px; cursor: pointer; }
-.explore-stages button small { color: #8a978f; font-variant-numeric: tabular-nums; }
-.explore-stages button.current { border-color: #2a4f86; background: #eef3fc; color: #2a4f86; }
-.explore-explain { color: #4f5d55; font-size: 15px; line-height: 1.45; flex: none; }
-/* Sketched gestures: draw the step's mark where it goes, then submit it. */
-.explore-sketch { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; cursor: crosshair; touch-action: none; overflow: visible; }
-.explore-sketch-area { fill: #2a4f8608; stroke: #2a4f86; stroke-width: 1.5; stroke-dasharray: 6 4; }
-.explore-sketch-guide { fill: none; stroke: #2a4f86; stroke-width: 2; stroke-dasharray: 3 5; opacity: .5; }
-.explore-sketch-stroke { fill: none; stroke: #d6336c; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.explore-sketch-stroke.ok { stroke: #2f8a5b; }
-.explore-sketch-bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; background: #fdf2f6; border: 1px solid #f3c7d6; }
-.explore-sketch-bar.ok { background: #eef8f2; border-color: #b9dfc8; }
-.explore-sketch-bar > span { flex: 1; display: flex; flex-direction: column; gap: 2px; font-size: 15px; color: #4f5d55; }
-.explore-sketch-bar b { color: #2f3a34; font-size: 16px; }
-.explore-sketch-bar button { border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 10px; cursor: pointer; font-size: 16px; }
-.explore-sketch-bar button.primary { border-color: #2a4f86; background: #2a4f86; color: #fff; }
-.explore-sketch-bar button:disabled { opacity: .45; cursor: default; }
 
 /* Frames picked together on the board (a box dragged with the select tool, or shift-clicked headers) */
 .frame-pick-box { position: absolute; z-index: 30; pointer-events: none; border: 1.5px solid #2f7d62; background: #2f7d6214; border-radius: 2px; }
@@ -706,20 +446,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .master-highlight-badge { position: absolute; left: 14px; top: 14px; display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: var(--brush-color); color: #fff; font-size: 22px; font-weight: 650; white-space: nowrap; box-shadow: 0 6px 18px #0002; }
 .master-highlight-box { position: absolute; border: 3px dashed var(--brush-color); border-radius: 6px; background: color-mix(in srgb, var(--brush-color) 8%, transparent); }
 
-/* Fixes are applied to a fork of the brush */
-
-.inspection-fork-link { display: flex; align-items: center; gap: 5px; margin-top: 4px; padding: 4px 8px; border: 1px dashed #9fbfad; border-radius: 4px; background: #f4faf6; color: #2f6b52; font-size: 10.5px; text-align: left; }
-.inspection-fork-link:hover { background: #e8f3ec; }
-
-/* Forks: brushes of their own, made by applying a fix to a copy */
-.brush-fork-badge { flex: none; font-style: normal; font-weight: 700; color: #2f6b52; }
-.brush-fork-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 10px; font-size: 10.5px; color: #4b5d53; line-height: 1.4; }
-.brush-fork-row button { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; padding: 4px 8px; border: 1px solid #dbe4de; border-radius: 4px; font-size: 10.5px; color: #2f6b52; }
-
-/* Inspection options and timing */
-.inspection-preview-switch { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: #4b5d53; margin: 4px 0; cursor: pointer; }
-.inspection-timing { display: block; font-size: 10px; color: #7b8b81; }
-
 /* Frame groups: frames kept together under a title */
 .world-layer .frame-group { position: absolute; z-index: 0; pointer-events: none; border: 3px dashed #9fb7a8; border-radius: 18px; background: #eef4f033; }
 .frame-group-title { position: absolute; left: 0; right: 0; top: 0; height: 64px; display: flex; align-items: center; gap: 16px; padding: 0 24px; pointer-events: auto; cursor: grab;
@@ -734,127 +460,15 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .frame-group-title button:hover { background: #f6e9e6; }
 .board-dragging .frame-group-title { cursor: grabbing; }
 
-/* Actions and messages under an Execution frame's drawing tools */
-.fork-slot-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.fork-slot-actions > button:not(.primary) { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 8px; border: 1px solid #c6d6cc; background: #fff; font-size: 14px; color: #2f4a3c; }
-.fork-slot-message { display: flex; align-items: center; gap: 8px; color: #4b5d53; }
-.fork-slot-message.error { color: #a3483a; }
-/* The state wanted, drawn on an Execution frame at one moment: over the picture; it takes the pointer (over the
-   handles) only while drawing, not while execution runs. */
-.explore-edit-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; overflow: visible; touch-action: none; cursor: crosshair; }
-.explore-recommend { margin-top: 2px; padding-top: 8px; gap: 6px; }
-.explore-recommend .fork-slot-actions > button:not(.primary) { padding: 4px 9px; font-size: 16px; }
-.explore-recommend textarea { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 16px; }
-.explore-recommend .fork-slot-actions > button.primary { display: inline-flex; align-items: center; gap: 6px; border: 0; padding: 6px 12px; border-radius: 8px; background: #2f6b52; color: #fff; font-size: 16px; font-weight: 600; cursor: pointer; }
-.explore-recommend .fork-slot-actions > button.primary:disabled { background: #a9bdb1; cursor: default; }
-/* Jumping: press a part of the picture to execute up to the step that draws it. */
-.explore-pick-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 1; overflow: visible; touch-action: none; cursor: pointer; }
-.explore-pick rect { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 5 3; }
-.explore-pick text { fill: currentColor; font-size: 15px; font-weight: 700; paint-order: stroke; stroke: #fffefa; stroke-width: 4px; }
-.explore-jump-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; overflow: visible; touch-action: none; cursor: pointer; }
-.explore-jump-box { fill: #2a4f8614; stroke: #2a4f86; stroke-width: 2; stroke-dasharray: 5 3; pointer-events: none; }
-.explore-jump-label { font-size: 18px; font-weight: 600; fill: #2a4f86; stroke: #fffefa; stroke-width: 4px; paint-order: stroke; pointer-events: none; }
-.explore-stepper button.active { border-color: #2a4f86; background: #eef3fc; color: #2a4f86; }
-/* The parts of the brush (constraint, state, transition) an execution or one of its operations belongs to. */
-.explore-parts { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.explore-parts > span:first-child { font-size: 14px; color: #8a978f; }
-.explore-part { display: inline-flex; align-items: baseline; gap: 4px; padding: 1px 7px; border-radius: 8px; font-size: 15px; background: #f3effc; color: #5b3aa8; }
-.explore-part em { font-style: normal; font-size: 13px; opacity: .75; }
-.explore-part.state, .explore-part.transition { background: #e9f5ef; color: #2f6b52; }
-.explore-part.small { padding: 0 6px; font-size: 14px; }
-.explore-part { border: 1px solid transparent; font-family: inherit; line-height: 1.5; cursor: pointer; }
-.explore-part:hover { border-color: currentColor; }
-/* The fields an inspected brush is driven by: arrows over the held step, and combing them by hand. */
-.field-layer { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; overflow: visible; touch-action: none; }
-.field-layer.combing { cursor: crosshair; }
-.field-arrows { opacity: .55; }
-.field-arrows.picked { opacity: .85; }
-.field-arrows line { stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
-.field-arrows circle { fill: currentColor; }
-.field-comb { fill: none; stroke: #f59e0b; stroke-opacity: .12; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-.field-comb.drawing { stroke-opacity: .22; }
-.field-tools { position: absolute; left: 12px; top: 12px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; max-width: calc(100% - 24px); padding: 6px 8px; border-radius: 10px; background: #fffffcf0; border: 1px solid #dfe6e1; box-shadow: 0 4px 14px #0000000f; font-size: 12px; color: #34403a; }
-.field-tools button { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #d5ddd8; background: #fff; border-radius: 8px; padding: 3px 9px; font-size: 12px; cursor: pointer; }
-.field-tools button.active { border-color: #2563eb; background: #eef3fc; color: #1d4ed8; }
-.field-tools button:disabled { opacity: .45; cursor: default; }
-.field-tools label { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #5b6b61; }
-.field-tools label input { width: 80px; }
-.field-tools output { min-width: 34px; font-variant-numeric: tabular-nums; }
-.field-tools select { font-size: 12px; }
-.field-note { font-size: 11px; color: #b45309; }
 /* The Brush panel is dragged by its heading; once moved, its pointer to the rail button no longer points at it. */
 .brush-group-handle { cursor: grab; user-select: none; touch-action: none; }
 .brush-group-handle:active { cursor: grabbing; }
 .brush-group-popover.moved:before { display: none; }
-.field-warning { color: #b91c1c; }
-/* Execution: key steps on a timeline, what a step read, and what shapes a mark looked at closely. */
-.explore-stepper output small { color: #8a978f; font-size: 14px; }
-.explore-timeline { display: flex; flex-direction: column; gap: 3px; }
-.explore-timeline > small { color: #6b5a8a; font-size: 14px; }
-.explore-timeline-track { position: relative; height: 14px; border-radius: 7px; background: #eef1ee; cursor: pointer; }
-.explore-timeline-track > * { position: absolute; top: 50%; transform: translate(-50%, -50%); }
-.explore-timeline-track .key { width: 2px; height: 8px; background: #b9c4bd; border-radius: 1px; }
-.explore-timeline-track .now { width: 3px; height: 14px; background: #2a4f86; border-radius: 2px; pointer-events: none; }
-.explore-step-values { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: 15px; color: #5b6b61; }
-.explore-step-values em { flex: none; font-style: normal; font-size: 14px; color: #8a978f; white-space: nowrap; }
-.explore-step-values span { font-variant-numeric: tabular-nums; }
-.explore-step-values span.term { color: #6b4fa0; }
-.explore-step-values b { color: #2f3a34; font-weight: 600; }
-.explore-explain button.link { border: none; background: none; padding: 0; color: #6b4fa0; text-decoration: underline; cursor: pointer; font-size: inherit; }
-.explore-change { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; z-index: 2; }
-.explore-change { animation: explore-change-in .5s ease-out; }
-@keyframes explore-change-in{ from { opacity: 0; } to { opacity: 1; } }
-.explore-change-legend { display: inline-flex; align-items: center; gap: 5px; font-size: 14px; color: #5b6b61; }
-.explore-change-legend i { display: inline-block; width: 12px; height: 4px; border-radius: 2px; }
-.explore-change-legend i.added { background: #2563eb; }
-.explore-change-legend i.removed { background: #ea580c; margin-left: 6px; }
-/* The bar under an Execution frame stays within a height and scrolls inside (the board lets it). */
-.explore-bar.board-scroll { max-height: 560px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.explore-bar > * { flex: none; }
-.explore-summary { cursor: pointer; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.explore-summary.open { display: block; }
-.explore-recommend-open { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: 1px dashed #c9b8e8; background: #fbf9fe; color: #6b4fa0; border-radius: 7px; padding: 3px 9px; font-size: 15px; cursor: pointer; }
-.explore-recommend { position: relative; }
-.explore-recommend-close { position: absolute; top: 4px; right: 4px; display: inline-flex; border: none; background: none; color: #8a978f; cursor: pointer; padding: 2px; }
 .layer-make-brush { flex: none; font-size: 9px; padding: 1px 5px; border-radius: 4px; border: 1px dashed #9db0c6; background: #f6f9fd; color: #3d6795; cursor: pointer; }
 .layer-make-brush:hover { border-style: solid; background: #e7eef8; }
 .empty-features .extract-direction { text-align: left; margin-top: 18px; }
 
-/* The picture explains itself: the step just executed (solid) and the next one (dashed), and a caption in the corner away from it. */
-.explore-step-sheet { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
-.explore-step-mark rect, .explore-step-mark circle { fill: none; stroke-width: 2.5; }
-.explore-step-mark text { font-size: calc(var(--explore-text, 17px) * 1.3); font-weight: 700; paint-order: stroke; stroke: #fffefa; stroke-width: 5px; }
-.explore-step-mark.last rect, .explore-step-mark.last circle { stroke: #2563eb; fill: #2563eb14; }
-.explore-step-mark.last text { fill: #2563eb; }
-.explore-step-mark.next rect, .explore-step-mark.next circle { stroke: #6b7c72; stroke-dasharray: 6 4; }
-.explore-step-mark.next text { fill: #6b7c72; }
-.explore-caption { position: absolute; top: 12px; z-index: 3; max-width: 46%; display: flex; flex-direction: column; gap: 5px; padding: 10px 13px; border-radius: 10px; background: #fffffce8; border: 1px solid #d5ddd8; box-shadow: 0 3px 12px #0000001a; pointer-events: none; font-size: 17px; line-height: 1.35; color: #2f3a34; }
-.explore-caption.left { left: 12px; }
-.explore-caption.right { right: 12px; }
-.explore-caption-head { font-size: calc(var(--explore-text, 17px) * .9); color: #6b7c72; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-.explore-caption-head b { font-size: calc(var(--explore-text, 17px) * 1.3); color: #2563eb; }
-.explore-caption-head i { font-style: normal; font-size: 14px; padding: 1px 8px; border-radius: 9px; background: #eef3fc; color: #2a4f86; }
-.explore-caption-now { font-weight: 600; }
-.explore-caption-values { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 15px; color: #5b6b61; font-variant-numeric: tabular-nums; }
-.explore-caption-values b { color: #2f3a34; }
-.explore-caption-legend { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #5b6b61; }
-.explore-caption-legend i { display: inline-block; width: 16px; height: 5px; border-radius: 3px; }
-.explore-caption-legend i.added { background: #2563eb; }
-.explore-caption-legend i.removed { background: #ea580c; margin-left: 8px; }
-.explore-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; color: #4f5d55; cursor: pointer; white-space: nowrap; }
-.explore-stepper { flex-wrap: wrap; }
 /* What a step worked on (its data: paths and points, the next step's dashed) and what made its result (inner terms: arrows, signed bars). */
-.explore-data polyline, polyline.explore-data { fill: none; stroke-width: 3.5; stroke-linecap: round; stroke-linejoin: round; }
-.explore-data.last polyline { stroke: #2563eb; }
-.explore-data.last circle { fill: #2563eb; stroke: #fffefa; stroke-width: 2; }
-.explore-data.last text { font-size: calc(var(--explore-text, 17px) * .95); font-weight: 600; fill: #2563eb; paint-order: stroke; stroke: #fffefa; stroke-width: 5px; }
-.explore-data-values text { font-size: calc(var(--explore-text, 17px) * .85); fill: #475569; paint-order: stroke; stroke: #fffefa; stroke-width: 5px; font-variant-numeric: tabular-nums; }
-.explore-data-values tspan { fill: #1e3a8a; font-weight: 600; }
-.explore-data.next { stroke: #6b7c72; stroke-dasharray: 7 5; fill: none; stroke-width: 2.5; }
-.explore-term-glyph line { stroke: currentColor; stroke-width: 4; stroke-linecap: round; }
-.explore-term-glyph polygon { fill: currentColor; }
-.explore-term-glyph text { fill: currentColor; font-size: calc(var(--explore-text, 17px) * .95); font-weight: 700; paint-order: stroke; stroke: #fffefa; stroke-width: 5px; }
-.explore-term-glyph.sum line { stroke-width: 6; stroke-dasharray: 10 5; }
 .proxy-bar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 .proxy-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; padding: 3px 8px !important; border: 1px solid #c9d6cd; border-radius: 999px !important; background: #fff; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .proxy-chip b { display: inline-grid; place-items: center; min-width: 16px; height: 16px; border-radius: 50%; background: #ffffffcc; font-size: 11px; }
@@ -864,33 +478,6 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 .proxy-frame-surface .proxy-design-list button.primary { background: #2f7d62; border-color: #2f7d62; color: #fff; }
 .proxy-chip.here { box-shadow: 0 0 0 2px currentColor inset; font-weight: 600; }
 .proxy-link-chip.off { opacity: .6; border-style: dashed !important; }
-/* Play on from the held step of an inspection. */
-.play-on-bar { position: absolute; top: 10px; right: 10px; z-index: 6; display: inline-flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 9px; background: #fffffcee; border: 1px solid #d5ddd8; box-shadow: 0 2px 8px #0000001a; font-size: 13px; color: #4f5d55; }
-.play-on-bar button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #2a4f86; border-radius: 7px; background: #2a4f86; color: #fff; font-weight: 600; cursor: pointer; }
-.play-on-bar label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
-
-/* The decisions a step made (m.test): what it tested, colored by how it came out, with the verdict on it. */
-.explore-test circle, .explore-test rect, .explore-test line { fill: none; stroke-width: 3; }
-.explore-test.pass circle:not(.end), .explore-test.pass rect { stroke: #16a34a; fill: #16a34a14; }
-.explore-test.fail circle:not(.end), .explore-test.fail rect { stroke: #dc2626; fill: #dc262610; stroke-dasharray: 8 5; }
-.explore-test.pass line { stroke: #16a34a; } .explore-test.fail line { stroke: #dc2626; stroke-dasharray: 8 5; }
-.explore-test.pass .end { fill: #16a34a; } .explore-test.fail .end { fill: #dc2626; }
-.explore-test.pending circle:not(.end), .explore-test.pending rect, .explore-test.pending line { stroke: #6b7c72; stroke-dasharray: 4 5; stroke-width: 2; fill: none; }
-.explore-test.pending .end { fill: #6b7c72; }
-.explore-test text { font-size: calc(var(--explore-text, 17px) * .95); font-weight: 600; fill: #6b7c72; paint-order: stroke; stroke: #fffefa; stroke-width: 5px; }
-.explore-test text.verdict { font-size: calc(var(--explore-text, 17px) * 1.35); font-weight: 800; }
-.explore-test.pass text.verdict { fill: #15803d; } .explore-test.fail text.verdict { fill: #b91c1c; }
-.explore-text-size { display: inline-flex; align-items: center; gap: 4px; }
-.explore-text-size button { padding: 2px 8px; border: 1px solid #d5ddd8; border-radius: 6px; background: #fff; cursor: pointer; font-weight: 700; }
-.explore-text-size output { min-width: 22px; text-align: center; font-variant-numeric: tabular-nums; color: #4f5d55; }
-/* The Execution frame's caption says in words what the picture shows: what the step did, why, what it decided, what is next. */
-.explore-caption-now { font-size: calc(var(--explore-text, 17px) * .95); color: #1f2a24; line-height: 1.35; }
-.explore-caption-verdict { font-size: calc(var(--explore-text, 17px) * 1.05); font-weight: 800; }
-.explore-caption-verdict.pass { color: #15803d; } .explore-caption-verdict.fail { color: #b91c1c; }
-.explore-caption-verdict small { font-weight: 500; color: #6b7c72; font-size: .8em; }
-.explore-regenerate { display: flex; gap: 6px; align-items: center; }
-.explore-regenerate input { flex: 1; min-width: 0; padding: 5px 9px; border: 1px solid #d5ddd8; border-radius: 7px; font-size: 14px; }
-.explore-regenerate button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border: 1px solid #2a4f86; border-radius: 7px; background: #fff; color: #2a4f86; font-weight: 600; cursor: pointer; }
 
 /* Compose prompt tags: what the AI read in the sketch (objects, collections), on their marks; a click opens what goes into each. */
 .sketch-frame-surface > .compose-tags { position: absolute; inset: 0; z-index: 4; pointer-events: none; }
@@ -1001,148 +588,3 @@ button.compose-tag-kind:hover { filter: brightness(.94); }
 .layer-paste { flex: none; padding: 1px 6px; border: 1px dashed #8a9fca; border-radius: 8px; background: #fff; font-size: 9px; color: #2f477a; cursor: pointer; opacity: 0; }
 .layer-row:hover .layer-paste, .layer-row.selected .layer-paste { opacity: 1; }
 .layer-paste:hover { background: #eef2fa; }
-
-/* Drawing the state wanted at a moment of execution (Execution frame). */
-.explore-recommend.explore-align { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; padding: 10px 12px 12px; border: 1px solid #ddd3f0; border-radius: 9px; background: #fcfbff; }
-.explore-frame-surface.edit-note, .explore-frame-surface.edit-tool, .explore-frame-surface.edit-crop, .explore-frame-surface.edit-erase { outline: 3px solid #7c3aed40; outline-offset: -3px; }
-.ideal-sheet.mode-select { cursor: default; }
-.ideal-forms path { pointer-events: none; }
-.ideal-forms.on path[fill="none"] { filter: drop-shadow(0 0 3px #2563eb88); }
-.ideal-gone { stroke-width: 1.5; stroke-dasharray: 6 5; opacity: .9; }
-.ideal-gone.crop { stroke: #0e7490; }
-.ideal-gone.erase { stroke: #8a8f80; }
-.ideal-crop { fill: none; stroke: #0e7490; stroke-width: 2; }
-.ideal-line { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
-.ideal-item { fill: none; stroke-width: 2.5; stroke-dasharray: 7 4; }
-.ideal-label .ideal-spec { font-size: 13px; font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.ideal-specs { display: flex; flex-direction: column; gap: 4px; }
-.ideal-spec-row { display: flex; flex-direction: column; gap: 3px; font-size: 13px; }
-.ideal-spec-line { display: flex; align-items: center; gap: 5px; }
-.ideal-spec-row.open input.expr { border-style: dashed; border-color: #2563eb; }
-.ideal-spec-options { display: flex; flex-wrap: wrap; gap: 4px; padding-left: 69px; }
-.ideal-spec-row .ideal-spec-options button { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #cfd8d2; border-radius: 999px; background: #fff; color: #2f3d35; padding: 1px 8px; font-size: 12px; }
-.ideal-spec-row .ideal-spec-options button.on { border-color: #2563eb; background: #e8efff; color: #1d4ed8; font-weight: 600; }
-.ideal-spec-options button i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(0, 0, 0, .2); }
-.ideal-spec-options button small { color: #6b7a71; font-variant-numeric: tabular-nums; }
-.ideal-spec-row input { border: 1px solid #cfd8d2; border-radius: 5px; padding: 2px 5px; font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background: #fff; }
-.ideal-spec-row input.aspect { width: 64px; }
-.ideal-spec-row input.expr { flex: 1; min-width: 0; }
-.ideal-spec-row output { min-width: 52px; color: #4b5d53; font-variant-numeric: tabular-nums; }
-.ideal-spec-row.unread input.expr { border-color: #e07b00; }
-.ideal-spec-line button { border: 0; background: none; color: #4b5d53; cursor: pointer; padding: 1px 4px; }
-.ideal-spec-add { align-self: flex-start; max-width: 100%; border: 1px solid #cfd8d2; border-radius: 5px; background: #fff; color: #2563eb; padding: 2px 4px; font-size: 12px; cursor: pointer; }
-.ideal-name.object.on { background: #0f766e; color: #fff; }
-.ideal-label { font: 600 17px Inter, Arial, sans-serif; paint-order: stroke; stroke: #fffefa; stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
-.ideal-note { fill: none; stroke: #7c3aed; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
-.ideal-selection { fill: none; stroke: #2563eb; stroke-width: 1.5; stroke-dasharray: 4 4; pointer-events: none; }
-.ideal-grip { fill: #fff; stroke: #2563eb; stroke-width: 2; cursor: grab; }
-.ideal-grip.scale { cursor: nwse-resize; }
-.ideal-grip-line { stroke: #2563eb; stroke-width: 1.5; }
-.ideal-drawing { fill: #7c3aed12; stroke: #7c3aed; stroke-width: 2; stroke-dasharray: 5 4; stroke-linejoin: round; pointer-events: none; }
-.ideal-tools { display: flex; flex-direction: column; gap: 7px; font-size: 15px; color: #2f4a3c; }
-.ideal-reading { margin: 0; padding: 7px 10px; border-left: 3px solid #7c3aed; background: #f5f1fd; border-radius: 0 6px 6px 0; line-height: 1.45; }
-.ideal-reading em { display: block; font-style: normal; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #6b4fa0; margin-bottom: 2px; }
-.ideal-muted, .ideal-hint { color: #5c6d63; font-size: 14px; }
-.ideal-toolbar, .ideal-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
-.ideal-toolbar > button, .ideal-actions > button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 7px; border: 1px solid #c6d6cc; background: #fff; font-size: 15px; color: #2f4a3c; cursor: pointer; }
-.ideal-toolbar > button.active { background: #ede5fb; border-color: #7c3aed; color: #4c1d95; }
-.ideal-toolbar > button i, .ideal-actions > button i, .ideal-objects button i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
-.ideal-toolbar > button.kit { border-style: dashed; }
-/* The kit's three groups (inspect, behavior, desired state): each a framed run of its tools under its name. */
-.ideal-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 3px 5px; border: 1px solid #dfe7e2; border-radius: 8px; background: #f8fbf9; }
-.ideal-group > em { font-style: normal; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #6b7f73; margin-right: 2px; }
-.ideal-group > button { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 7px; border: 1px dashed #c6d6cc; background: #fff; font-size: 15px; color: #2f4a3c; cursor: pointer; }
-.ideal-group > button.active { background: #ede5fb; border-color: #7c3aed; color: #4c1d95; }
-.ideal-group > button i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
-.ideal-left { font-size: 12px; }
-.ideal-toolbar > button.kit-make { border-color: #c9b8e8; color: #6b4fa0; background: #fbf9fe; }
-.ideal-actions { padding: 6px 8px; border-radius: 7px; background: #eef4ff; }
-.ideal-actions > b { font-size: 13px; color: #1e3a8a; margin-right: 2px; }
-.ideal-actions > button.ideal-name { border-color: #c9b8e8; color: #4c1d95; }
-.ideal-actions > button.ideal-name.object { border-color: #99d5cc; color: #0f766e; display: inline-flex; align-items: center; gap: 3px; }
-.ideal-ask { display: flex; gap: 6px; } .ideal-ask input { flex: 1; min-width: 0; font-size: 14px; padding: 3px 7px; border: 1px solid #d8dfd9; border-radius: 6px; }
-.ideal-ask button { display: inline-flex; align-items: center; gap: 4px; font-size: 14px; border: 1px solid #6b4fa0; color: #6b4fa0; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
-.ideal-ask button:disabled { opacity: .5; cursor: default; }
-.ideal-state-now li > span { color: #2f4a3c; font-variant-numeric: tabular-nums; } .ideal-state-now li > span b { color: #9a4a12; font-weight: 600; }
-.ideal-actions input { width: 130px; padding: 4px 7px; border: 1px solid #c6d6cc; border-radius: 7px; font: inherit; font-size: 14px; }
-.ideal-objects { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
-.ideal-objects li { display: inline-flex; align-items: center; gap: 4px; }
-.ideal-objects li.on > button:first-child { color: #2563eb; font-weight: 600; }
-.ideal-objects li > button { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 1px 3px; color: #2f4a3c; font-size: 14px; cursor: pointer; }
-.ideal-objects li > span { color: #6d7d73; }
-.ideal-state-changes li > span { color: #2f4a3c; font-variant-numeric: tabular-nums; } .ideal-state-changes li > span b { color: #9a4a12; font-weight: 600; }
-.ideal-presets { display: flex; flex-direction: column; gap: 5px; }
-.ideal-presets > button { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 7px 10px; border: 1px solid #ddd3f0; border-radius: 8px; background: #fff; cursor: pointer; }
-.ideal-presets > button.on { border-color: #7c3aed; background: #f5f1fd; }
-.ideal-presets > button b { font-size: 15px; color: #3b2a63; }
-.ideal-presets > button span { font-size: 14px; color: #5c6d63; line-height: 1.4; }
-.ideal-clear { align-self: flex-start; border: 0; background: none; color: #8a5a4a; font-size: 14px; text-decoration: underline; cursor: pointer; padding: 0; }
-.inspection-forks { display: flex; flex-direction: column; gap: 4px; }
-.inspection-forks .inspection-fork-link small { color: #7a8b81; margin-left: 6px; }
-
-/* `@` in a rule, in words on a tag or in the note: the runtime state one can refer to, listed under the field. */
-.ref-input { position: relative; display: inline-flex; }
-.ref-input.multi { display: block; width: 100%; }
-.ref-input.expr { flex: 1; min-width: 0; }
-.ref-input.expr > input { flex: 1; min-width: 0; }
-.ref-menu { position: absolute; top: 100%; left: 0; z-index: 20; min-width: 240px; max-width: 360px; margin: 2px 0 0; padding: 3px; list-style: none; background: #fff; border: 1px solid #c9d6cd; border-radius: 7px; box-shadow: 0 6px 18px rgba(20, 40, 30, .14); font-size: 13px; }
-.ref-menu li { display: flex; align-items: baseline; gap: 6px; padding: 3px 6px; border-radius: 5px; cursor: pointer; }
-.ref-menu li.on { background: #e8efff; }
-.ref-menu li b { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; }
-.ref-menu li span { flex: 1; color: #4b5d53; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ref-menu li small { color: #6b7a71; font-variant-numeric: tabular-nums; }
-/* Inspect tools: runtime state shown on the picture, and what it reads now. */
-.ideal-toolbar > button.kit.inspect { border-style: dotted; }
-.ideal-vars li > span { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; color: #2f4a3c; }
-.ideal-vars code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #1d4ed8; background: #f1f5ff; border-radius: 4px; padding: 0 4px; font-variant-numeric: tabular-nums; }
-.ideal-vars-sheet { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; overflow: visible; pointer-events: none; }
-.ideal-var rect, .ideal-var circle { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 6 4; }
-.ideal-var .cross { stroke: currentColor; stroke-width: 2.5; }
-.ideal-var text { fill: currentColor; font: 600 14px Inter, Arial, sans-serif; paint-order: stroke; stroke: #fffefa; stroke-width: 4px; stroke-linejoin: round; }
-/* A tag: the object of the brush it is linked to and its words, typed or chosen from the dropdown. */
-.ideal-tag-field { display: inline-flex; align-items: center; gap: 4px; padding: 1px 2px 1px 6px; border: 1px solid #c9d6cd; border-radius: 6px; background: #fff; color: #0f766e; }
-.ideal-tag-field > button.ideal-name.object { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border: 0; border-radius: 4px; font-size: 12px; }
-.ideal-tag-field > button.ideal-name.object small { opacity: .75; }
-.ideal-tag-field .ref-input.dropdown > input { border: 0; outline: 0; min-width: 190px; background: transparent; }
-.ref-input.dropdown { align-items: center; }
-.ref-drop { padding: 0 5px; border: 0; background: transparent; color: #6b7a71; cursor: pointer; font-size: 11px; }
-.ref-menu.options li.chosen span { color: #0f766e; font-weight: 600; }
-/* A widget on a tag: a dial per quantity through its readings; the place dial also on the picture, with a knob to drag. */
-/* A tag's widget (AI's code) over the picture: it takes the picture's input while open; the tag control stays above it. */
-.tag-widget-stage { position: absolute; inset: 0; z-index: 5; }
-.tag-widget-engine { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; pointer-events: none; color-scheme: normal; }
-.tag-widget-input { position: absolute; inset: 0; cursor: grab; touch-action: none; }
-.tag-widget-input:active { cursor: grabbing; }
-.tag-widget-stage.off .tag-widget-input { pointer-events: none; }
-.ideal-widget-hint { margin: 0; padding: 3px 7px; border-radius: 6px; background: #fff7e6; color: #8a4b00; font-size: 11px; max-width: 340px; }
-.ideal-widget-error { margin: 0; padding: 3px 7px; border-radius: 6px; background: #fff1ec; color: #a0412a; font-size: 11px; max-width: 340px; }
-/* A tag on the picture: pressed, it is edited there (its words with a dropdown, the object it is linked to, its rules). */
-.ideal-label.pressable { pointer-events: auto; cursor: text; }
-.ideal-label.pressable:hover { text-decoration: underline; text-decoration-style: dotted; }
-.ideal-tag-control { position: absolute; z-index: 6; width: 360px; max-width: 96%; display: grid; gap: 3px; justify-items: start; cursor: auto; font-size: 13px; }
-.ideal-tag-control.above { transform: translate(-50%, -100%); }
-.ideal-tag-control .ideal-tag-field { box-shadow: 0 2px 8px rgba(20, 40, 30, .14); }
-.ideal-tag-control .ideal-tag-field .ref-input.dropdown > input { min-width: 120px; }
-.ideal-tag-remove { border: 0; background: transparent; color: #6b7a71; cursor: pointer; padding: 0 4px; }
-.ideal-tag-actions { display: flex; gap: 4px; }
-.ideal-tag-actions > button { display: inline-flex; align-items: center; gap: 3px; padding: 1px 7px; border: 1px solid #c9d6cd; border-radius: 4px; background: #fff; color: #0f766e; font-size: 12px; box-shadow: 0 2px 8px rgba(20, 40, 30, .1); }
-.ideal-tag-actions > button.ideal-widget-open { border-color: #f0b873; color: #9a4d00; }
-.ideal-tag-actions > button.ideal-widget-open.on { background: #fff4e5; }
-.ideal-tag-control .ideal-specs { display: grid; gap: 3px; width: 100%; margin: 0; padding: 0; background: none; border: 0; }
-.ideal-tag-control .ideal-spec-row { padding: 0; }
-.ideal-tag-control .ideal-spec-line { background: #fff; border: 1px solid #c9d6cd; border-radius: 6px; padding: 1px 4px; box-shadow: 0 2px 8px rgba(20, 40, 30, .1); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.ideal-tag-control .ideal-spec-line input.aspect { width: 48px; }
-.ideal-tag-control .ideal-spec-add { font-size: 12px; box-shadow: 0 2px 8px rgba(20, 40, 30, .1); }
-.ideal-tag-field > select.ideal-tag-link { max-width: 150px; padding: 1px 4px; border: 0; border-radius: 4px; background: #e6f4f1; color: #0f766e; font: 600 12px Inter, Arial, sans-serif; }
-.ideal-widget-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.ideal-widget-head > button { padding: 1px 7px; border: 1px solid #f0b873; border-radius: 4px; background: #fff; color: #9a4d00; font-size: 12px; }
-/* Inspection: within a state machine step, the constraints its state evaluates, in order. */
-.inspection-state-constraints { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-.inspection-state-constraints .inspection-subtitle { display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: 600; letter-spacing: .05em; color: #6b7c5e; }
-.inspection-constraint-stepper { display: inline-flex; align-items: center; gap: 4px; }
-.inspection-constraint-stepper output { font-variant-numeric: tabular-nums; }
-.inspection-state-constraints ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; counter-reset: c; }
-.inspection-state-constraints li button { counter-increment: c; display: flex; gap: 6px; width: 100%; text-align: left; border: 1px solid #e3e9dc; background: #fff; border-radius: 6px; padding: 2px 6px; font-size: 11px; cursor: pointer; }
-.inspection-state-constraints li button::before { content: counter(c); color: #a6b29a; font-variant-numeric: tabular-nums; }
-.inspection-state-constraints li button span { margin-left: auto; color: #1f5f8b; font-variant-numeric: tabular-nums; }
-.inspection-state-constraints li button.focused { box-shadow: 0 0 0 2px #e07b00; }

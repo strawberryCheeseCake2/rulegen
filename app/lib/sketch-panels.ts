@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { generatedSchema, MAX_CODE_LENGTH, type GeneratedCode, type MachineTarget } from "./schema";
-import type { InspectionState } from "./inspection";
 import { emptyAnnotationHistory, type AnnotationHistory } from "./annotation-history";
 import { emptyScene, type Scene } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
@@ -57,18 +56,11 @@ export type SketchPanel = SavedSketchPanel & {
   machineTarget: (MachineTarget & { nodeId: string }) | null;
   /** The open refinement of a node's machine: its text and the annotation drawn on the graph. */
   machineDraft: MachineDraft;
-  /** Inspection per brush (recorded steps, annotation draft, focus). */
-  inspections: Record<string, InspectionState>;
   /** An open AI regeneration of a constraint/param (or a new one): the user's text and the annotation drawn on the frame. */
   transformDraft: TransformDraft | null;
-  /** The runtime the frame's result starts from (a fork keeps the brush marks it was made with; not saved). */
+  /** The runtime the frame's result starts from (once per id; not saved). */
   seed: { id: string; runtime: unknown } | null;
-  /** Fixes and inspection suggestions applied in this frame, undoable and redoable as a whole (scene, code and prompt together). */
-  applied: { past: AppliedEntry[]; future: AppliedEntry[] };
 };
-/** What an applied change touches in a frame: kept before and after it was applied. */
-export type AppliedSnapshot = Pick<SketchPanel, "scene" | "generated" | "codeDraft" | "executable" | "preparedCode" | "composePrompt" | "dirtyNodeIds">;
-export type AppliedEntry = { id: string; title: string; key: string; before: AppliedSnapshot; after: AppliedSnapshot };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
 /** What a regeneration targets: a param, a constraint, or (neither) a new stacked constraint. */
 export type TransformTarget = { constraintId?: string; paramId?: string };
@@ -85,7 +77,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), inspections: {}, transformDraft: null, seed: null, applied: { past: [], future: [] } };
+    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), transformDraft: null, seed: null };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

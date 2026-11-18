@@ -65,7 +65,6 @@ export function recoverGeneration(input: z.infer<typeof requestSchema>, result: 
     case "tag-revise": panel.composeTags = reviseTag(panel.composeTags, tagRevisionSchema.parse(result)); break;
     case "clarification": recovery.revisionInstruction = clarificationSchema.parse(result).clarification; break;
     case "revision": recovery.proposal = sceneProposalSchema.parse(result); break;
-    case "inspect": case "concern": break; // An inspection (or a suggested concern) does not change the project.
     case "handles": if (input.scene) { panel.scene = applyHandles(sceneSchema.parse(input.scene), input.targetNodeId, handleSuggestionsSchema.parse(result).handles); panel.selectedNodeIds = [input.targetNodeId]; } break;
   }
   project.activeSketchId = owner;

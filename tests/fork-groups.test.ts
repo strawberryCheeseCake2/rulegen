@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { groupBox, groupRow, liveGroups, workspaceSchema, FRAME_WIDTH, EXPLORE_BAR_HEIGHT, FRAME_HEIGHT } from "../app/lib/workspace";
+import { groupBox, groupRow, liveGroups, workspaceSchema, FRAME_WIDTH, FRAME_HEIGHT } from "../app/lib/workspace";
 import { projectSchema } from "../app/lib/project";
 import { FreeformWorkspace } from "../app/components/freeform-workspace";
 
@@ -12,10 +12,10 @@ test("frame groups: a row of frames placed clear of the board, a box under a tit
   const layout = workspaceSchema.parse({ frames: { "sketch-a": { x: 1040, y: 0 } } });
   const first = groupRow(layout, "source", 3);
   assert.deepEqual(first.map(spot => spot.x), [1040, 2080, 3120]); assert.ok(first[0].y > FRAME_HEIGHT, "below the frame already right of it");
-  const withGroup = { ...layout, frames: { ...layout.frames, "sketch-fork": first[0], "explore-1": first[1], "explore-2": first[2] }, groups: [{ id: "g", title: "R", frames: ["sketch-fork", "explore-1", "explore-2"] }] };
+  const withGroup = { ...layout, frames: { ...layout.frames, "sketch-fork": first[0], "proxy-1": first[1], "proxy-2": first[2] }, groups: [{ id: "g", title: "R", frames: ["sketch-fork", "proxy-1", "proxy-2"] }] };
   const second = groupRow(withGroup, "source", 3);
   const box = groupBox(withGroup.frames, withGroup.groups[0].frames)!;
-  assert.ok(second[0].y > box.y + box.h - 200, "the next group goes below the first one"); assert.ok(box.h >= FRAME_HEIGHT + EXPLORE_BAR_HEIGHT, "room for exploration controls");
+  assert.ok(second[0].y > box.y + box.h - 200, "the next group goes below the first one"); assert.ok(box.h >= FRAME_HEIGHT, "room for the frames");
   assert.equal(box.w, 3 * FRAME_WIDTH + 2 * 140 + 72);
   assert.deepEqual(liveGroups(withGroup.groups, new Set(["sketch-fork"])), [{ id: "g", title: "R", frames: ["sketch-fork"] }]);
   assert.deepEqual(liveGroups(withGroup.groups, new Set()), []);

@@ -38,9 +38,9 @@ export type ConstraintInspectorProps = {
   onDraftSubmit?: () => void; onDraftCancel?: () => void;
   /** Open a new frame that renders only this constraint. */
   onMinimalExample?: (constraintId: string) => void;
-  /** A param picked in inspection: its card is highlighted and scrolled into view. */
+  /** A param picked elsewhere: its card is highlighted and scrolled into view. */
   highlightParamId?: string | null;
-  /** A constraint picked elsewhere (an Execution frame, the Layers panel): its card is highlighted and scrolled into view. */
+  /** A constraint picked elsewhere (e.g. the Layers panel): its card is highlighted and scrolled into view. */
   highlightConstraintId?: string | null;
   onGenerateMachine: () => void;
   onRemoveMachine: () => void;
@@ -52,16 +52,7 @@ export type ConstraintInspectorProps = {
   onOpenProxy?: () => void;
   /** Runtime errors of handles in the proxy frame, by param id. */
   handleErrors?: Record<string, string>;
-  /**
-   * Hidden constants a targeted inspection suggests exposing on this node, not
-   * decided yet: shown faintly in the constraint they would join, to accept
-   * (it becomes a param) or reject. `index`: its place in the inspection's list.
-   */
-  suggestions?: { item: SuggestedParam; index: number }[];
-  onAcceptSuggestion?: (index: number) => void; onRejectSuggestion?: (index: number) => void;
 };
-/** What the inspector shows of a suggested hidden parameter. */
-export type SuggestedParam = Pick<Param, "id" | "label" | "effect" | "description"> & { constraintId: string; value: ScalarValue; reason: string; form?: "constant" | "scale" };
 
 const effects: Effect[] = ["spatial", "stylistic", "temporal"];
 
@@ -167,31 +158,6 @@ function ParamCard({ param, props, openMenu }: { param: Param; props: Constraint
   </article>;
 }
 
-/**
- * A hidden parameter suggested by a targeted inspection: not a param yet, so it
- * is faint and read-only, at the value the code uses now, until accepted or rejected.
- */
-function SuggestedCard({ item, index, props }: { item: SuggestedParam; index: number; props: ConstraintInspectorProps }) {
-  const value = item.value, scale = item.form === "scale" && value.type === "number";
-  const shown = value.type === "number" ? `${scale ? "×" : ""}${Math.round(value.value * 1000) / 1000}${scale ? "" : value.unit}` : value.type === "toggle" ? (value.value ? "On" : "Off") : String(value.value);
-  return <article className={`param-card suggested-param effect-${item.effect} ${props.highlightParamId === item.id ? "inspection-highlight" : ""}`} data-param-id={item.id} aria-label={`Suggested parameter ${item.label}`}>
-    <div className="param-card-title">
-      <b>{item.label}</b><em className="suggested-tag" title="Targeted inspection suggests exposing this hard-coded value">Suggested</em>
-      <span className="effect-select">{item.effect}</span>
-    </div>
-    {item.description && <p className="param-description">{item.description}</p>}
-    {item.reason && <p className="param-description suggested-reason">{item.reason}</p>}
-    <div className="suggested-value">
-      {value.type === "number" && <input type="range" aria-label={`${item.label} (suggested)`} min={value.min} max={value.max} step={value.step} value={value.value} disabled readOnly />}
-      <output>{scale ? "Scale " : "Current code value "}{shown}</output>
-    </div>
-    <div className="suggested-actions">
-      <button type="button" className="accept" disabled={props.busy || !props.onAcceptSuggestion} title="Expose it as a param of this constraint (no code regeneration)" onClick={() => props.onAcceptSuggestion?.(index)}><Icon name="plus" size={11} />Accept</button>
-      <button type="button" disabled={props.busy || !props.onRejectSuggestion} onClick={() => props.onRejectSuggestion?.(index)}>Reject</button>
-    </div>
-  </article>;
-}
-
 /** What of the stack follows the pointer, and the card picked from that list (highlighted until another is picked). */
 type PointerView = { links: PointerLink[]; drags: DragLink[]; linked: { constraintId: string; paramId: string } | null };
 const PointerContext = createContext<PointerView>({ links: [], drags: [], linked: null });
@@ -279,8 +245,7 @@ function ConstraintCard({ constraint, index, count, roomInNode, props, openMenu 
     <textarea aria-label={`${name} constraint description`} placeholder="How the property depends on the other nodes, the input or time" maxLength={1000} rows={2} value={constraint.description} onChange={e => props.onConstraint(constraint.id, { description: e.target.value })} />
     <fieldset disabled={busy} className="param-list">
       {constraint.params.map(param => <ParamCard key={param.id} param={param} props={props} openMenu={openMenu} />)}
-      {!state && (props.suggestions ?? []).filter(entry => entry.item.constraintId === constraint.id).map(entry => <SuggestedCard key={`suggested:${entry.item.id}`} item={entry.item} index={entry.index} props={props} />)}
-      {!constraint.params.length && !(props.suggestions ?? []).some(entry => entry.item.constraintId === constraint.id) && <p className="empty-panel">No params yet. Add a slider below or regenerate this constraint.</p>}
+      {!constraint.params.length && <p className="empty-panel">No params yet. Add a slider below or regenerate this constraint.</p>}
     </fieldset>
     {!state && roomInNode && constraint.params.length < MAX_PARAMS && <NewParam busy={busy} onAdd={() => props.onAddParam(constraint.id)} />}
   </section>;

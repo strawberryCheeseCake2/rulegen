@@ -22,31 +22,15 @@ import { ADJUST_IN_PLACE_INSTRUCTION, bakesInput, isProxyFrame, MAX_PROXY_FRAMES
 import { ConstraintInspector } from "../components/scene/constraint-inspector";
 import { PanelResizer } from "../components/panel-resizer";
 import { NodeMachinePanel } from "../components/scene/node-machine-panel";
-import { InspectionPanel } from "../components/inspection-panel";
-import { InspectionOverlay } from "../components/inspection-overlay";
-import { ExploreFrameView, type WidgetRequest } from "../components/explore-frame";
-import { focusLines } from "../lib/code-focus";
-import { kitMode } from "../components/ideal-state";
-import { FieldLayer } from "../components/field-layer";
-import { fieldsIn } from "../lib/fields";
-import { emptyExploreEdit, exploreStep, isExploreFrame, MAX_EXPLORE_FRAMES, restoredExplore, sameExplore, savedExplore, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame } from "../lib/explore";
-import { exploreExecutable, requestExplore } from "../studio/explore-actions";
-import { brushesFor, isBackdrop, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, frameIds, isInspectionTool, MAX_BRUSHES, MAX_TARGETED, parseBrushTool, sharedIds, type Brush, type TargetedTool } from "../lib/brushes";
-import { addMark, addStep, paramRows, stepValues, DEFAULT_MARK_STYLE, eraseStyledMarks, editStep, filterValues, heldIndex, readsPerItem, machineInspection, markStyleAt, markStyleSchema, MAX_OVERLAY_UPDATES, overlayPart, overlaysAfterApplied, overlaysUpdatedFor, remapResult, resultInFrame, valueSpecs, type Fix, type InspectionFocus, type Scalar, type InspectionState, type MarkStyle } from "../lib/inspection";
+import { brushesFor, isBackdrop, brushGroup, brushNodeIds, groupBrushes, brushRole, brushRoots, markBrushes, sourceBrushGroup, subBrushFor, brushTool, detachedBrush, MAX_BRUSHES, parseBrushTool, type Brush } from "../lib/brushes";
 import { BrushRoleBadge, BrushRoleBanner, DetachDialog, type DetachPrompt } from "../components/brush-role";
-import { descendantIds, subScene } from "../lib/scene/graph";
+import { subScene } from "../lib/scene/graph";
 import { findConstraint } from "../lib/scene/constraints";
 import { exampleLabel } from "../lib/scene/minimal-example";
 import { captureThumbnail } from "../lib/brush-thumbnail";
-import { sceneValues } from "../lib/scene/values";
 import { prepareBrushFor, startBrushGesture } from "../studio/brush-actions";
 import { programModules } from "../lib/scene/machines";
-import { parameterStatus, suggestionKey, type ParameterSuggestion } from "../lib/hidden-parameters";
-import { acceptParameter, applyFix, applyRecording, appliedCurrent, concernMarksKey, fixKey, inspectConcern, requestAlignFix, requestAlignKit, requestTagWidget, suggestConcerns, inspectionFor, stepApplied, targetedName, withInspection, withoutHistory, type AlignContext } from "../studio/inspection-actions";
-import { presetState, presetValues, stateChanges, widgetStart, withoutState, withTools, type AlignRefs } from "../lib/alignment";
-import type { TraceStep } from "../components/code-preview";
-import { besideFramePosition, liveGroups, MAX_SKETCH_FRAMES, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
-import { backfillStores, editRuntime, isRuntimeKey } from "../lib/runtime-edits";
+import { besideFramePosition, execFrameId, isExecFrame, liveGroups, MAX_SKETCH_FRAMES, nextSketchPosition, removeWorkspaceFrame, showWorkspaceFrame, workspaceSchema, type FrameId, type WorkspaceLayout } from "../lib/workspace";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { type RecoveredGeneration } from "../lib/generation-recovery";
 import type { Artwork, SemanticPen, Stroke, Viewport } from "../lib/schema";
@@ -66,14 +50,20 @@ import type { StudioDeps, PanelPatch } from "../studio/deps";
 import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
 import { copyConstraint, NODE_DRAG_TYPE, readNodeDrag, type ConstraintClip } from "../lib/scene/transfer";
 import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
+import { useExecution, type Analyzed } from "../studio/use-execution";
+import { useManipulation } from "../studio/use-manipulation";
+import { ManipLayer, ManipPanel } from "../components/execution-manip";
+import { ExecutionPanel } from "../components/execution-panel";
+import { ExecutionOverlay } from "../components/execution-overlay";
+import { ExecutionMarks } from "../components/execution-marks";
+import { ExecutionFrame } from "../components/execution-frame";
+import { MARK_COLOR } from "../studio/use-execution";
 
 export function meta({}: Route.MetaArgs) { return [{ title: "GenTool — From a mark to a system" }, { name: "description", content: "Draw, extract collections and objects, and create p5.js systems with AI." }]; }
 const blank = (): Artwork => ({ strokes: [], photo: null, name: "Untitled exploration", revision: 0 });
 const storageKey = "rulegen.project.v1";
 const drawingViewport: Viewport = { zoom: 1, x: 0, y: 0 };
 
-/** How long a held step plays on (what a change there sets off). */
-const PLAY_ON_MS = 3000;
 /** The layers panel's width range when dragged (px). */
 const LAYER_MIN_WIDTH = 150, LAYER_MAX_WIDTH = 520;
 
@@ -113,7 +103,7 @@ export default function Home() {
   const [tool, setTool] = useState("pen"), [pencilOpen, setPencilOpen] = useState(false);
   // Where an Adjust drag started (its frame and scene), to make the drag one undo step.
   const adjustStart = useRef<{ frame: string; scene: Scene } | null>(null);
-  // Brushes: reusable collections, each a tool group (brush + inspection tools) in the toolbar.
+  // Brushes: reusable collections, each a tool group in the toolbar.
   const [brushes, setBrushesState] = useState<Brush[]>([]);
   const brushesRef = useRef(brushes);
   const setBrushes = (next: Brush[]) => { brushesRef.current = next; setBrushesState(next); };
@@ -121,33 +111,15 @@ export default function Home() {
   const [groupTools, setGroupTools] = useState<Record<string, string>>({}), [openGroup, setOpenGroup] = useState<string | null>(null);
   /** The brush the Brush tool picks up again when its button is pressed. */
   const [lastBrush, setLastBrush] = useState<string | null>(null);
-  /** Whether inspections only place their Execution frame (made when its Generate is pressed; kept in this browser). */
-  const [deferExecution, setDeferExecutionState] = useState(false);
-  useEffect(() => { try { setDeferExecutionState(localStorage.getItem("rulegen:defer-execution") === "1"); } catch { /* storage unavailable */ } }, []);
-  const setDeferExecution = (on: boolean) => { setDeferExecutionState(on); try { localStorage.setItem("rulegen:defer-execution", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   /** The brush pointed at in the Brush panel (its master frame is shown on the board). */
   const [brushHover, setBrushHover] = useState<string | null>(null);
   const brushPick = parseBrushTool(tool), activeBrush = brushPick ? brushes.find(brush => brush.id === brushPick.brushId) : undefined;
-  const activeTargeted = brushPick?.kind === "targeted" ? activeBrush?.targeted.find(item => item.id === brushPick.targetedId) : undefined;
-  const inspectionKind = activeBrush && isInspectionTool(brushPick!.kind) && (brushPick!.kind !== "targeted" || activeTargeted) ? brushPick!.kind : null;
   // The brush tool plays with the brush on the active frame that has it (interaction); `placing` is a frame whose brush gesture is still being fed in.
   const playingBrush = brushPick?.kind === "brush" ? activeBrush : undefined;
   const [placing, setPlacing] = useState<string | null>(null);
-  // The inspection annotation pen: color, width and opacity of the next marks (remembered in this browser).
-  const [inspectionPen, setInspectionPenState] = useState<MarkStyle>(DEFAULT_MARK_STYLE);
-  const [concernSuggest, setConcernSuggest] = useState<{ key: string; items: string[]; loading: boolean; error: string }>({ key: "", items: [], loading: false, error: "" });
-  useEffect(() => { try { const saved = markStyleSchema.safeParse(JSON.parse(localStorage.getItem("rulegen.inspectionPen") || "null")); if (saved.success) setInspectionPenState(saved.data); } catch { /* storage unavailable */ } }, []);
-  const setInspectionPen = (pen: MarkStyle) => { setInspectionPenState(pen); try { localStorage.setItem("rulegen.inspectionPen", JSON.stringify(pen)); } catch { /* storage unavailable */ } };
-  // The inspection annotation tool draws, or (eraser) wipes out the marks it passes over.
-  const [inspectionEraser, setInspectionEraser] = useState(false);
   // Proxy frames (direct manipulation handles of a node, beside its frame) and their widgets' runtime errors (with the code that failed).
   const [proxyFrames, setProxyFrames] = useState<ProxyFrameData[]>([]);
   const proxyFramesRef = useRef(proxyFrames); proxyFramesRef.current = proxyFrames;
-  // Execution frames (a brush's marks to run execution on and draw the state wanted at a moment), and their AI requests in flight.
-  const [exploreFrames, setExploreFramesState] = useState<ExploreFrame[]>([]);
-  const exploreRef = useRef(exploreFrames);
-  const setExploreFrames = (next: ExploreFrame[]) => { exploreRef.current = next; setExploreFramesState(next); };
-  const exploreAborts = useRef(new Map<string, AbortController>());
   // The frame at the other end of a hovered proxy link (highlighted on the board).
   const [linkHover, setLinkHover] = useState<FrameId | null>(null);
   /** Frames picked on the board with the select tool (a dragged box), deleted together with Backspace/Delete. */
@@ -161,12 +133,6 @@ export default function Home() {
   const [pendingFrameFocus, setPendingFrameFocus] = useState<FrameId | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const resultPreviews = useRef(new Map<string, CodePreviewHandle>());
-  // Playing on from the held step of an inspection (what a change there sets off): asked per frame, for the step it
-  // was asked at; and whether it happens by itself after every handle drag (kept in this browser).
-  const [playOns, setPlayOns] = useState<Record<string, { id: number; ms: number; restore: string }>>({});
-  const [autoPlayOn, setAutoPlayOnState] = useState(true), autoPlayOnRef = useRef(true); autoPlayOnRef.current = autoPlayOn;
-  useEffect(() => { try { setAutoPlayOnState(localStorage.getItem("rulegen:play-on") !== "0"); } catch { /* storage unavailable */ } }, []);
-  const setAutoPlayOn = (on: boolean) => { setAutoPlayOnState(on); try { localStorage.setItem("rulegen:play-on", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   // The Compose prompt's tags on the sketch (what the AI read: objects, collections and what goes into them).
   const [showComposeTags, setShowComposeTagsState] = useState(true);
   useEffect(() => { try { setShowComposeTagsState(localStorage.getItem("rulegen:compose-tags") !== "0"); } catch { /* storage unavailable */ } }, []);
@@ -196,8 +162,6 @@ export default function Home() {
   const [restoreReady, setRestoreReady] = useState(false), [saveState, setSaveState] = useState("Local draft");
   /** The frame whose JSON (state machines, params, code) is shown to copy. */
   const [frameJson, setFrameJson] = useState<string | null>(null);
-  /** Per frame: the stores as its held inspection step is drawn now (by restore id). */
-  const [drawnStores, setDrawnStores] = useState<Record<string, { restore: string; stores: Record<string, unknown> }>>({});
   const [historyOpen, setHistoryOpen] = useState(false), [modal, setModal] = useState(false), [exportOpen, setExportOpen] = useState(false), [newName, setNewName] = useState("");
   const upload = useRef<HTMLInputElement>(null), importInput = useRef<HTMLInputElement>(null), inspector = useRef<HTMLDivElement>(null);
   // AI work is per frame: each frame has its own request in flight, abort controller and request number, so switching frames never cuts another frame's generation.
@@ -218,13 +182,7 @@ export default function Home() {
   const liveStatus = sceneLiveStatus(generated, scene);
   const node = inspectedNode(panel);
   const nodeState = editingState(panel, node);
-  // While a brush is inspected, the state machine panel shows that brush in this frame (master or instance).
-  const inspectedIds = inspectionKind && activeBrush ? brushNodeIds(scene, activeBrush, activeSketch) : [];
-  const inspection = inspectionKind && activeBrush ? inspectionFor(panel, activeBrush.id) : null;
-  const stepNode = inspection?.steps[inspection.cursor ?? inspection.steps.length - 1]?.nodeId;
-  const machineNode = (node && (!inspectedIds.length || inspectedIds.includes(node.id)) ? node : undefined)
-    || (stepNode && inspectedIds.includes(stepNode) && findNode(scene, stepNode)?.machine ? findNode(scene, stepNode) : undefined)
-    || inspectedIds.map(id => findNode(scene, id)).find(item => item?.machine) || node || scene.nodes.find(item => item.machine);
+  const machineNode = node || scene.nodes.find(item => item.machine);
   const nodeRole = node ? brushRole(scene, activeSketch, node.id, brushes) : null;
   const proposalStale = Boolean(panel.revisionProposal && panel.revisionProposal.snapshot !== revisionSnapshot(panel));
   const proposalChanges = panel.revisionProposal ? sceneChanges(scene, panel.revisionProposal.proposal.scene) : [];
@@ -232,9 +190,7 @@ export default function Home() {
   // ── Server requests ────────────────────────────────────────────────────────
   function projectData() {
     return { version: 2 as const, name: artwork.name, artwork: artworkRef.current, sketchFrames: sketchFramesRef.current, activeSketchId: activeSketchRef.current,
-      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, brushes: brushesRef.current, proxyFrames: proxyFramesRef.current, workspace,
-      // Execution frames, with their frame groups (in the workspace).
-      exploreFrames: exploreRef.current.map(savedExplore) };
+      sketchPanels: savedSketchPanels(panelsRef.current), semanticPens, interactionPen, activeSemanticPenId, brushes: brushesRef.current, proxyFrames: proxyFramesRef.current, workspace };
   }
   async function request(intent: string, body: object, owner = activeSketch) {
     updatePanel(owner, { error: "" });
@@ -314,6 +270,16 @@ export default function Home() {
   const deps: StudioDeps = {
     panel: id => panelsRef.current[id] || createSketchPanel(), updatePanel, request, task,
     capture: captureFrame, createFrame,
+    fork: fromId => {
+      const art = artworkOf(fromId), panel = panelsRef.current[fromId];
+      if (!art || !panel?.generated) return null;
+      const id = createFrame(fromId, `${art.name || "Frame"} · temporary fork`, { strokes: art.strokes, photo: art.photo });
+      if (!id) return null;
+      // The same sketch, scene, result and input, as the saved project would hold them.
+      mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(savedSketchPanels({ [fromId]: panel })[fromId]), sourceFrameId: fromId } }));
+      return id;
+    },
+    removeFrame: id => { if (artworkOf(id)) deleteFrame(id as FrameId); },
     addBrushes: (frameId, scene) => {
       const made = brushesFor(scene, frameId, brushesRef.current, () => crypto.randomUUID());
       if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`Added brushes to the toolbar: ${made.map(brush => brush.name).join(", ")}.`); }
@@ -346,6 +312,25 @@ export default function Home() {
     toast: setToast, focus: setPendingFrameFocus, addPen,
     activate: id => activateSketch(id), active: () => activeSketchRef.current,
   };
+  // Execution inspection: one frame's running result recorded by cycle, every variable at every step.
+  // After a concern is sent, its steps are stepped through in an Execution frame of their own, beside the inspected frame.
+  const execution = useExecution(deps, frameId => {
+    const id = execFrameId(frameId);
+    setWorkspace(current => current.frames[id] ? current : { ...current, frames: { ...current.frames, [id]: besideFramePosition(current.frames, frameId) } });
+    setPendingFrameFocus(id);
+  }, analyzed => manipulationStart.current?.(analyzed));
+  // Direct manipulation in the Execution frame: tools made for the concern, what they show measured into its variables.
+  const manipulation = useManipulation(deps, execution);
+  const manipulationStart = useRef<((analyzed: Analyzed) => void) | null>(null);
+  manipulationStart.current = manipulation.start;
+  // An Execution frame is on the board only while its inspection has one.
+  useEffect(() => {
+    const keep = execution.view?.framed ? execFrameId(execution.view.frameId) : null;
+    setWorkspace(current => { const stale = Object.keys(current.frames).filter(id => isExecFrame(id) && id !== keep); if (!stale.length) return current;
+      const frames = { ...current.frames }; for (const id of stale) delete frames[id]; return { ...current, frames }; });
+  }, [execution.view?.framed, execution.view?.frameId]);
+  // The inspection annotation tool draws only on an inspected frame.
+  useEffect(() => { if (!execution.view && tool === "inspect-mark") setTool("select"); }, [execution.view, tool]);
   const edits = sceneEdits(deps, activeSketch), ai = sceneAI(deps, activeSketch), revisions = revisionActions(deps, activeSketch);
 
   // ── Persistence and effects ────────────────────────────────────────────────
@@ -362,7 +347,7 @@ export default function Home() {
     setSaveState("Saving…");
     const timer = setTimeout(() => { try { localStorage.setItem(storageKey, JSON.stringify(projectData())); setSaveState("Saved locally"); } catch { setSaveState("Storage full · export JSON"); } }, 450);
     return () => clearTimeout(timer);
-  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, brushes, workspace, exploreFrames, restoreReady]);
+  }, [artwork, sketchFrames, activeSketch, panels, semanticPens, interactionPen, activeSemanticPenId, brushes, workspace, restoreReady]);
   useEffect(() => { try { const saved = Number(localStorage.getItem("rulegen-inspector-width")); if (saved >= 280 && saved <= 900) setInspectorWidth(saved); } catch { /* storage unavailable */ } }, []);
   useEffect(() => { try { if (inspectorWidth) localStorage.setItem("rulegen-inspector-width", String(inspectorWidth)); else localStorage.removeItem("rulegen-inspector-width"); } catch { /* storage unavailable */ } }, [inspectorWidth]);
   useEffect(() => { try { const saved = Number(localStorage.getItem("rulegen-layer-width")); if (saved >= LAYER_MIN_WIDTH && saved <= LAYER_MAX_WIDTH) setLayerWidth(saved); } catch { /* storage unavailable */ } }, []);
@@ -377,39 +362,13 @@ export default function Home() {
       if (message) reportError({ source, message, owner: id, frame: artworkOf(id)?.name || id, code: source === "runtime" ? item.generated?.code || "" : "" });
     }
   }, [panels]);
-  useEffect(() => {
-    if (brushPick && !activeBrush) setTool("pen");
-    else if (brushPick?.kind === "targeted" && activeBrush && !activeTargeted) setTool(brushTool("inspect-annotate", activeBrush.id));
-  }, [brushPick?.brushId, brushPick?.targetedId, activeBrush, activeTargeted]);
-  // Leaving the inspection annotation tool puts its eraser away.
-  useEffect(() => { if (brushPick?.kind !== "inspect-annotate") setInspectionEraser(false); }, [brushPick?.kind]);
+  useEffect(() => { if (brushPick && !activeBrush) setTool("pen"); }, [brushPick?.brushId, activeBrush]);
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 6000); return () => clearTimeout(timer); }, [toast]);
   // Widget edits only patch the host block of the code draft.
   useEffect(() => { if (generated) patchActive(previous => { const codeDraft = syncScene(previous.codeDraft || "", previous.scene); return codeDraft === previous.codeDraft ? {} : { codeDraft, runtimeError: "" }; }); }, [scene, generated]);
   useEffect(() => { inspector.current?.scrollTo({ top: 0 }); }, [node?.id, activeSketch]);
   useEffect(() => { if (pendingFrameFocus) { workspaceCanvas.current?.focus(pendingFrameFocus); setPendingFrameFocus(null); } }, [pendingFrameFocus, sketchFrames, panels]);
 
-  // ── Concern autocomplete (inspection annotation) ──────────────────────────
-  // Autocomplete asks AI to read the inspection annotation (and what has been typed)
-  // and suggest concerns for this frame and brush. A newer request replaces an
-  // older one; an answer for other marks, text, frames or brushes is dropped.
-  const concernRun = useRef<{ id: number; controller: AbortController | null }>({ id: 0, controller: null });
-  async function requestConcerns() {
-    const frame = activeSketchRef.current, brush = activeBrush; if (!brush) return;
-    const state = inspectionFor(panelsRef.current[frame] || panel, brush.id), scope = `${frame}|${brush.id}`, run = concernRun.current;
-    run.controller?.abort();
-    const controller = new AbortController(), id = ++run.id, asked = { concern: state.concern, marks: concernMarksKey(state.marks) };
-    setConcernSuggest(current => ({ key: scope, items: current.key === scope ? current.items : [], loading: true, error: "" }));
-    try {
-      const items = await suggestConcerns(deps, frame, brush, { concern: state.concern, marks: state.marks, markStyles: state.markStyles }, controller.signal);
-      const now = inspectionFor(panelsRef.current[frame] || panel, brush.id);
-      if (id !== run.id) return;
-      // The marks changed meanwhile: these suggestions read the old ones.
-      setConcernSuggest(concernMarksKey(now.marks) === asked.marks ? { key: scope, items, loading: false, error: "" } : { key: scope, items: [], loading: false, error: "The marks changed. Press again." });
-    } catch {
-      if (id === run.id && !controller.signal.aborted) setConcernSuggest(current => ({ ...current, loading: false, error: "Could not suggest concerns." }));
-    }
-  }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (historyOpen || modal || exportOpen || (e.target as HTMLElement).closest("input,textarea,select,[contenteditable]")) return;
@@ -438,15 +397,12 @@ export default function Home() {
     setActiveSketch(data.activeSketchId); activeSketchRef.current = data.activeSketchId;
     setSketchHistories({}); setSketchSelections({}); setWorkspace(data.workspace); setSemanticPens(data.semanticPens); setInteractionPen(data.interactionPen); setActiveSemanticPenId(data.activeSemanticPenId); setPenSettingsOpen(false);
     setBrushes(data.brushes); setOpenGroup(null); setProxyFrames(data.proxyFrames); proxyFramesRef.current = data.proxyFrames; setHandleErrors({});
-    // The project's own Execution frames (their spots and groups are in its workspace); what the old ones were asking stops.
-    stopExploring();
-    setExploreFrames(data.exploreFrames.map(restoredExplore));
     setHistory([]); setFuture([]); canvas.current?.clearSelection();
   }
   function newProject() {
     cancelAll(); activeDocument.current++; prepareNumber.current++;
     const nextArtwork = { ...blank(), name: newName.trim() || "Untitled exploration" };
-    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setBrushes([]); setOpenGroup(null); setProxyFrames([]); proxyFramesRef.current = []; setHandleErrors({}); closeExploreFrames();
+    mutatePanels(() => ({ source: createSketchPanel() })); setActiveSketch("source"); activeSketchRef.current = "source"; setBrushes([]); setOpenGroup(null); setProxyFrames([]); proxyFramesRef.current = []; setHandleErrors({});
     setSketchFrames([]); sketchFramesRef.current = []; setSketchHistories({}); setSketchSelections({});
     setWorkspace(workspaceSchema.parse({})); setArtwork(nextArtwork); artworkRef.current = nextArtwork;
     setTool("pen"); setPencilOpen(false); setActiveSemanticPenId(null); setPenSettingsOpen(false); setHistory([]); setFuture([]); setModal(false); canvas.current?.clearSelection();
@@ -508,8 +464,7 @@ export default function Home() {
   }
   /** Clicking a proxy frame works on its node: its frame becomes active with the node selected. */
   function activateFrame(id: string) {
-    // An exploration frame works for the frame it was opened from (its inspection stays shown).
-    if (isExploreFrame(id)) { const explore = exploreRef.current.find(frame => frame.id === id); if (explore && artworkOf(explore.targetFrameId)) activateSketch(explore.targetFrameId); return; }
+    if (isExecFrame(id)) { activateSketch(id.slice("exec-".length)); return; }
     if (!isProxyFrame(id)) { activateSketch(id); return; }
     const proxy = proxyFramesRef.current.find(frame => frame.id === id); if (!proxy) return;
     activateSketch(proxy.targetFrameId);
@@ -518,14 +473,15 @@ export default function Home() {
   /** Delete the frames picked on the board (frames still busy with AI work stay). */
   function deleteFrames(ids: FrameId[]) {
     if (busy) return;
-    const kept = ids.filter(id => !isExploreFrame(id) && !isProxyFrame(id) && panelsRef.current[id]?.loading);
+    const kept = ids.filter(id => !isProxyFrame(id) && !isExecFrame(id) && panelsRef.current[id]?.loading);
     for (const id of ids) if (!kept.includes(id)) deleteFrame(id);
     setPickedFrames(kept);
     const gone = ids.length - kept.length;
     setToast(`Deleted ${gone} frame(s).${kept.length ? ` Kept ${kept.length} that AI is working on.` : ""}`);
   }
   function deleteFrame(id: FrameId) {
-    if (isExploreFrame(id)) { closeExploreFrames(frame => frame.id === id); setToast("Closed the Execution frame. The original frame is unchanged."); return; }
+    if (manipulation.view?.fork === id) manipulation.forkGone(id);
+    if (isExecFrame(id)) { execution.unframe(); setWorkspace(current => removeWorkspaceFrame(current, id)); return; }
     if (isProxyFrame(id)) {
       const remaining = proxyFramesRef.current.filter(frame => frame.id !== id);
       proxyFramesRef.current = remaining; setProxyFrames(remaining); setWorkspace(current => removeWorkspaceFrame(current, id));
@@ -533,9 +489,9 @@ export default function Home() {
       return;
     }
     if (panelsRef.current[id]?.loading) return;
-    // The frame it came from (a fork's, an example's, an extraction's), still on the board: what is shown after it.
-    const own = panelsRef.current[id], fork = brushesRef.current.find(item => item.fork && item.sourceFrameId === id)?.fork;
-    const parent = [fork?.frameId, own?.exampleOf?.frameId, own?.sourceFrameId].find((frame): frame is string => Boolean(frame && frame !== id && artworkOf(frame)
+    // The frame it came from (an example's, an extraction's), still on the board: what is shown after it.
+    const own = panelsRef.current[id];
+    const parent = [own?.exampleOf?.frameId, own?.sourceFrameId].find((frame): frame is string => Boolean(frame && frame !== id && artworkOf(frame)
       && (frame !== "source" || !workspace.hiddenFrames.includes("source"))));
     cancel(id); prepareNumber.current++;
     setPendingFrameFocus(null); setPencilOpen(false); setPenSettingsOpen(false);
@@ -547,8 +503,7 @@ export default function Home() {
       setSketchSelections(current => { const next = { ...current }; delete next[id]; return next; });
       sketchCanvases.current.delete(id); resultPreviews.current.delete(id);
       if (id === "source") { const empty = { ...blank(), name: artworkRef.current.name }; artworkRef.current = empty; setArtwork(empty); setHistory([]); setFuture([]); setHasSelection(false); }
-      // Its proxy and exploration frames go with it.
-      closeExploreFrames(frame => frame.targetFrameId === id);
+      // Its proxy frames go with it.
       const orphans = proxyFramesRef.current.filter(frame => frame.targetFrameId === id);
       if (orphans.length) { const kept = proxyFramesRef.current.filter(frame => frame.targetFrameId !== id); proxyFramesRef.current = kept; setProxyFrames(kept); }
       setWorkspace(current => orphans.reduce((layout, frame) => removeWorkspaceFrame(layout, frame.id as FrameId), removeWorkspaceFrame(current, id)));
@@ -597,8 +552,6 @@ export default function Home() {
     canvasFor(activeSketch)?.clearSelection();
   }
   function chooseTool(next: string) {
-    // With the inspection annotation tool, the toolbar Eraser (or E) erases its purple marks on the frame; pressing it again draws again.
-    if (next === "eraser" && brushPick?.kind === "inspect-annotate") { setInspectionEraser(on => !on); return; }
     setPenSettingsOpen(false); setTool(next);
     if (!parseBrushTool(next)) setOpenGroup(null);
     if (annotating) { setPencilOpen(false); return; }
@@ -627,7 +580,7 @@ export default function Home() {
     const remembered = groupTools[brushId], pick = remembered ? parseBrushTool(remembered) : null;
     // The remembered tool may be a sub brush's; it must still exist.
     const owner = pick ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
-    const exists = pick && owner && brushGroup(brushesRef.current, owner.id) === brushId && (pick.kind !== "targeted" || owner.targeted.some(item => item.id === pick.targetedId));
+    const exists = pick && owner && brushGroup(brushesRef.current, owner.id) === brushId;
     return exists ? remembered! : brushTool("brush", brushId);
   }
   /** Pick a brush in the Brush panel: its remembered tool is selected and the panel shows its tools and options. */
@@ -651,188 +604,6 @@ export default function Home() {
     const brush = pick?.kind === "brush" ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
     if (brush) prepareBrushFor(deps, brush, activeSketchRef.current);
   }
-  /**
-   * Inspection annotation → a new targeted inspection tool in the group; a targeted tool → its concern again.
-   * Its Execution frame comes with it, both AI requests at once (that one reads the concern, not the cause
-   * found yet): there the user steps to the moment the concern is about and draws the state wanted.
-   */
-  async function runTargeted(brush: Brush) {
-    const frame = activeSketch;
-    // No step recorded (steps are not saved: e.g. after a reload): the moment the frame shows now is the step looked at,
-    // so the Execution frame can be made from it.
-    const stepped = await recordNow(frame, brush.id);
-    const state = inspectionFor(panelsRef.current[frame] || panel, brush.id);
-    const tool = activeTargeted, draft = tool ? { concern: tool.concern, marks: tool.marks, markStyles: tool.markStyles } : { concern: state.concern, marks: state.marks, markStyles: state.markStyles };
-    // A new tool's id is known before it exists, so its cause frame can start with the inspection.
-    const toolId = tool?.id ?? crypto.randomUUID(), empty: TargetedTool["result"] = { summary: "", overlays: [], parameters: [], records: null };
-    // Inspected again: the old frame reads the old result.
-    closeExploreFrames(item => item.targetFrameId === frame && item.toolId === toolId);
-    const cause = placeExploreFrame(brush, { id: toolId, name: "", concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.markStyles ?? [], result: empty, overlayUpdates: [] }, frame);
-    const timing = { ms: 0 };
-    const [found] = await Promise.all([inspectConcern(deps, frame, brush, draft, null, { onTimed: ms => { timing.ms = ms; } }), cause ? fillExploreFrames([cause]) : Promise.resolve()]);
-    if (!found) { if (!tool && cause) closeExploreFrames(item => item.id === cause.id); return; }
-    // Kept in the brush's shared ids, so the tool works on the master and on every instance.
-    const frameScene = (panelsRef.current[frame] || panel).scene, result = remapResult(found, sharedIds(frameScene, brushRoots(frameScene, brush, frame)));
-    const latest = brushesRef.current.find(item => item.id === brush.id); if (!latest) return;
-    let made: TargetedTool;
-    if (tool) {
-      made = { ...tool, result, timing };
-      setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: item.targeted.map(entry => entry.id === tool.id ? made : entry) } : item));
-    } else {
-      made = { id: toolId, name: targetedName(draft.concern, latest.targeted.length), concern: draft.concern.trim(), marks: draft.marks, markStyles: draft.marks.map((_, i) => markStyleAt(draft.markStyles, i)), result, overlayUpdates: [], timing };
-      setBrushes(brushesRef.current.map(item => item.id === brush.id ? { ...item, targeted: [...item.targeted, made].slice(-MAX_TARGETED) } : item));
-      updatePanel(frame, previous => withInspection(previous, { ...inspectionFor(previous, brush.id), marks: [], markStyles: [], concern: "", focus: null }));
-      chooseBrushTool(brush.id, brushTool("targeted", brush.id, made.id));
-    }
-    const unstepped = stepped ? " In its Execution frame, step to the moment and draw the state you want there." : " No steps were recorded, so the Execution frame could not be made. Move this frame's brush once with the Brush tool, then inspect again.";
-    setToast(`“${made.name}” inspection ${(timing.ms / 1000).toFixed(1)}s · ${tool ? "Remade" : "Made"} the targeted inspection tool in the ${brush.name} group.${unstepped}`);
-    if (!stepped) return;
-    // The Execution frame now knows the cause found (asked again with it on retry).
-    const owner = panelsRef.current[frame];
-    if (cause && owner) patchExplore(cause.id, current => ({ request: { ...current.request, inspection: toolIn(frame, owner, brush, made).result } }));
-  }
-  /**
-   * Make sure the brush has a step recorded in `frame`: when it has none, the running result reports the moment it shows
-   * now as one (it is recorded for the brush being inspected). Whether there is a step to look at.
-   */
-  async function recordNow(frame: string, brushId: string) {
-    const stepped = () => { const owner = panelsRef.current[frame]; return Boolean(owner) && heldIndex(inspectionFor(owner, brushId)) !== null; };
-    if (stepped()) return true;
-    const preview = resultPreviews.current.get(frame);
-    if (!preview?.isReady()) return false;
-    preview.snapshot();
-    for (let i = 0; i < 30 && !stepped(); i++) await new Promise(resolve => setTimeout(resolve, 100));
-    return stepped();
-  }
-  /** Change one targeted tool of a brush as it is now. */
-  function patchTargeted(brushId: string, toolId: string, patch: (tool: TargetedTool) => TargetedTool) {
-    setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, targeted: item.targeted.map(entry => entry.id === toolId ? patch(entry) : entry) } : item));
-  }
-  /**
-   * Fix the brush to what was drawn: `fix` (read by AI from the state drawn in an Execution frame of `tool`) is
-   * applied to a FORK of the brush, not to the brush: the frame is copied beside it (the same marks, scene, code and
-   * recorded steps), the brush's stamp there becomes the master of a new brush of its own (a fork, listed in the
-   * Brush panel with this targeted tool), and the fix is applied in that copy. The brush and its frame stay as they
-   * were. A fix that adds a constraint gets the fork tool's overlays rebuilt by AI so they show it too.
-   * Returns the fork, or null when none could be made.
-   */
-  async function forkFix(frame: string, brush: Brush, tool: TargetedTool, fix: Fix) {
-    const made = makeFork(frame, brush, tool, fix);
-    if (!made) return null;
-    const { id, fork, forkTool } = made;
-    const key = fixKey(fix), added = await applyFix(deps, id, fix, key);
-    if (added && panelsRef.current[id]?.applied.past.some(entry => entry.key === key)) {
-      const latest = brushesRef.current.find(item => item.id === fork.id), latestTool = latest?.targeted.find(item => item.id === forkTool.id);
-      if (latest && latestTool) await updateTargetedOverlays(latest, fix, added.id, latestTool, id);
-    }
-    return fork;
-  }
-  /**
-   * A fork of the brush for `fix`: the frame copied (the same marks, scene, code and recorded steps), the brush's
-   * stamp there (the one the fix changes, else the first) the master of a new brush of its own, with this targeted tool.
-   */
-  function makeFork(frame: string, brush: Brush, tool: TargetedTool, fix: Fix) {
-    const owner = panelsRef.current[frame], art = artworkOf(frame);
-    if (!owner || !art) return null;
-    if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frame, { error: `You can make up to ${MAX_BRUSHES} brushes. Delete the brushes you are not using.` }); return null; }
-    const roots = brushRoots(owner.scene, brush, frame), rootId = roots.find(id => id === fix.nodeId || descendantIds(owner.scene, id).includes(fix.nodeId)) ?? roots[0];
-    if (!rootId) return null;
-    const id = createFrame(frame, `${art.name} · fork: ${fix.title}`, art);
-    if (!id) { updatePanel(frame, { error: `You can make up to ${MAX_SKETCH_FRAMES} sketch frames. There is no room to make the fork.` }); return null; }
-    const forkTool: TargetedTool = { ...tool, id: crypto.randomUUID(), overlayUpdates: [] };
-    const fork: Brush = { id: crypto.randomUUID(), name: `${brush.name} · ${fix.title}`.slice(0, 100), color: brush.color, sourceFrameId: id, nodeId: rootId, scene: subScene(owner.scene, [rootId]),
-      code: instanceCode(owner, rootId) || brush.code, targeted: [forkTool], parentId: "", thumbnail: brush.thumbnail,
-      fork: { brushId: brush.id, frameId: frame, key: fixKey(fix), title: fix.title, toolId: tool.id } };
-    setBrushes([...brushesRef.current, fork]);
-    // The copy: the stamp is the fork's master there; its recorded steps come along, so the fork can be inspected at the same moment.
-    const scene = { ...owner.scene, nodes: owner.scene.nodes.map(node => node.id === rootId ? { ...node, brushId: fork.id } : node) };
-    mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(), scene, generated: owner.generated,
-      codeDraft: owner.codeDraft, executable: owner.executable, preparedCode: owner.preparedCode, runtimeError: owner.runtimeError,
-      composePrompt: owner.composePrompt, instruction: owner.instruction, generationMode: owner.generationMode, sourceFrameId: owner.sourceFrameId, analysisRevision: owner.analysisRevision,
-      editingStates: owner.editingStates, machineLayouts: owner.machineLayouts, selectedNodeIds: [rootId],
-      // Held at the step the source's inspection looked at: the fork's result records a step of its own when it starts
-      // (its fresh, empty state), which must not become the step looked at.
-      inspections: { ...owner.inspections, [fork.id]: (() => { const held = inspectionFor(owner, brush.id); return { ...held, brushId: fork.id, cursor: heldIndex(held) }; })() },
-      // The result starts from the step the inspection held: the brush marks stay in the fork (also when not inspecting).
-      seed: (() => { const held = inspectionFor(owner, brush.id), at = heldIndex(held); return at === null ? null : { id: `${id}:seed`, runtime: held.steps[at].runtime }; })() } }));
-    activateSketch(id); chooseBrushTool(fork.id, brushTool("targeted", fork.id, forkTool.id)); setPendingFrameFocus(id as FrameId);
-    return { id, fork, forkTool };
-  }
-  /** Go to a fork a fix was applied to: its frame, with its targeted tool. */
-  function openFork(forkId: string) {
-    const fork = brushesRef.current.find(item => item.id === forkId); if (!fork) return;
-    activateSketch(fork.sourceFrameId);
-    chooseBrushTool(fork.id, fork.targeted[0] ? brushTool("targeted", fork.id, fork.targeted[0].id) : brushTool("brush", fork.id));
-    setPendingFrameFocus(fork.sourceFrameId as FrameId);
-  }
-  /**
-   * After a fix added a constraint: AI rebuilds the targeted tool's overlays (summary, suggestions, records) for
-   * the scene and code as they are after it. What they replace is kept with the applied entry (and the item records
-   * the update applies), so Undo apply brings it back.
-   */
-  async function updateTargetedOverlays(brush: Brush, fix: Fix, addedId: string, tool: TargetedTool, frame: string) {
-    const applied = [...(panelsRef.current[frame]?.applied.past ?? [])].reverse().find(item => item.key === fixKey(fix));
-    if (!applied) return;
-    await settledResult(frame);
-    const owner = panelsRef.current[frame], latest = brushesRef.current.find(item => item.id === brush.id), current = latest?.targeted.find(entry => entry.id === tool.id);
-    if (!owner || !latest || !current) return;
-    // The overlays so far, in the ids of the stamp the fix changed.
-    const roots = brushRoots(owner.scene, latest, frame), root = roots.find(id => [...frameIds(owner.scene, id).values()].includes(fix.nodeId)) ?? roots[0];
-    const before = root ? resultInFrame(current.result, [frameIds(owner.scene, root)]) : current.result, known = new Set(owner.applied.past.map(item => item.id));
-    const added = fix.kind === "add-constraint" && findNode(owner.scene, fix.nodeId)?.constraints.some(item => item.id === addedId) ? addedId : "";
-    const found = await inspectConcern(deps, frame, latest, { concern: current.concern, marks: current.marks, markStyles: current.markStyles },
-      { kind: fix.kind, title: fix.title, detail: fix.detail, nodeId: fix.nodeId, targetId: fix.targetId, constraintId: added, changes: fix.changes, summary: before.summary, overlays: before.overlays });
-    if (!found) return;
-    // Item records the update applied are entries of their own after the fix's: undoing either brings the overlays back.
-    const now = panelsRef.current[frame] || owner, recorded = now.applied.past.filter(item => !known.has(item.id)).map(item => item.id);
-    const result = remapResult(found, sharedIds(now.scene, brushRoots(now.scene, latest, frame)));
-    patchTargeted(brush.id, tool.id, entry => {
-      const earlier = entry.overlayUpdates.find(item => item.appliedIds[0] === applied.id && overlaysUpdatedFor(entry, applied.id));
-      const next = { ...entry.result, ...overlayPart(result) };
-      return { ...entry, result: next, overlayUpdates: [...entry.overlayUpdates.filter(item => item !== earlier),
-        { appliedIds: [applied.id, ...recorded].slice(0, 4), before: earlier?.before ?? overlayPart(entry.result), after: overlayPart(next) }].slice(-MAX_OVERLAY_UPDATES) };
-    });
-    setToast(`Updated the “${tool.name}” overlay to show “${applied.title}”. Undo apply reverts it too.`);
-  }
-  /** Undo / redo of an applied entry: targeted tools whose overlays were updated for it follow. */
-  function followApplied(appliedId: string, direction: "undo" | "redo") {
-    const next = brushesRef.current.map(brush => { const targeted = brush.targeted.map(tool => overlaysAfterApplied(tool, appliedId, direction)); return targeted.some((tool, i) => tool !== brush.targeted[i]) ? { ...brush, targeted } : brush; });
-    if (next.some((brush, i) => brush !== brushesRef.current[i])) { setBrushes(next); return true; }
-    return false;
-  }
-  // ── Exploration frames ─────────────────────────────────────────────────────
-  /** A new Execution frame (not placed yet) for `tool` as it reads in `frame`, or why it cannot be made now. */
-  function newExplore(brush: Brush, tool: TargetedTool, frame: string, status: ExploreFrame["status"] = "loading"): ExploreFrame | string {
-    const owner = panelsRef.current[frame];
-    if (!owner) return "The original frame is missing.";
-    const shown = toolIn(frame, owner, brush, tool), state = inspectionFor(owner, brush.id), at = heldIndex(state);
-    if (at === null) return "First move this frame's brush with the Brush tool to record steps. The Execution frame is made from those brush marks.";
-    if (!owner.generated || !owner.executable) return "Press again after this frame's result has run.";
-    return { id: `explore-${crypto.randomUUID()}`, targetFrameId: frame, brushId: brush.id, toolId: tool.id, mode: "execution",
-      name: `${brush.name} · Execution${tool.name ? ` · ${tool.name}` : ""}`.slice(0, 120), nodeIds: brushNodeIds(owner.scene, brush, frame),
-      // The brush marks as the inspection holds them.
-      base: { runtime: state.steps[at].runtime, values: stepValues(state.steps[at])!, steps: state.steps.map(step => ({ runtime: step.runtime, values: stepValues(step)! })) },
-      executable: syncScene(owner.executable, owner.scene), status, error: "", result: null, progress: 1, values: {},
-      request: { concern: tool.concern, inspection: shown.result } };
-  }
-  /**
-   * Open the selected targeted tool's Execution frame beside this one: the same brush marks (the step the inspection
-   * holds, run by a copy of the program), executed step by step. The one already open is gone to.
-   */
-  function openExplore() {
-    const brush = activeBrush, tool = activeTargeted, frame = activeSketchRef.current, owner = panelsRef.current[frame];
-    if (!brush || !tool || !owner) return;
-    const made = newExplore(brush, tool, frame);
-    const existing = typeof made === "string" ? undefined : exploreRef.current.find(item => sameExplore(item, made));
-    if (existing && existing.status !== "error") { setPendingFrameFocus(existing.id); return; }
-    if (typeof made === "string") { setToast(made); return; }
-    if (!existing && exploreRef.current.length >= MAX_EXPLORE_FRAMES) { setToast(`You can open up to ${MAX_EXPLORE_FRAMES} Execution frames. Close the ones you are done with.`); return; }
-    const frameMade = existing ? { ...made, id: existing.id, edit: existing.edit } : made;
-    setExploreFrames([...exploreRef.current.filter(item => item.id !== frameMade.id), frameMade]);
-    if (!existing) setWorkspace(current => ({ ...current, frames: { ...current.frames, [frameMade.id]: besideFramePosition(current.frames, frame) } }));
-    setPendingFrameFocus(frameMade.id);
-    void runExplore(frameMade);
-  }
   /** Delete a frame group with every frame in it. */
   function deleteGroup(groupId: string) {
     const group = workspace.groups.find(item => item.id === groupId);
@@ -840,187 +611,6 @@ export default function Home() {
     for (const id of group.frames) if (frames.some(frame => frame.id === id)) deleteFrame(id as FrameId);
     setWorkspace(current => ({ ...current, groups: current.groups.filter(item => item.id !== groupId) }));
     setToast(`Deleted the “${group.title}” group and its frames.`);
-  }
-  /** The Execution frame of a tool in `frame`, placed beside it and waiting for its turn (none past the limit). */
-  function placeExploreFrame(brush: Brush, tool: TargetedTool, frame: string) {
-    if (exploreRef.current.length >= MAX_EXPLORE_FRAMES) { setToast(`You can open up to ${MAX_EXPLORE_FRAMES} Execution frames. Close the ones you are done with to open more.`); return null; }
-    const item = newExplore(brush, tool, frame, deferExecution ? "idle" : "queued");
-    if (typeof item === "string") { setToast(`Did not make the Execution frame: ${item}`); return null; }
-    setExploreFrames([...exploreRef.current, item]);
-    setWorkspace(current => ({ ...current, frames: { ...current.frames, [item.id]: besideFramePosition(current.frames, frame) } }));
-    return item;
-  }
-  /** Fill exploration frames by AI at the same time; a request the busy server turned away waits and goes again. */
-  async function fillExploreFrames(frames: ExploreFrame[]) {
-    // Frames only placed (Execution made later) wait for their Generate.
-    await Promise.all(frames.filter(item => item.status !== "idle").map(async item => {
-      for (let attempt = 1; exploreRef.current.some(open => open.id === item.id); attempt++) {
-        await runExplore(exploreRef.current.find(open => open.id === item.id)!);
-        const now = exploreRef.current.find(open => open.id === item.id);
-        if (!now || now.status !== "error" || !/request is in progress/i.test(now.error) || attempt >= 6) break;
-        await new Promise(resolve => setTimeout(resolve, 2500 * attempt));
-      }
-    }));
-  }
-  /** Make an Execution frame (again, with `note`: what to change, said to the AI with the concern). */
-  async function runExplore(frame: ExploreFrame, note = "") {
-    const brush = brushesRef.current.find(item => item.id === frame.brushId);
-    if (!brush || !panelsRef.current[frame.targetFrameId]) { patchExplore(frame.id, { status: "error", error: "Cannot regenerate because the original frame or brush is missing." }); return; }
-    exploreAborts.current.get(frame.id)?.abort();
-    const controller = new AbortController(); exploreAborts.current.set(frame.id, controller);
-    patchExplore(frame.id, { status: "loading", error: "" });
-    try {
-      const concern = note.trim() ? `${frame.request.concern}\n\nMake this frame again. What to change: ${note.trim()}` : frame.request.concern;
-      const { result: found, modules } = await requestExplore(deps, frame.targetFrameId, brush, { ...frame.request, concern }, controller.signal);
-      const { executable } = await exploreExecutable(deps, frame.targetFrameId, found, modules, frame.edit?.kit?.tools ?? []);
-      if (controller.signal.aborted) return;
-      // A run is executed step by step from its first step (the finished marks show faintly); input or steps start where the process ends.
-      // What was drawn belonged to the old steps; the tools AI made for the concern stay.
-      patchExplore(frame.id, current => ({ result: found, modules, status: "ready", executable: executable ?? current.executable, progress: found.axis === "run" ? 0 : found.to, values: {}, edit: current.edit?.kit ? emptyExploreEdit(current.edit.kit) : undefined }));
-    } catch (error) {
-      if (!controller.signal.aborted) patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "Could not make the Execution frame." });
-    } finally { if (exploreAborts.current.get(frame.id) === controller) exploreAborts.current.delete(frame.id); }
-  }
-  function patchExplore(id: string, patch: Partial<ExploreFrame> | ((frame: ExploreFrame) => Partial<ExploreFrame>)) {
-    if (!exploreRef.current.some(frame => frame.id === id)) return;
-    setExploreFrames(exploreRef.current.map(frame => frame.id === id ? { ...frame, ...(typeof patch === "function" ? patch(frame) : patch) } : frame));
-  }
-  function patchExploreEdit(id: string, patch: Partial<ExploreEdit>) {
-    patchExplore(id, current => ({ edit: { ...(current.edit ?? emptyExploreEdit()), ...patch } }));
-  }
-  const alignAborts = useRef(new Map<string, AbortController>());
-  /** What alignment in an Execution frame is about: its tool's concern and summary, the moment, and the brush marks it starts from. */
-  function alignContext(explore: ExploreFrame, moment: ExecutionMoment) {
-    const owner = panelsRef.current[explore.targetFrameId], brush = brushesRef.current.find(item => item.id === explore.brushId), tool = brush?.targeted.find(item => item.id === explore.toolId);
-    if (!owner || !brush || !tool) return null;
-    const context: AlignContext = { concern: tool.concern, summary: toolIn(explore.targetFrameId, owner, brush, tool).result.summary, moment, step: { runtime: explore.base.runtime, values: explore.base.values } };
-    return { owner, brush, tool, context };
-  }
-  /** Run one alignment request of an Execution frame (one at a time per frame; Cancel stops it). */
-  async function alignTask(explore: ExploreFrame, busy: Partial<ExploreEdit>, idle: Partial<ExploreEdit>, work: (signal: AbortSignal) => Promise<void>, failed: (message: string) => Partial<ExploreEdit>) {
-    alignAborts.current.get(explore.id)?.abort();
-    const controller = new AbortController(); alignAborts.current.set(explore.id, controller);
-    patchExploreEdit(explore.id, busy);
-    try { await work(controller.signal); }
-    catch (error) { if (!controller.signal.aborted) patchExploreEdit(explore.id, { ...idle, ...failed(error instanceof Error ? error.message : "Something went wrong.") }); }
-    finally {
-      if (alignAborts.current.get(explore.id) === controller) alignAborts.current.delete(explore.id);
-      if (controller.signal.aborted) patchExploreEdit(explore.id, idle);
-    }
-  }
-  /**
-   * Debugging intent alignment, the tools: AI reads the concern at the moment the Execution frame shows and makes
-   * the micro direct manipulation tools to draw the state wanted there, with presets made of them (its guesses).
-   */
-  async function alignKit(explore: ExploreFrame, image: string, moment: ExecutionMoment, request = "") {
-    const found = alignContext(explore, moment);
-    if (!found) { patchExploreEdit(explore.id, { kitError: "The original frame or targeted tool is missing." }); return; }
-    if (!image) { patchExploreEdit(explore.id, { kitError: "Press again after the drawing is rendered." }); return; }
-    // A tool asked for in words is added to the tools there are (and chosen); otherwise AI makes the tools anew.
-    const before = explore.edit?.kit ?? null, adding = Boolean(request && before);
-    await alignTask(explore, { kitting: true, kitError: "" }, { kitting: false }, async signal => {
-      const made = await requestAlignKit(deps, explore.targetFrameId, found.brush, found.context, image, signal, request, before?.tools ?? [], before?.variables ?? []);
-      if (signal.aborted) return;
-      patchExplore(explore.id, current => { const edit = current.edit ?? emptyExploreEdit();
-        if (adding && edit.kit) { const kit = withTools(edit.kit, made), first = kit.tools.find(tool => !edit.kit!.tools.some(old => old.id === tool.id));
-          return { edit: { ...edit, kit, ...(first ? { mode: kitMode(first.id) } : {}), kitting: false, kitError: "" } }; }
-        // Nothing drawn yet: the first guess is loaded to start from, at the moment it was made for.
-        const kit = made, first = kit.presets[0];
-        const fresh = Boolean(!edit.ideal.objects.length && !edit.marks.length && !stateChanges(current.values, exploreStep(current, null).runtime, edit.kit?.tools ?? []).length && first && edit.kitAt);
-        const start = fresh ? { ideal: presetState(first, kit.tools), preset: first.id, mode: "select" as const, at: { key: edit.kitAt, progress: explore.progress, moment } } : {};
-        // The state it sets too (execution state set by hand).
-        return { edit: { ...edit, ...start, kit, kitting: false, kitError: "" }, ...(fresh ? { values: { ...withoutState(current.values), ...presetValues(first, kit.tools) } } : {}) }; });
-      // Behavior tools run with their own code in this frame: the frame's program is made again with it (one whose code cannot go in is left out).
-      const tools = adding && before ? withTools(before, made).tools : made.tools;
-      if (!tools.some(tool => tool.kind === "behavior")) return;
-      const { executable, failed, reasons } = await exploreExecutable(deps, explore.targetFrameId, explore.result, explore.modules, tools);
-      if (signal.aborted) return;
-      const gone = tools.filter(tool => failed.includes(tool.id)).map(tool => `“${tool.name}” (${reasons[tool.id] ?? "its code could not go in"})`);
-      patchExplore(explore.id, current => { const edit = current.edit; if (!edit?.kit) return {};
-        return { ...(executable ? { executable } : {}), edit: { ...edit, kit: { ...edit.kit, tools: edit.kit.tools.filter(tool => !failed.includes(tool.id)) },
-          ...(gone.length ? { kitError: `Left out ${gone.join("; ")}.` } : {}) } }; });
-    }, message => ({ kitError: message }));
-  }
-  /**
-   * Debugging intent alignment, the fix: AI reads the state the user drew at a moment of the Execution frame and
-   * returns the change of the brush that makes it so, which is applied to a fork of the brush (the brush stays).
-   */
-  async function alignFix(explore: ExploreFrame, image: string, moment: ExecutionMoment, refs: AlignRefs = []) {
-    const found = alignContext(explore, moment);
-    if (!found) { patchExploreEdit(explore.id, { error: "The original frame or targeted tool is missing." }); return; }
-    if (!image) { patchExploreEdit(explore.id, { error: "Press again after the drawing is rendered." }); return; }
-    const edit = explore.edit ?? emptyExploreEdit(), preset = edit.kit?.presets.find(item => item.id === edit.preset);
-    await alignTask(explore, { making: true, error: "", reply: "", forkId: "", mode: "run" }, { making: false }, async signal => {
-      const fix = await requestAlignFix(deps, explore.targetFrameId, found.brush, found.context,
-        { image, ideal: edit.ideal, marks: edit.marks, note: edit.note, kit: edit.kit, preset: preset ? { title: preset.title, detail: preset.detail } : null,
-          state: stateChanges(explore.values, exploreStep(explore, null).runtime, edit.kit?.tools ?? []), refs }, signal);
-      if (signal.aborted) return;
-      const { reply, ...change } = fix;
-      patchExploreEdit(explore.id, { reply: `${reply || `Read it as “${change.title}”.`} Applying it to a fork of ${found.brush.name}…` });
-      const fork = await forkFix(explore.targetFrameId, found.brush, found.tool, change);
-      patchExploreEdit(explore.id, { making: false, reply: `${reply || `Read it as “${change.title}”.`}${fork ? ` Applied “${change.title}” to the fork ${fork.name}; the brush is unchanged.` : " Could not make a fork for it."}`, forkId: fork?.id ?? "" });
-      if (fork) setToast(`Fixed a fork of ${found.brush.name} to what you drew: “${change.title}”. The original brush and frame are unchanged; Undo apply in the fork reverts it.`);
-    }, message => ({ error: message }));
-  }
-  /**
-   * A widget on the tag of a drawn object: AI reads what the rules written there mean and makes a direct manipulation
-   * interface on the picture for trying what they could be instead; it opens once made (kept by object).
-   */
-  async function alignWidget(explore: ExploreFrame, image: string, moment: ExecutionMoment, request: WidgetRequest) {
-    const found = alignContext(explore, moment);
-    if (!found) { patchExploreEdit(explore.id, { widgetError: "The original frame or targeted tool is missing." }); return; }
-    if (!image) { patchExploreEdit(explore.id, { widgetError: "Press again after the drawing is rendered." }); return; }
-    const edit = explore.edit ?? emptyExploreEdit(), { refs, ...widget } = request;
-    await alignTask(explore, { widgeting: request.object, widgetError: "" }, { widgeting: "" }, async signal => {
-      const made = await requestTagWidget(deps, explore.targetFrameId, found.brush, found.context, image, { ideal: edit.ideal, tools: edit.kit?.tools ?? [], reading: edit.kit?.reading ?? "", refs, widget }, "", signal);
-      if (signal.aborted) return;
-      patchExplore(explore.id, current => { const now = current.edit ?? emptyExploreEdit();
-        return { edit: { ...now, widgets: { ...now.widgets, [request.object]: { ...made, id: request.object, values: widgetStart(made) } }, widgetOn: request.object, widgeting: "", widgetError: "" } }; });
-    }, message => ({ widgetError: message }));
-  }
-  // Execution frames loaded with the project run their own copy of their frame's program: prepared again once that frame's
-  // result is (with their checkpoints in it).
-  const preparingExplore = useRef(new Set<string>());
-  useEffect(() => {
-    for (const frame of exploreFrames) {
-      const owner = panels[frame.targetFrameId];
-      if (frame.executable || preparingExplore.current.has(frame.id) || !owner?.generated || !owner.executable) continue;
-      preparingExplore.current.add(frame.id);
-      const tools = frame.edit?.kit?.tools ?? [], behaving = tools.some(tool => tool.kind === "behavior");
-      const prepared = frame.result?.edits.length || behaving ? exploreExecutable(deps, frame.targetFrameId, frame.result, frame.modules, tools).then(made => made.executable) : Promise.resolve(null);
-      // One that cannot be prepared says so and is not tried again (its Regenerate makes it anew).
-      prepared.then(executable => { preparingExplore.current.delete(frame.id); patchExplore(frame.id, current => current.executable ? {} : { executable: executable ?? syncScene(owner.executable, owner.scene) }); },
-        error => patchExplore(frame.id, { status: "error", error: error instanceof Error ? error.message : "Could not prepare the Execution frame's code." }));
-    }
-  }, [exploreFrames, panels]);
-  /** Stop every AI request of Execution frames (their frames stay). */
-  function stopExploring() {
-    for (const aborts of [exploreAborts, alignAborts]) { for (const controller of aborts.current.values()) controller.abort(); aborts.current.clear(); }
-  }
-  /** Close Execution frames (all, or those `which` picks): their AI requests stop and their spots on the board go. */
-  function closeExploreFrames(which: (frame: ExploreFrame) => boolean = () => true) {
-    const gone = exploreRef.current.filter(which); if (!gone.length) return;
-    for (const frame of gone) for (const aborts of [exploreAborts, alignAborts]) { aborts.current.get(frame.id)?.abort(); aborts.current.delete(frame.id); }
-    setExploreFrames(exploreRef.current.filter(frame => !which(frame)));
-    setWorkspace(current => gone.reduce((layout, frame) => removeWorkspaceFrame(layout, frame.id), current));
-  }
-  /** Whether the selected targeted tool's Execution frame is open. */
-  function exploreOpen() {
-    return exploreRef.current.some(frame => frame.targetFrameId === activeSketch && frame.toolId === activeTargeted?.id);
-  }
-
-  /** Wait until the frame runs its current code (a little after it starts), so a capture shows the new result. */
-  async function settledResult(frame: string) {
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-    for (let i = 0; i < 100; i++) {
-      const current = panelsRef.current[frame];
-      if (!current?.generated || current.runtimeError || (current.executable && current.preparedCode === current.generated.code)) break;
-      await sleep(100);
-    }
-    await sleep(800);
-  }
-  function removeTargeted(brushId: string, targetedId: string) {
-    setBrushes(brushesRef.current.map(item => item.id === brushId ? { ...item, targeted: item.targeted.filter(entry => entry.id !== targetedId) } : item));
   }
   /** Remove a brush; a group goes with its sub brushes. */
   function removeBrush(brush: Brush) {
@@ -1033,7 +623,6 @@ export default function Home() {
   // A brush gesture is fed to the frame's result while the user moves (after placing the brush there if needed).
   const brushDrag = useRef<ReturnType<typeof startBrushGesture>>(null);
   function brushGestureStep(frameId: string, toolId: string, point: { x: number; y: number }, phase: "start" | "move") {
-    if (inspectionEraser && parseBrushTool(toolId)?.kind === "inspect-annotate") { eraseInspectionMarks(frameId, toolId, [point]); return; }
     const pick = parseBrushTool(toolId), brush = pick?.kind === "brush" ? brushesRef.current.find(item => item.id === pick.brushId) : undefined;
     if (!brush) return;
     if (phase === "start") { activateSketch(frameId); setPlacing(frameId); brushDrag.current = startBrushGesture(deps, brush, frameId, point); }
@@ -1047,69 +636,18 @@ export default function Home() {
     return Boolean(playingBrush && frameId === activeSketch && placing !== frameId && owner.generated && !owner.annotating && !owner.transformDraft?.annotating
       && brushNodeIds(owner.scene, playingBrush, frameId).length);
   }
-  /** The brush tool is in use on a frame that has the brush: every brush there records its steps. */
-  const playingIn = (frameId: string, owner: SketchPanel) => Boolean(playingBrush && owner.generated && brushNodeIds(owner.scene, playingBrush, frameId).length);
-  /** A brush gesture on a frame: stamp/paint with the brush, or add an inspection annotation stroke. */
+  /** A brush gesture on a frame: stamp/paint with the brush. */
   function brushGesture(frameId: string, toolId: string, points: { x: number; y: number; t: number }[]) {
     const pick = parseBrushTool(toolId), brush = pick && brushesRef.current.find(item => item.id === pick.brushId);
     if (!pick || !brush) return;
     activateSketch(frameId);
-    if (pick.kind === "brush") { brushDrag.current?.end(points.at(-1)!); brushDrag.current = null; setPlacing(null); return; }
-    if (pick.kind === "inspect-annotate" && inspectionEraser) { eraseInspectionMarks(frameId, toolId, points); return; }
-    if (pick.kind === "inspect-annotate" && points.length > 1) updatePanel(frameId, previous => { const state = inspectionFor(previous, brush.id);
-      return withInspection(previous, { ...state, ...addMark(state, points.map(point => ({ x: Math.min(1, Math.max(0, point.x / 900)), y: Math.min(1, Math.max(0, point.y / 600)) })), inspectionPen) }); });
+    if (pick.kind === "brush") { brushDrag.current?.end(points.at(-1)!); brushDrag.current = null; setPlacing(null); }
   }
-  /** Inspection annotation eraser: every mark passing within a few pixels of these canvas points is removed. */
-  function eraseInspectionMarks(frameId: string, toolId: string, points: { x: number; y: number }[]) {
-    const brushId = parseBrushTool(toolId)?.brushId; if (!brushId || !points.length) return;
-    updatePanel(frameId, previous => { const state = inspectionFor(previous, brushId), kept = eraseStyledMarks(state, points);
-      return kept.marks.length === state.marks.length ? {} : withInspection(previous, { ...state, ...kept }); });
-  }
-  /** A stroke drawn on the frame for the open regeneration (normalized, like the inspection annotation). */
+  /** A stroke drawn on the frame for the open regeneration (normalized). */
   function addTransformMark(frameId: string, points: { x: number; y: number }[]) {
     if (points.length < 2) return;
     updatePanel(frameId, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft,
       marks: [...previous.transformDraft.marks, points.map(point => ({ x: Math.min(1, Math.max(0, point.x / 900)), y: Math.min(1, Math.max(0, point.y / 600)) }))].slice(-64) } } : {});
-  }
-  /**
-   * A step reported by the running result, kept by the brush it concerns (always
-   * recorded, no toggle). While the brush tool plays on the frame every brush in it
-   * records on its own; otherwise only the inspected brush.
-   */
-  function recordStep(frameId: string, step: TraceStep) {
-    updatePanel(frameId, previous => {
-      const interacting = playingIn(frameId, previous), inspected = inspectionKind && frameId === activeSketch ? activeBrush : undefined;
-      let inspections = previous.inspections, changed = false;
-      for (const brush of brushesRef.current) {
-        if (!interacting && brush.id !== inspected?.id) continue;
-        const nodeIds = brushNodeIds(previous.scene, brush, frameId);
-        if (!nodeIds.length || (step.nodeId ? !nodeIds.includes(step.nodeId) : interacting && inspected && brush.id !== inspected.id)) continue;
-        const state = inspectionFor(previous, brush.id);
-        inspections = { ...inspections, [brush.id]: addStep(state, { at: Date.now(), nodeId: step.nodeId, key: step.key, from: step.from, to: step.to, transitionId: step.transitionId, values: filterValues(step.params, nodeIds), runtime: step.runtime }) };
-        changed = true;
-      }
-      return changed ? { inspections } : {};
-    });
-  }
-  /** How a recorded step reads on hover: the transition, or the state change. */
-  function stepName(stepScene: typeof scene, step: InspectionState["steps"][number] | undefined) {
-    if (!step) return "";
-    if (!step.nodeId) return "Start";
-    const machine = findNode(stepScene, step.nodeId)?.machine, label = (id: string | null) => machine?.states.find(state => state.id === id)?.label || id || "—";
-    const via = machine?.transitions.find(item => item.id === step.transitionId);
-    return `${via ? `${via.label} · ` : ""}${label(step.from)} → ${label(step.to)}`;
-  }
-  function patchInspection(frameId: string, patch: Partial<InspectionState>) {
-    if (!activeBrush) return;
-    const brushId = activeBrush.id;
-    updatePanel(frameId, previous => withInspection(previous, { ...inspectionFor(previous, brushId), ...patch }));
-  }
-  /** Highlight what an overlay or row stands for: the param in the inspector, the state/transition in the machine panel. */
-  function focusInspection(frameId: string, focus: InspectionFocus | null) {
-    if (!activeBrush) return;
-    const brushId = activeBrush.id;
-    updatePanel(frameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brushId), focus }),
-      ...(focus ? { selectedNodeIds: [focus.nodeId], machineTarget: focus.kind === "state" || focus.kind === "transition" ? { nodeId: focus.nodeId, kind: focus.kind, id: focus.id } : null } : {}) }));
   }
   /** Make a root node of a frame a brush in the toolbar (one AI did not make: e.g. it was taken for a background). */
   function makeBrush(frameId: string, nodeId: string) {
@@ -1123,40 +661,8 @@ export default function Home() {
     if (owner.generated) deps.refreshBrushCode?.(frameId, owner.generated.code);
     setToast(`Added the ${node.name} brush to the toolbar.`);
   }
-  /**
-   * Show a part of the brush an Execution frame runs (a constraint, state or transition, or one of its
-   * values) where it is edited: its frame and targeted tool become the current ones, its node is selected, and it is
-   * highlighted (and scrolled to) in the params panel or the state machine panel.
-   */
-  function showPart(explore: ExploreFrame, part: ExecutionPart | { kind: "param"; nodeId: string; id: string }) {
-    const brush = brushesRef.current.find(item => item.id === explore.brushId), owner = panelsRef.current[explore.targetFrameId];
-    if (!brush || !owner || !findNode(owner.scene, part.nodeId)) { setToast("The frame, brush, or node this part belonged to is missing."); return; }
-    activateSketch(explore.targetFrameId);
-    if (brush.targeted.some(item => item.id === explore.toolId)) chooseBrushTool(brush.id, brushTool("targeted", brush.id, explore.toolId));
-    const focus: InspectionFocus = { kind: part.kind, nodeId: part.nodeId, id: part.id };
-    updatePanel(explore.targetFrameId, previous => ({ ...withInspection(previous, { ...inspectionFor(previous, brush.id), focus }), selectedNodeIds: [part.nodeId],
-      machineTarget: part.kind === "state" || part.kind === "transition" ? { nodeId: part.nodeId, kind: part.kind, id: part.id } : null }));
-  }
-  /**
-   * The selected targeted tool as it reads in one frame: its overlays on every
-   * stamp of the brush there (master and instances), the rest
-   * on the selected stamp (else the first).
-   */
-  function targetedIn(frameId: string, owner: SketchPanel) {
-    return activeTargeted && activeBrush ? toolIn(frameId, owner, activeBrush, activeTargeted) : activeTargeted;
-  }
-  function toolIn(frameId: string, owner: SketchPanel, brush: Brush, tool: TargetedTool) {
-    const roots = brushRoots(owner.scene, brush, frameId);
-    const selectedRoot = owner.selectedNodeIds.map(id => brushRole(owner.scene, frameId, id, brushesRef.current)).find(role => role?.brush.id === brush.id)?.rootId;
-    return { ...tool, result: resultInFrame(tool.result, roots.map(root => frameIds(owner.scene, root)), Math.max(0, roots.indexOf(selectedRoot ?? ""))) };
-  }
 
   // ── Master and instances ───────────────────────────────────────────────────
-  /** Frames a brush is in, its master's frame first. */
-  function brushFrames(brush: Brush) {
-    const ids = ["source", ...sketchFrames.map(frame => frame.id)].filter(id => artworkOf(id) && panels[id] && brushNodeIds(panels[id].scene, brush, id).length);
-    return ids.map(id => ({ id, name: artworkOf(id)!.name, master: id === brush.sourceFrameId })).sort((a, b) => Number(b.master) - Number(a.master));
-  }
   /** The master's frame name, or null when that frame (or the master in it) is gone. */
   /** On the board: the master of the brush pointed at in the Brush panel, else of the brush picked there while it is open. */
   const highlightedBrush = brushes.find(item => item.id === (brushHover ?? openGroup));
@@ -1166,7 +672,7 @@ export default function Home() {
   /**
    * constraints and state machines of an instance follow its brush:
    * an edit there asks first (detach into a new brush, or go to the master).
-   * Plain value adjustments (sliders, inspection value fixes) are the instance's own and never ask.
+   * Plain value adjustments (sliders) are the instance's own and never ask.
    */
   function guard(nodeId: string, what: string, apply: () => void) {
     const frameId = activeSketch, owner = panelsRef.current[frameId] || panel, role = brushRole(owner.scene, frameId, nodeId, brushesRef.current);
@@ -1174,83 +680,18 @@ export default function Home() {
     setDetachPrompt({ frameId, rootId: role.rootId, brushId: role.brush.id, nodeName: findNode(owner.scene, role.rootId)?.name || role.brush.name, what, apply });
   }
   const guardEach = (nodeIds: string[], what: string, apply: () => void) => { const id = nodeIds.find(item => { const role = brushRole(scene, activeSketch, item, brushes); return role && !role.master; }); if (id) guard(id, what, apply); else apply(); };
-  /** Expose a hidden parameter the selected targeted tool suggests (on an instance it asks first, like other structural changes). */
-  function acceptSuggested(item: ParameterSuggestion) {
-    guardEach([item.nodeId], "constraint", () => { void acceptParameter(deps, activeSketch, item).then(added => { if (added) setToast(`Added “${item.label}” as a param. You can adjust it right away.`); }); });
-  }
-  /**
-   * A drag of a targeted overlay's handle: a what-if value of the step looked at
-   * only. A grip on one item of an `each` overlay changes that item's value only
-   * (its record id; the code reads it with `m.v(key, id)`), never the others: when the
-   * code cannot draw one item with its own value, nothing changes and the user is told.
-   * The result held at that step is drawn with it; the param, the other steps and the
-   * running result keep theirs. A suggested parameter is exposed first so the code
-   * reads it (on the master; an instance asks to detach first).
-   */
-  const handleDrag = useRef<{ frameId: string; key: string; item: string | null; each: boolean; accepting: boolean; last: Scalar | null; ended: boolean } | null>(null);
-  function overlayHandle(frameId: string, phase: "start" | "move" | "end", key: string, value: Scalar | null, item: string | null, each: boolean) {
-    const owner = panelsRef.current[frameId], brush = activeBrush; if (!owner || !brush) return;
-    const flush = (drag: NonNullable<typeof handleDrag.current>) => {
-      if (drag.accepting || handleDrag.current !== drag) return;
-      // Checked with the code as it is now (an accepted suggestion has just changed it).
-      const single = drag.each && drag.item !== null && readsPerItem(panelsRef.current[drag.frameId]?.generated?.code ?? "", drag.key);
-      if (drag.each && !single) {
-        handleDrag.current = null;
-        setToast(drag.item === null ? "This item has no id, so it cannot be changed on its own. Use Inspect again so the code records an id for each item."
-          : "This brush code does not read this value per item, so this item cannot be changed on its own. Use Inspect again so the code reads it per item.");
-        return;
-      }
-      if (drag.last !== null) editHeldStep(drag.frameId, brush.id, drag.key, drag.last, single ? drag.item! : undefined);
-      // Let go: the held step plays on with the new value, so what it sets off (other behaviors, state changes) shows.
-      if (drag.ended && drag.last !== null && autoPlayOnRef.current) requestPlayOn(drag.frameId, brush.id);
-      if (drag.ended) handleDrag.current = null;
-    };
-    if (phase === "start") {
-      const suggestion = targetedIn(frameId, owner)?.result.parameters.find(item => suggestionKey(item) === key && parameterStatus(item, owner.scene) === "pending");
-      const role = suggestion ? brushRole(owner.scene, frameId, suggestion.nodeId, brushesRef.current) : null;
-      if (suggestion && role && !role.master) { handleDrag.current = null; acceptSuggested(suggestion); return; }
-      const drag = { frameId, key, item, each, accepting: Boolean(suggestion), last: null, ended: false };
-      handleDrag.current = drag;
-      if (suggestion) void acceptParameter(deps, frameId, suggestion).then(added => {
-        drag.accepting = false;
-        if (!added) { if (handleDrag.current === drag) handleDrag.current = null; return; }
-        setToast(`Added “${suggestion.label}” as a param. Try dragging it at this step.`); flush(drag);
-      });
-      return;
-    }
-    const drag = handleDrag.current; if (!drag || drag.frameId !== frameId || drag.key !== key) return;
-    if (value !== null) drag.last = value;
-    if (phase === "end") drag.ended = true;
-    flush(drag);
-  }
-  /** Play on from the step a brush's inspection holds in a frame, with its what-if values, for a few seconds. */
-  function requestPlayOn(frameId: string, brushId: string) {
-    const panel = panelsRef.current[frameId]; if (!panel) return;
-    const state = inspectionFor(panel, brushId), at = heldIndex(state); if (at === null) return;
-    const restore = `${brushId}:${state.steps[at].id}`;
-    setPlayOns(current => ({ ...current, [frameId]: { id: (current[frameId]?.id ?? 0) + 1, ms: PLAY_ON_MS, restore } }));
-  }
-  /** Set (or with null, take back) a what-if value of the step a brush's inspection holds in a frame. */
-  function editHeldStep(frameId: string, brushId: string, key: string, value: Scalar | null, item?: string) {
-    updatePanel(frameId, previous => { const state = inspectionFor(previous, brushId), at = heldIndex(state); return at === null ? {} : withInspection(previous, editStep(state, at, key, value, item)); });
-  }
-  /** Reject (or bring back) a suggested hidden parameter of the selected targeted tool, by its place in the list. */
-  function rejectSuggested(index: number, rejected: boolean) {
-    if (activeTargeted && activeBrush) patchTargeted(activeBrush.id, activeTargeted.id, entry => ({ ...entry, result: { ...entry.result, parameters: entry.result.parameters.map((item, i) => i === index ? { ...item, rejected } : item) } }));
-  }
   /** The instance's module in its frame's program (what the new brush runs). */
   const instanceCode = (owner: SketchPanel, rootId: string) => { const root = findNode(owner.scene, rootId); return root && owner.generated ? programModules(owner.generated.code).get(root.codeModule ?? root.id) ?? "" : ""; };
-  /** Detach an instance: it becomes the master of a new brush (with the old brush's targeted tools and this frame's recorded steps). */
+  /** Detach an instance: it becomes the master of a new brush. */
   function detachInstance(frameId: string, rootId: string, brushId: string) {
     const owner = panelsRef.current[frameId], from = brushesRef.current.find(item => item.id === brushId);
     if (!owner || !from || !findNode(owner.scene, rootId)) return null;
     if (brushesRef.current.length >= MAX_BRUSHES) { updatePanel(frameId, { error: `You can make up to ${MAX_BRUSHES} brushes. Delete the brushes you are not using.` }); return null; }
-    const made = detachedBrush(owner.scene, frameId, rootId, from, brushesRef.current, crypto.randomUUID(), instanceCode(owner, rootId));
+    const made = detachedBrush(owner.scene, frameId, rootId, brushesRef.current, crypto.randomUUID(), instanceCode(owner, rootId));
     setBrushes([...brushesRef.current, made]);
-    updatePanel(frameId, previous => ({ scene: { ...previous.scene, nodes: previous.scene.nodes.map(item => item.id === rootId ? { ...item, brushId: made.id } : item) },
-      inspections: previous.inspections[from.id] ? { ...previous.inspections, [made.id]: { ...previous.inspections[from.id], brushId: made.id } } : previous.inspections }));
+    updatePanel(frameId, previous => ({ scene: { ...previous.scene, nodes: previous.scene.nodes.map(item => item.id === rootId ? { ...item, brushId: made.id } : item) } }));
     // A tool of the old brush in use moves to the same tool of the new one.
-    if (brushPick?.brushId === from.id) chooseBrushTool(made.id, brushPick.kind === "targeted" ? brushTool("targeted", made.id, brushPick.targetedId) : brushTool(brushPick.kind, made.id));
+    if (brushPick?.brushId === from.id) chooseBrushTool(made.id, brushTool(brushPick.kind, made.id));
     setToast(`Detached from ${from.name} and made the “${made.name}” brush. This node is the new brush's master.`);
     return made;
   }
@@ -1264,13 +705,6 @@ export default function Home() {
   function goToMaster(brush: Brush) {
     if (!masterFrame(brush)) return;
     activateSketch(brush.sourceFrameId); updatePanel(brush.sourceFrameId, { selectedNodeIds: [brush.nodeId] }); setPendingFrameFocus(brush.sourceFrameId as FrameId);
-  }
-  /** Inspect a brush in another frame (the inspection follows the active frame). */
-  function inspectFrame(frameId: string, brush: Brush) {
-    activateSketch(frameId);
-    const owner = panelsRef.current[frameId], root = owner ? brushRoots(owner.scene, brush, frameId)[0] : undefined;
-    if (root) updatePanel(frameId, { selectedNodeIds: [root] });
-    setPendingFrameFocus(frameId as FrameId);
   }
   function selectDrawingPen(pen: SemanticPen) {
     setActiveSemanticPenId(pen.id); setTool("semantic"); patchActive({ annotating: false }); setPencilOpen(false); setPenSettingsOpen(true);
@@ -1371,28 +805,19 @@ export default function Home() {
     const owner = panels[id] || createSketchPanel(), frameEdits = sceneEdits(deps, id);
     // Playing with a brush (interaction): sketch strokes, layer boxes and layer drops are switched off; only the result takes input.
     const interacting = interactingIn(id, owner);
-    // Inspection tools of a brush act on the active frame, and only on that brush's nodes.
     // Drawing the annotation of an open regeneration: strokes go to it, not to the sketch.
     const transformDrawing = Boolean(owner.transformDraft?.annotating && id === activeSketch);
-    const inspected = inspectionKind && activeBrush && id === activeSketch && brushNodeIds(owner.scene, activeBrush, id).length > 0 ? inspectionFor(owner, activeBrush.id) : null;
-    // The step held in the result (stepping through the inspection); overlays there read the stores as it is drawn now.
-    // The result is held at the step looked at (the latest unless another is picked).
-    const heldAt = inspected ? heldIndex(inspected) : null;
-    const restoreId = inspected && heldAt !== null ? `${inspected.brushId}:${inspected.steps[heldAt].id}` : null;
-    const drawn = restoreId && drawnStores[id]?.restore === restoreId ? drawnStores[id].stores : null;
-    const targetedResult = inspected && inspectionKind === "targeted" ? targetedIn(id, owner)?.result || null : null;
-    return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${interacting ? "frame-interacting" : ""} ${dropTarget === id ? "node-drop-target" : ""} ${transformDrawing ? "transform-drawing" : ""} ${inspectionEraser && inspectionKind === "inspect-annotate" && id === activeSketch ? "inspection-erasing" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
+    return <div className={`sketch-frame-surface ${owner.generated || owner.pendingResult ? "has-render" : ""} ${interacting ? "frame-interacting" : ""} ${dropTarget === id ? "node-drop-target" : ""} ${transformDrawing ? "transform-drawing" : ""}`} onPointerDownCapture={e => { if (!(e.target as Element).closest("button")) activateSketch(id); }}
       onPointerEnter={() => { if (playingBrush) prepareBrushFor(deps, playingBrush, id); }}
       onPointerDown={e => { if (!interacting && !transformDrawing && tool === "select" && !(e.target as Element).closest(".scene-node, .param-handles")) frameEdits.select(null); }}
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
-      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} tracing={playingIn(id, owner) || Boolean(inspected)} onTrace={step => recordStep(id, step)} restore={restoreId ? { id: restoreId, runtime: editRuntime(inspected!.steps[heldAt!].runtime, inspected!.steps[heldAt!].edits), params: inspected!.steps[heldAt!].edits, items: inspected!.steps[heldAt!].itemEdits, fields: inspected!.fieldEdits, playOn: playOns[id]?.restore === restoreId ? playOns[id] : null } : null} onDrawn={(restore, stores) => { setDrawnStores(current => ({ ...current, [id]: { restore, stores } }));
-          // Values the code keeps that the held step was recorded without (patched in later, e.g. a field's attractors): taken once from the step as drawn (unedited), so handles can move them there.
-          const held = restore === restoreId && heldAt !== null ? inspected!.steps[heldAt] : null, filled = held && !Object.keys(held.edits ?? {}).some(isRuntimeKey) ? backfillStores(held.runtime, stores) : null;
-          if (filled) patchInspection(id, { steps: inspected!.steps.map((step, i) => i === heldAt ? { ...step, runtime: filled } : step) }); }} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+      <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
+        tracing={execution.view?.frameId === id || manipulation.view?.fork === id} onCycle={raw => { if (manipulation.view?.fork === id) manipulation.onForkCycle(raw); else execution.onCycle(id, raw); }} restore={execution.view?.frameId === id && !execution.view.framed ? execution.restore ?? undefined : undefined}
+        overlay={execution.view?.frameId === id && !execution.view.framed && execution.step ? <ExecutionOverlay steps={execution.steps.length ? execution.steps : []} step={execution.step} plan={execution.plan} shown={execution.shown} onStatus={execution.setOverlayStatus} /> : null}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
-      <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush" && !(inspectionEraser && parseBrushTool(name)?.kind === "inspect-annotate")}
-        gestureStyle={name => parseBrushTool(name)?.kind === "inspect-annotate" && !transformDrawing ? inspectionPen : undefined} gestureTool={name => { if (transformDrawing) return true; const kind = parseBrushTool(name)?.kind; return kind === "brush" || kind === "inspect-annotate"; }}
+      <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush"}
+        gestureTool={name => transformDrawing || parseBrushTool(name)?.kind === "brush"}
         onGesture={(name, points) => transformDrawing ? addTransformMark(id, points) : brushGesture(id, name, points)} onGestureStep={(name, point, phase) => { if (!transformDrawing) brushGestureStep(id, name, point, phase); }} color={color} width={width} opacity={opacity} transparent viewport={drawingViewport} semanticPen={activeSemanticPen}
         onStroke={(stroke: Stroke) => { const latest = artworkOf(id); if (!latest) return; if (latest.strokes.length >= 500) { updatePanel(id, { error: "A frame can store up to 500 strokes. Add a new sketch frame." }); return; } activateSketch(id); commitFrame(id, { ...latest, strokes: [...latest.strokes, stroke] }); }}
         onViewport={() => {}} onSelection={value => id === "source" ? setHasSelection(value) : setSketchSelections(current => current[id] === value ? current : { ...current, [id]: value })} onError={message => updatePanel(id, { error: message })}>
@@ -1402,12 +827,13 @@ export default function Home() {
           onHover={nodeId => updatePanel(id, { hovered: nodeId })} onLiveMove={next => frameEdits.preview(next)} onMove={(next, before) => frameEdits.move(next, before)} />}
       </SketchCanvas>
       {/* The Adjust tool: dragging a drawn object moves the values its constraints give a drag (one undo step per drag). */}
-      {tool === "adjust" && owner.generated && !interacting && !inspected && !transformDrawing && !owner.annotating && <DragAdjustLayer scene={owner.scene} zoom={boardZoom} stack={node => inspectedConstraints(panelsRef.current[id] ?? owner, node)}
+      {tool === "adjust" && owner.generated && !interacting && !transformDrawing && !owner.annotating && <DragAdjustLayer scene={owner.scene} zoom={boardZoom} stack={node => inspectedConstraints(panelsRef.current[id] ?? owner, node)}
         onStart={() => { activateSketch(id); adjustStart.current = { frame: id, scene: panelsRef.current[id]?.scene ?? owner.scene }; }}
         onValue={(nodeId, paramId, path, value) => frameEdits.scalar(nodeId, paramId, path, value)}
         onEnd={() => { const start = adjustStart.current; adjustStart.current = null; const now = panelsRef.current[id]?.scene; if (start?.frame === id && now && now !== start.scene) frameEdits.move(now, start.scene); }} />}
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
-      {showComposeTags && owner.composeTags.length > 0 && !interacting && !playingBrush && !inspected && !transformDrawing && !owner.annotating
+      {execution.view?.frameId === id && <ExecutionMarks marks={execution.view.marks} active={tool === "inspect-mark"} color={MARK_COLOR} onAdd={execution.addMark} />}
+      {showComposeTags && owner.composeTags.length > 0 && !interacting && !playingBrush && !transformDrawing && !owner.annotating
         && <ComposeTags key={tagMoves[id] ?? 0} tags={owner.composeTags} zoom={boardZoom} stale={frameArtwork.revision !== owner.composeTagsRevision} examples={pen => exampleThumbsFor(id, pen)}
           onCard={tag => { void captureExampleThumbs(tag.constraints.flatMap(item => penExamples(placedPen(item.pen, framePens(id)), panelsRef.current))); }} onExample={openExample} onEdit={composeTags => updatePanel(id, { composeTags })}
           onRevise={(tagId, index, request) => { activateSketch(id); void sceneAI(deps, id).reviseComposeTag(tagId, index, request); }} busy={Boolean(owner.loading)}
@@ -1415,20 +841,6 @@ export default function Home() {
           {...(({ onAdd: _add, ...structure }) => structure)(tagStructure(id))} />}
       {owner.transformDraft && owner.transformDraft.marks.length > 0 && <svg className="transform-marks" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Regeneration annotation">
         {owner.transformDraft.marks.map((mark, i) => <polyline key={i} vectorEffect="non-scaling-stroke" points={mark.map(point => `${point.x * 900},${point.y * 600}`).join(" ")} />)}</svg>}
-      {inspected && <InspectionOverlay state={inspected} marks={inspectionKind === "inspect-annotate" ? inspected.marks : []} markStyles={inspected.markStyles} result={targetedResult} drawn={drawn}
-        specs={targetedResult ? valueSpecs(owner.scene, brushNodeIds(owner.scene, activeBrush!, id), targetedResult.parameters) : undefined} onHandle={(phase, key, value, item, each) => overlayHandle(id, phase, key, value, item, each)} liveValues={filterValues(sceneValues(owner.scene), brushNodeIds(owner.scene, activeBrush!, id))} clickable={inspectionKind !== "inspect-annotate"} zoom={boardZoom} onFocus={focus => focusInspection(id, focus)}
-        onStep={index => patchInspection(id, { cursor: index })} stepName={index => stepName(owner.scene, inspected.steps[index])} />}
-      {/* Play on from the held step: the change made there (a handle, a comb) runs on, and what it sets off shows. */}
-      {inspected && heldAt !== null && activeBrush && <div className="play-on-bar" onPointerDown={e => e.stopPropagation()}>
-        <button title={`Run on from this step for ${PLAY_ON_MS / 1000}s with the values changed here: other behaviors and states react to the change (the step itself stays as recorded)`}
-          onClick={() => requestPlayOn(id, activeBrush.id)}><Icon name="play" size={12} />Play on from here</button>
-        <label title="Play on by itself after every handle drag"><input type="checkbox" checked={autoPlayOn} onChange={e => setAutoPlayOn(e.currentTarget.checked)} />after each drag</label>
-      </div>}
-      {/* The fields a targeted inspection found the concern to be about (only those), shown and combed on the held step. */}
-      {inspected && heldAt !== null && inspectionKind === "targeted" && (targetedResult?.fields?.length ?? 0) > 0 && (() => {
-        const about = (key: string) => targetedResult!.fields!.find(item => item.id === key.slice(key.indexOf("/") + 1));
-        return <FieldLayer fields={fieldsIn(drawn, brushRoots(owner.scene, activeBrush!, id)).filter(([key]) => about(key))} edits={inspected.fieldEdits ?? {}} onEdits={fieldEdits => patchInspection(id, { fieldEdits })}
-          nameOf={key => about(key)?.name ?? key} whyOf={key => about(key)?.reason ?? ""} />; })()}
       {!(frameArtwork.photo || frameArtwork.strokes.length) && !owner.generated && !owner.pendingResult && !owner.scene.nodes.length && empty}</div>;
   };
   // ── Minimal example frames ──────────────────────────────────────────────────
@@ -1463,7 +875,7 @@ export default function Home() {
   // Examples once became brushes of their own when their node belonged to no brush (a background's "Paper fill · example"):
   // those are not the user's and go.
   useEffect(() => {
-    const stray = brushes.filter(brush => !brush.parentId && !brush.fork && panels[brush.sourceFrameId]?.exampleOf && brush.name.endsWith(" · example"));
+    const stray = brushes.filter(brush => !brush.parentId && panels[brush.sourceFrameId]?.exampleOf && brush.name.endsWith(" · example"));
     if (!stray.length) return;
     for (const brush of stray) removeBrush(brush);
     setToast(`Deleted ${stray.length} brush(es) (${stray.map(brush => `“${brush.name}”`).join(", ")}) mistakenly made from examples of non-brush nodes.`);
@@ -1561,8 +973,9 @@ export default function Home() {
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
       {frame.scene.nodes.length > 0 && <button aria-label={`Copy ${artworkOf(id)?.name || id} as JSON`} title="Copy this frame's state machines, params and code as one JSON" onClick={e => { e.stopPropagation(); setFrameJson(id); }}><Icon name="copy" size={13} />JSON</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
-      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start (its inspect history starts over too)" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null, ...withoutHistory(previous) })); }}><Icon name="undo" size={13} /></button>}
+      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
+      {frame.generated && <button disabled={!frame.executable} aria-pressed={execution.view?.frameId === id} title="Record this frame's execution (every variable at every step) and inspect it" onClick={e => { e.stopPropagation(); activateSketch(id); execution.open(id); }}><Icon name="inspect" size={13} />{execution.view?.frameId === id ? "Inspecting" : "Inspect"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
       {frame.scene.nodes.some(node => node.constraints.some(item => item.params.length)) && <button disabled={frameBusy} title={frame.exampleOf && !frame.exampleOf.scope ? "Divide this constraint into the computations inside it, each in a frame linked to this one"
           : "Decompose one level (base state): into nodes, then a node into its constraints (as one group) and its child nodes, then single constraints. Decompose a part to go further"}
@@ -1598,7 +1011,6 @@ export default function Home() {
     return [`${artwork.strokes.length} strokes`, frame?.scene.nodes.length ? `${frame.scene.nodes.length} layers` : "", from ? `from ${from}` : "", exampleOf ? `example of ${exampleOf}` : "", frame?.generated ? "p5.js" : "", selection ? "selection" : "", frame && playingBrush && interactingIn(id, frame) ? `playing ${playingBrush.name}` : "", activeSketch === id ? "active" : ""].filter(Boolean).join(" · ");
   };
   // Minimal examples hang off the frame they were decomposed from, named by their constraint.
-  const forkLinks = brushes.flatMap(item => item.fork && artworkOf(item.fork.frameId) && artworkOf(item.sourceFrameId) && !workspace.groups.some(group => group.frames.includes(item.sourceFrameId)) ? [{ from: item.fork.frameId as FrameId, to: item.sourceFrameId as FrameId, label: `⑂ fork · ${item.fork.title}`.slice(0, 60) }] : []);
   const exampleLinks = Object.entries(panels).flatMap(([id, frame]) => {
     const of = frame.exampleOf, node = of && panels[of.frameId] && findNode(panels[of.frameId].scene, of.nodeId);
     const own = findNode(frame.scene, of?.nodeId ?? "") ?? node, label = own && exampleLabel(own, of!.scope, of!.constraintId);
@@ -1646,32 +1058,27 @@ export default function Home() {
             if (code) setHandleErrors(current => current[`${proxy.targetFrameId}:${proxy.nodeId}:${paramId}`]?.code === code ? current : { ...current, [`${proxy.targetFrameId}:${proxy.nodeId}:${paramId}`]: { code, message } });
             else if (!paramId) updatePanel(proxy.targetFrameId, { error: `Proxy frame error: ${message}` }); }} /> };
     }),
-    ...exploreFrames.map(explore => {
-      const target = panels[explore.targetFrameId], targetName = artworkOf(explore.targetFrameId)?.name || "frame";
-      const rows = target ? paramRows(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : [];
-      return { id: explore.id as FrameId, title: `◇ ${explore.name}`, subtitle: "Run the execution · draw the state you want · Original frame is unchanged",
-        actions: <button className="proxy-link-chip" aria-label={`Linked frame: ${targetName}`} title={`This Execution frame was made from brush marks in ${targetName}. Click to go there`}
-          onMouseEnter={() => setLinkHover(explore.targetFrameId as FrameId)} onMouseLeave={() => setLinkHover(null)}
-          onClick={() => { setLinkHover(null); setPendingFrameFocus(explore.targetFrameId as FrameId); }}>
-          <span className="proxy-link-kicker">FROM</span><Icon name="arrow" size={11} /><b>{targetName}</b></button>,
-        content: (boardZoom: number) => <ExploreFrameView frame={explore} zoom={boardZoom} scene={target?.scene} specs={target ? valueSpecs(target.scene, explore.nodeIds.filter(id => findNode(target.scene, id))) : {}}
-          onProgress={progress => patchExplore(explore.id, { progress })} onRetry={note => { void runExplore(explore, note); }} onActivate={() => activateFrame(explore.id)}
-          onValue={(key, value) => patchExplore(explore.id, current => { const values = { ...current.values }; if (value === null) delete values[key]; else values[key] = value; return { values }; })}
-          onStateValues={values => patchExplore(explore.id, current => ({ values: { ...withoutState(current.values), ...values } }))}
-          partName={part => { const node = target ? findNode(target.scene, part.nodeId) : null; if (!node) return null;
-            const name = part.kind === "constraint" ? node.constraints.find(item => item.id === part.id)?.property
-              : ((part.kind === "state" ? node.machine?.states : node.machine?.transitions) ?? []).find(item => item.id === part.id)?.label;
-            return name ? { name, node: node.name } : null; }}
-          onPart={part => showPart(explore, part)}
-          objects={target ? explore.nodeIds.flatMap(id => { const node = findNode(target.scene, id); return node ? [{ id: node.id, name: node.name }] : []; }) : []}
-          onEdit={patch => patchExploreEdit(explore.id, patch)} onCancel={() => alignAborts.current.get(explore.id)?.abort()} onOpenFork={openFork}
-          onKit={(image, moment, request) => { void alignKit(exploreRef.current.find(item => item.id === explore.id) ?? explore, image, moment, request); }}
-          onFix={(image, moment, refs) => { void alignFix(exploreRef.current.find(item => item.id === explore.id) ?? explore, image, moment, refs); }}
-          onWidget={(image, moment, request) => { void alignWidget(exploreRef.current.find(item => item.id === explore.id) ?? explore, image, moment, request); }} /> };
-    }),
+    // The Execution frame of the inspected frame: its concern's steps, stepped through.
+    ...(execution.view?.framed && panels[execution.view.frameId]?.generated ? (() => {
+      const view = execution.view!, source = view.frameId, target = panels[source], name = artworkOf(source)?.name || "frame";
+      const manip = manipulation.view?.frameId === source ? manipulation.view : null;
+      return [{ id: execFrameId(source) as FrameId, title: `▶ Execution · ${name}`, subtitle: view.concern.slice(0, 120),
+        actions: <>
+          <button className="proxy-link-chip" aria-label={`Inspected frame: ${name}`} title={`The steps of ${name}'s recorded execution. Click to go there`}
+            onMouseEnter={() => setLinkHover(source as FrameId)} onMouseLeave={() => setLinkHover(null)} onClick={() => { setLinkHover(null); setPendingFrameFocus(source as FrameId); }}>
+            <span className="proxy-link-kicker">LINKED</span><Icon name="arrow" size={11} /><b>{name}</b></button>
+        </>,
+        content: <ExecutionFrame executable={target.executable ? syncScene(target.executable, target.scene) : ""} steps={execution.steps} step={execution.step} restore={execution.restore}
+          analysis={view.analysis} plan={execution.plan} shown={execution.shown} marks={view.marks} markColor={MARK_COLOR} busy={view.busy} status={view.status} overlayStatus={view.overlayStatus}
+          layer={manip ? <ManipLayer strokes={manip.strokes} tool={manip.tool} selected={manip.selected} onAdd={manipulation.add} onChange={manipulation.change} onSelect={manipulation.select} /> : undefined}
+          onSelect={execution.select} onOverlayStatus={execution.setOverlayStatus} onError={message => updatePanel(source, { runtimeError: message })} />,
+        below: manip ? <ManipPanel view={manip} rows={manipulation.rows} onBegin={manipulation.begin} onChoose={id => { const rule = manip.asked?.rules.find(item => item.id === id); if (rule) manipulation.choose(rule); }}
+          onRechoose={manipulation.rechoose} onTool={manipulation.setTool} onRemove={manipulation.remove} onClear={manipulation.clear} onApply={() => { void manipulation.apply(); }} onTryFork={() => { void manipulation.tryOnFork(); }} onKeepFork={manipulation.keepFork} onDiscardFork={manipulation.discardFork}
+          onShowFork={() => { if (manip.fork) setPendingFrameFocus(manip.fork as FrameId); }} onRetry={manipulation.retry} /> : undefined }];
+    })() : []),
   ].filter(frame => (frame.id !== "source" || !workspace.hiddenFrames.includes("source")) && !hiddenExamples.has(frame.id));
   // Frame groups with the frames on the board; grouped frames hang off nothing (no lines to the frame they came from).
-  const boardGroups = liveGroups(workspace.groups, new Set(frames.map(frame => frame.id))), grouped = new Set(boardGroups.flatMap(group => group.frames));
+  const boardGroups = liveGroups(workspace.groups, new Set(frames.map(frame => frame.id)));
   // Frames that left the board leave their groups; a group with none left goes.
   const boardIds = frames.map(frame => frame.id).join("|");
   // Hidden frames keep their group (they come back to it).
@@ -1701,8 +1108,6 @@ export default function Home() {
       onDetach={() => detachInstance(activeSketch, nodeRole.rootId, nodeRole.brush.id)} onAdopt={() => adoptMaster(activeSketch, nodeRole.rootId, nodeRole.brush.id)}
       onDelete={busy ? undefined : () => { edits.removeIds([nodeRole.rootId]); setToast(nodeRole.master ? `Deleted the master of ${nodeRole.brush.name}. The brush can still be used from its saved copy (undo in Layers).` : `Deleted the ${nodeRole.brush.name} brush stamp (undo in Layers).`); }} />}
     {node ? (() => { const transform = (apply: () => void) => guard(node.id, "constraint", apply), machine = (apply: () => void) => guard(node.id, "state machine", apply);
-      // The selected targeted tool's hidden parameters on this node, not decided yet: faint in the constraint they would join.
-      const suggested = inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result.parameters ?? [] : [];
       return <ConstraintInspector node={node} constraints={inspectedConstraints(panel, node)} state={nodeState} busy={busy}
       onNode={patch => "description" in patch ? guard(node.id, "description", () => edits.editNode(node.id, patch)) : edits.editNode(node.id, patch)} onConstraint={(id, patch) => transform(() => edits.editConstraint(node.id, id, patch))}
       onAddConstraint={() => transform(() => edits.addConstraint(node.id))} onRemoveConstraint={id => transform(() => edits.removeConstraint(node.id, id))} onMoveConstraint={(id, offset) => transform(() => edits.moveConstraint(node.id, id, offset))}
@@ -1716,11 +1121,7 @@ export default function Home() {
       onDraftSubmit={() => { const draft = panel.transformDraft; if (!draft) return; updatePanel(activeSketch, previous => previous.transformDraft ? { transformDraft: { ...previous.transformDraft, annotating: false } } : {}); void ai.regenerate(draft.nodeId, draft.target, draft.instruction, draft.marks); }}
       onDraftCancel={() => updatePanel(activeSketch, { transformDraft: null })}
       onMinimalExample={constraintId => { void ai.minimalExample(node.id, constraintId); }}
-      highlightParamId={(focus => inspectionKind && (focus?.kind === "param" || focus?.kind === "parameter") && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)}
-      suggestions={suggested.map((item, index) => ({ item, index })).filter(({ item }) => item.nodeId === node.id && parameterStatus(item, scene) === "pending")}
-      onAcceptSuggestion={index => suggested[index] && acceptSuggested(suggested[index])} onRejectSuggestion={index => rejectSuggested(index, true)}
-      highlightConstraintId={(focus => inspectionKind && focus?.kind === "constraint" && focus.nodeId === node.id ? focus.id : null)(activeBrush ? inspectionFor(panel, activeBrush.id).focus : null)
-        ?? (layerPick(activeSketch)?.nodeId === node.id ? layerPick(activeSketch)!.constraintId : null)}
+      highlightConstraintId={layerPick(activeSketch)?.nodeId === node.id ? layerPick(activeSketch)!.constraintId : null}
       onHandle={(paramId, handle) => edits.handle(node.id, paramId, handle)} onDesignHandles={(target, instruction) => { void ai.suggestHandles(node.id, target, instruction); }}
       onOpenProxy={() => openProxy(activeSketch, node.id)} handleErrors={nodeHandleErrors(activeSketch, node)}
       onGenerateMachine={() => machine(() => { void ai.generateMachine(node.id); })} onRemoveMachine={() => machine(() => edits.removeMachine(node.id))} />; })()
@@ -1739,15 +1140,17 @@ export default function Home() {
     <input ref={upload} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Attach photograph" onChange={e => { if (e.target.files?.[0]) void attach(e.target.files[0]); e.target.value = ""; }} />
     <input ref={importInput} className="visually-hidden" type="file" accept=".json" aria-label="Open project JSON" onChange={async e => { const file = e.target.files?.[0]; e.target.value = ""; if (!file) return; try { if (file.size > 12_000_000) throw new Error("The project file is too large."); restore(projectSchema.parse(JSON.parse(await file.text()))); } catch { patchActive({ error: "Choose a valid Rulegen project JSON file." }); } }} />
     <div className="workspace">
-      <ToolRail tool={tool} inspectionEraser={brushPick?.kind === "inspect-annotate" ? inspectionEraser : undefined} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={drawingPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
+      <ToolRail marking={tool === "inspect-mark"} canMark={Boolean(execution.view)} onMark={() => { if (tool === "inspect-mark") chooseTool("select"); else { if (execution.view) activateSketch(execution.view.frameId); chooseTool("inspect-mark"); } }}
+        inspecting={Boolean(execution.view)} canInspect={Boolean(panels[activeSketch]?.generated && panels[activeSketch]?.executable)} onInspect={() => { if (execution.view && execution.view.frameId !== activeSketch) execution.close(); execution.open(activeSketch); }}
+        tool={tool} toolsActive pencilOpen={pencilOpen} color={color} width={width} opacity={opacity} pens={drawingPens} activePen={activeSemanticPen} penSettingsOpen={penSettingsOpen}
         busy={busy} canAddSketch={!busy && (sketchFrames.length < MAX_SKETCH_FRAMES || workspace.hiddenFrames.includes("source"))} canUndo={canUndo} canRedo={canRedo} canClear={!(annotating && (busy || !annotations.length))} zoom={workspace.camera?.zoom || .4}
         onTool={chooseTool} onPencilClose={() => setPencilOpen(false)} onColor={setColor} onWidth={setWidth} onOpacity={setOpacity}
         onPen={pen => { if (tool === "semantic" && activeSemanticPenId === pen.id) { setPenSettingsOpen(open => !open); setPencilOpen(false); } else selectDrawingPen(pen); }}
         onPenChange={editDrawingPen} onPenRemove={pen => { setSemanticPens(current => current.filter(item => item.id !== pen.id)); setActiveSemanticPenId(null); setTool("pen"); setPenSettingsOpen(false); }} onPenSettingsClose={() => setPenSettingsOpen(false)}
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
-        brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushPanel={toggleBrushPanel} onBrushGroup={clickBrushGroup} onBrushHover={setBrushHover} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)} onTargetedRemove={removeTargeted}
-        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }} brushForkOf={brush => brush.fork ? brushesRef.current.find(item => item.id === brush.fork!.brushId)?.name ?? null : null}
+        brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushPanel={toggleBrushPanel} onBrushGroup={clickBrushGroup} onBrushHover={setBrushHover} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)}
+        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }}
         onHelp={() => setToast("V Select/move · P Pencil · E Eraser · L Lasso · H Pan · ⌘/Ctrl+G Group · ⇧⌘G Ungroup · Delete Delete layer · Arrows Move · ⌘/Ctrl+Z Undo · ⌘/Ctrl+V Paste image · Esc Deselect")} />
       <aside ref={layerPanel} className={`layer-sidebar ${layerWidth ? "layer-sidebar-resized" : ""}`} style={layerWidth ? { "--layer-width": `${layerWidth}px` } as React.CSSProperties : undefined}>
         <PanelResizer edge="right" label="Resize layers panel" min={LAYER_MIN_WIDTH} max={LAYER_MAX_WIDTH}
@@ -1769,15 +1172,12 @@ export default function Home() {
           badge={id => { const role = brushRole(scene, activeSketch, id, brushes); if (role?.rootId === id) return <BrushRoleBadge role={role} />;
             // A drawn form at the root that is no brush yet (e.g. one taken for a background before): it can be made one.
             const node = !role && panel.generated ? findNode(scene, id) : undefined;
-            return node && !node.parentId && !isBackdrop(node) ? <button type="button" className="layer-make-brush" title="Make this a brush in the toolbar (brush it onto frames, inspect it)"
+            return node && !node.parentId && !isBackdrop(node) ? <button type="button" className="layer-make-brush" title="Make this a brush in the toolbar (brush it onto frames)"
               onClick={e => { e.stopPropagation(); makeBrush(activeSketch, id); }}>+ Brush</button> : null; }} />
       </aside>
       <main className="canvas-workspace">
         <FreeformWorkspace ref={workspaceCanvas} highlight={linkHover}
-          links={[...exampleLinks, ...forkLinks, ...proxyFrames.filter((proxy, i, all) => !proxy.hidden && all.findIndex(other => !other.hidden && other.targetFrameId === proxy.targetFrameId && other.nodeId === proxy.nodeId) === i).map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ Control" })), ...exploreFrames.filter(explore => !grouped.has(explore.id)).map(explore => ({ from: explore.id as FrameId, to: explore.targetFrameId as FrameId, label: "◇ Explore" }))].filter(link => !hiddenExamples.has(link.from) && !hiddenExamples.has(link.to))} groups={boardGroups} onDeleteGroup={deleteGroup} groupAction={group => {
-            // A group holding a fork: pick the fork's inspection tool.
-            const fork = brushes.find(item => item.fork && group.frames.includes(item.sourceFrameId));
-            return fork ? { label: "◎ fork inspection tool", title: `Pick the targeted inspection tool for “${fork.name}” in the toolbar and go to the fork frame`, onClick: () => openFork(fork.id) } : null; }} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
+          links={[...exampleLinks, ...(execution.view?.framed && panels[execution.view.frameId]?.generated ? [{ from: execution.view.frameId as FrameId, to: execFrameId(execution.view.frameId) as FrameId, label: "▶ execution" }] : []), ...(manipulation.view?.fork && artworkOf(manipulation.view.fork) ? [{ from: manipulation.view.frameId as FrameId, to: manipulation.view.fork as FrameId, label: "⑂ temporary fork" }] : []), ...proxyFrames.filter((proxy, i, all) => !proxy.hidden && all.findIndex(other => !other.hidden && other.targetFrameId === proxy.targetFrameId && other.nodeId === proxy.nodeId) === i).map(proxy => ({ from: proxy.id as FrameId, to: proxy.targetFrameId as FrameId, label: "◎ Control" }))].filter(link => !hiddenExamples.has(link.from) && !hiddenExamples.has(link.to))} groups={boardGroups} onDeleteGroup={deleteGroup} onDeleteFrame={deleteFrame} deleteDisabled={busy} layout={workspace} onChange={setWorkspace} activeFrame={activeSketch as FrameId} tool={tool}
           onActivateFrame={id => activateFrame(id)} masterHighlight={masterHighlight} selectedFrames={pickedFrames.filter(id => frames.some(frame => frame.id === id))} onSelectFrames={setPickedFrames}
           onBackground={() => { setPencilOpen(false); setPenSettingsOpen(false); }} onDrop={file => { void attach(file); }} frames={frames} />
         <footer className="workspace-footer"><span><span className="status-dot" />{configured ? `Connected · ${model}` : configured === false ? "OpenAI configuration required" : "Connecting…"}</span><span>FREEFORM · P5.JS</span></footer>
@@ -1797,30 +1197,12 @@ export default function Home() {
           {scene.nodes.length > 0 && <label className="refinement-input"><span>YOUR DIRECTION <small>optional</small></span><textarea aria-label="Generation direction" placeholder="e.g. more organic, less repetition, in blue…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>}
         </div><div className="inspector-footer"><span className="tiny-dot" />Built for exploration, not perfection.</div></aside>
     </div>
-    <RawCodePanel code={liveSource} focus={inspection?.focus ? focusLines(panel.codeDraft || liveSource, scene, inspection.focus) : null} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("Copied the p5.js code.")} onError={message => patchActive({ error: message })}
+    <RawCodePanel code={liveSource} sketchName={currentSketch.name} fileName={generated?.title || currentSketch.name} onCopy={() => setToast("Copied the p5.js code.")} onError={message => patchActive({ error: message })}
       editor={{ draft: panel.codeDraft || "", busy, runtimeError: panel.runtimeError, onDraft: value => patchActive({ codeDraft: value }),
         onRun: () => { if (!generated) return; if (generated.code === panel.codeDraft) void prepare(panel.codeDraft); else patchActive({ generated: { ...generated, code: panel.codeDraft || "" }, executable: "", preparedCode: "" }); patchActive(previous => ({ renderRevision: previous.renderRevision + 1 })); },
         onFix: () => { void ai.generateCode(true); } }}
-      inspectionPanel={inspectionKind && activeBrush ? <InspectionPanel brush={activeBrush} kind={inspectionKind} scene={scene} nodeIds={brushNodeIds(scene, activeBrush, activeSketch)} state={inspectionFor(panel, activeBrush.id)} busy={busy} running={Boolean(panel.executable)}
-        frameId={activeSketch} frames={brushFrames(activeBrush)} onFrame={frameId => inspectFrame(frameId, activeBrush)}
-        onCursor={cursor => patchInspection(activeSketch, { cursor })} onResetEdit={key => editHeldStep(activeSketch, activeBrush.id, key, null)} onClear={() => patchInspection(activeSketch, { steps: [], cursor: null, focus: null })}
-        onFocus={focus => focusInspection(activeSketch, focus)}
-        eraser={inspectionEraser} onEraser={setInspectionEraser}
-        onConcern={concern => patchInspection(activeSketch, { concern })} onClearMarks={() => patchInspection(activeSketch, { marks: [], markStyles: [] })}
-        pen={inspectionPen} onPen={setInspectionPen}
-        suggestions={concernSuggest.key === `${activeSketch}|${activeBrush.id}` ? concernSuggest : { items: [], loading: false, error: "" }} onSuggest={() => { void requestConcerns(); }}
-        targeted={targetedIn(activeSketch, panel)} onInspect={() => { void runTargeted(activeBrush); }}
-        deferExecution={deferExecution} onDeferExecution={setDeferExecution}
-        applied={{ past: panel.applied.past, future: panel.applied.future, undoClean: appliedCurrent(panel, "undo"), redoClean: appliedCurrent(panel, "redo") }}
-        onUndoApplied={() => { const entry = stepApplied(deps, activeSketch, "undo"); if (entry) setToast(`Reverted applying “${entry.title}” (scene and code${followApplied(entry.id, "undo") ? ", overlay" : ""}).`); }}
-        onRedoApplied={() => { const entry = stepApplied(deps, activeSketch, "redo"); if (entry) setToast(`Reapplied “${entry.title}”${followApplied(entry.id, "redo") ? " (with the updated overlay)" : ""}.`); }}
-        onExplore={openExplore} exploring={exploreOpen()}
-        code={panel.generated?.code} onApplyRecording={item => { void applyRecording(deps, activeSketch, item).then(done => { if (done) setToast(`Updated the code to record ${item.fields.join(", ")} for each drawn item.`); }); }}
-        onAcceptParameter={acceptSuggested} onRejectParameter={rejectSuggested}
-        onParameterValue={(nodeId, paramId, value) => edits.scalar(nodeId, paramId, [], value)}
-        forks={brushes.filter(item => item.fork?.brushId === activeBrush.id && activeTargeted && item.fork.toolId === activeTargeted.id).map(item => ({ id: item.id, name: artworkOf(item.sourceFrameId)?.name ?? item.name, title: item.fork!.title }))} onOpenFork={openFork} onTool={toolId => chooseBrushTool(activeBrush.id, toolId)} /> : undefined}
       machinePanel={<NodeMachinePanel scene={scene} node={machineNode}
-        inspected={inspection && machineNode && inspectedIds.includes(machineNode.id) ? machineInspection(inspection, inspectionKind === "targeted" ? targetedIn(activeSketch, panel)?.result ?? null : null, machineNode.id) : null} editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
+        editingStateId={machineNode ? panel.editingStates[machineNode.id] || null : null} runtimeStateId={machineNode ? panel.runtimeStates[machineNode.id] || null : null}
         playing={panel.machinePlaying} busy={busy} hasCode={Boolean(generated)}
         target={machineNode && panel.machineTarget?.nodeId === machineNode.id ? { kind: panel.machineTarget.kind, id: panel.machineTarget.id } : null} draft={panel.machineDraft}
         onSelectNode={id => edits.select(id)}
@@ -1832,7 +1214,11 @@ export default function Home() {
         onLayout={next => machineNode && patchActive(previous => { const machineLayouts = { ...previous.machineLayouts }; if (next) machineLayouts[machineNode.id] = next; else delete machineLayouts[machineNode.id]; return { machineLayouts }; })} onDraft={draft => patchActive({ machineDraft: draft })} onError={message => patchActive({ error: message })}
         onRefine={request => { if (machineNode) guard(machineNode.id, "state machine", () => { void ai.refineMachine(machineNode.id, request); }); }}
         onGenerate={() => { if (machineNode) guard(machineNode.id, "state machine", () => { void ai.generateMachine(machineNode.id); }); }} onPlay={playing => patchActive({ machinePlaying: playing })}
-        onRestart={() => machineNode && restartMachine(machineNode.id)} onEvent={transitionId => machineNode && emitTransition(machineNode.id, transitionId)} />} />
+        onRestart={() => machineNode && restartMachine(machineNode.id)} onEvent={transitionId => machineNode && emitTransition(machineNode.id, transitionId)}
+        inspected={execution.view?.frameId === activeSketch ? execution.machine(machineNode?.id ?? null) : null} />}
+      inspectionPanel={execution.view ? <ExecutionPanel brushName={artworkOf(execution.view.frameId)?.name || "Frame"} trace={execution.view.trace} recording={!execution.step}
+        steps={execution.steps} step={execution.step} analysis={execution.view.analysis} busy={execution.view.busy} status={[execution.view.status, execution.step ? execution.view.overlayStatus : ""].filter(Boolean).join(" ")}
+        skipped={execution.skipped} onSelect={execution.select} onInspect={concern => { void execution.inspect(concern); }} marks={execution.view.marks.length} onClearMarks={execution.clearMarks} onClearAnalysis={execution.clearAnalysis} onClearTrace={execution.clearTrace} onClose={execution.close} /> : undefined} />
     {detachPrompt && (() => { const brush = brushes.find(item => item.id === detachPrompt.brushId); if (!brush) return null;
       const close = () => setDetachPrompt(null);
       return <DetachDialog prompt={detachPrompt} brushName={brush.name} masterFrame={masterFrame(brush)} onCancel={close}
@@ -1844,7 +1230,7 @@ export default function Home() {
     {frameJson && panels[frameJson] && <FrameJsonDialog name={artworkOf(frameJson)?.name || frameJson} onClose={() => setFrameJson(null)} onCopied={setToast}
       data={frameExport({ id: frameJson, name: artworkOf(frameJson)?.name || frameJson, scene: panels[frameJson].scene, generated: panels[frameJson].generated,
         brushOf: nodeId => { const role = brushRole(panels[frameJson].scene, frameJson, nodeId, brushes); return role ? { name: role.brush.name, master: role.master } : null; },
-        brushes: brushes.filter(brush => brushNodeIds(panels[frameJson].scene, brush, frameJson).length).map(brush => ({ id: brush.id, name: brush.name, roots: brushRoots(panels[frameJson].scene, brush, frameJson), targeted: brush.targeted })) })} />}
+        brushes: brushes.filter(brush => brushNodeIds(panels[frameJson].scene, brush, frameJson).length).map(brush => ({ id: brush.id, name: brush.name, roots: brushRoots(panels[frameJson].scene, brush, frameJson) })) })} />}
     {exportOpen && <div className="modal-backdrop" onClick={() => setExportOpen(false)}><div className="modal project-export-modal" role="dialog" aria-modal="true" aria-labelledby="export-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close export dialog" onClick={() => setExportOpen(false)}><Icon name="close" /></button><div className="section-kicker">KEEP YOUR EXPLORATION</div><h2 id="export-title">Take your project with you.</h2><p>Sketches, photos, Collections, Objects, constraints, and code are saved together. You can download or copy them as a JSON file.</p><textarea aria-label="Exported project JSON" className="project-json-preview" readOnly value={JSON.stringify(projectData(), null, 2)} /><button className="primary-button" onClick={() => downloadFile(`${artwork.name}.rulegen.json`, JSON.stringify(projectData(), null, 2), "application/json")}>Download project JSON<Icon name="download" /></button><button className="alternative-button" onClick={async () => { try { await navigator.clipboard.writeText(JSON.stringify(projectData(), null, 2)); setToast("Copied the project JSON."); } catch { patchActive({ error: "Select the JSON text to copy it, or download it." }); } }}>Copy project JSON<Icon name="copy" size={15} /></button></div></div>}
     {modal && <div className="modal-backdrop" onClick={() => setModal(false)}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="new-title" onClick={e => e.stopPropagation()}><button className="modal-close" aria-label="Close dialog" onClick={() => setModal(false)}><Icon name="close" /></button><div className="section-kicker">A FRESH PERSPECTIVE</div><h2 id="new-title">What will you explore?</h2><p>Starting a new exploration replaces the current local draft. Export it as JSON to reopen it anytime.</p><label>Exploration name<input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && newProject()} /></label><button className="primary-button" onClick={newProject}>Start exploring<Icon name="arrow" /></button></div></div>}
   </div>;
