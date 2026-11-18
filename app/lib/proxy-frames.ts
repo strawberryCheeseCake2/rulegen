@@ -3,39 +3,39 @@ import { idSchema } from "./scene/schema";
 import { besideFramePosition, FRAME_GAP_X, FRAME_HEIGHT, FRAME_WIDTH, groupRow, type WorkspaceLayout } from "./workspace";
 
 // A proxy frame sits on the board beside a sketch frame and runs the direct
-// manipulation handles of one transformation of one of its nodes (each with the
+// manipulation handles of one constraint of one of its nodes (each with the
 // whole frame to itself): using them changes that node live. A node's proxy
 // frames are kept together in one frame group. A node with no handles yet has
 // one frame for the node (to design them from).
 
 export const MAX_PROXY_FRAMES = 60;
 export const proxyFrameSchema = z.object({ id: z.string().regex(/^proxy-[a-zA-Z0-9-]+$/).max(80), targetFrameId: z.string().max(80), nodeId: idSchema,
-  /** The transformation whose widgets it runs (none: the node's, by transformation). */
-  transformationId: idSchema.optional(),
+  /** The constraint whose widgets it runs (none: the node's, by constraint). */
+  constraintId: idSchema.optional(),
   /** Taken off the board (kept, with its spot); shown again from its siblings or the target frame. */
   hidden: z.preprocess(value => typeof value === "boolean" ? value : undefined, z.boolean().optional()) });
 export type ProxyFrame = z.infer<typeof proxyFrameSchema>;
 export const isProxyFrame = (id: string): id is `proxy-${string}` => id.startsWith("proxy-");
-/** A node's proxy frames: the node's own first, then by transformation (in `order`). */
+/** A node's proxy frames: the node's own first, then by constraint (in `order`). */
 export function proxiesOf(frames: ProxyFrame[], targetFrameId: string, nodeId: string, order: string[] = []) {
-  const rank = (frame: ProxyFrame) => frame.transformationId ? (order.indexOf(frame.transformationId) + 1 || order.length + 1) : 0;
+  const rank = (frame: ProxyFrame) => frame.constraintId ? (order.indexOf(frame.constraintId) + 1 || order.length + 1) : 0;
   return frames.filter(frame => frame.targetFrameId === targetFrameId && frame.nodeId === nodeId).sort((a, b) => rank(a) - rank(b));
 }
 export const proxyFor = (frames: ProxyFrame[], targetFrameId: string, nodeId: string) => proxiesOf(frames, targetFrameId, nodeId)[0];
 
 /**
- * The proxy frames a node gets when its handles are opened: one per transformation with widgets (`withWidgets`,
- * in order), all shown; while it has none, one for the node. A node frame goes once there are transformation frames.
+ * The proxy frames a node gets when its handles are opened: one per constraint with widgets (`withWidgets`,
+ * in order), all shown; while it has none, one for the node. A node frame goes once there are constraint frames.
  * At most `max` frames in all (`left`: how many did not fit).
  */
 export function planProxyFrames(frames: ProxyFrame[], targetFrameId: string, nodeId: string, withWidgets: string[], makeId: () => string, max = MAX_PROXY_FRAMES) {
   const mine = proxiesOf(frames, targetFrameId, nodeId), others = frames.filter(frame => !mine.includes(frame));
-  const wanted = withWidgets.filter(id => !mine.some(frame => frame.transformationId === id));
-  const removed = withWidgets.length ? mine.filter(frame => !frame.transformationId) : [];
+  const wanted = withWidgets.filter(id => !mine.some(frame => frame.constraintId === id));
+  const removed = withWidgets.length ? mine.filter(frame => !frame.constraintId) : [];
   const kept = mine.filter(frame => !removed.includes(frame)).map(frame => frame.hidden ? { ...frame, hidden: false } : frame);
   const room = Math.max(0, max - others.length - kept.length);
   const added: ProxyFrame[] = (withWidgets.length ? wanted : kept.length ? [] : [undefined]).slice(0, room)
-    .map(transformationId => ({ id: makeId(), targetFrameId, nodeId, ...(transformationId ? { transformationId } : {}) }));
+    .map(constraintId => ({ id: makeId(), targetFrameId, nodeId, ...(constraintId ? { constraintId } : {}) }));
   const left = (withWidgets.length ? wanted.length : kept.length ? 0 : 1) - added.length;
   return { frames: [...others, ...kept, ...added], mine: proxiesOf([...kept, ...added], targetFrameId, nodeId, withWidgets), added, removed, left };
 }

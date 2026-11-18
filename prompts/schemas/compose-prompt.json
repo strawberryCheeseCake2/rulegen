@@ -48,7 +48,7 @@
             "type": "string",
             "maxLength": 120
           },
-          "transformations": {
+          "constraints": {
             "maxItems": 6,
             "type": "array",
             "items": {
@@ -74,7 +74,7 @@
                   "type": "string",
                   "maxLength": 80
                 },
-                "properties": {
+                "params": {
                   "maxItems": 6,
                   "type": "array",
                   "items": {
@@ -107,7 +107,7 @@
                 "effect",
                 "how",
                 "penId",
-                "properties"
+                "params"
               ],
               "additionalProperties": false
             }
@@ -121,7 +121,7 @@
           "strokeIds",
           "summary",
           "members",
-          "transformations"
+          "constraints"
         ],
         "additionalProperties": false
       }

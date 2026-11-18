@@ -1,5 +1,5 @@
 import type { AlgorithmCall, NumberValue, ScalarValue, Scene, SceneBinding, SceneNode, Value } from "./schema";
-import { nodeProperties } from "./transformations";
+import { nodeParams } from "./constraints";
 
 export const isAlgorithm = (value: Value): value is AlgorithmCall => value.type === "algorithm";
 export const bindingKey = (path: string[]) => path.map(encodeURIComponent).join("/");
@@ -12,7 +12,7 @@ export function valueLeaves(value: Value, prefix: string[] = []): { path: string
   return value.args.flatMap(arg => valueLeaves(arg.value, [...prefix, arg.id]));
 }
 export function nodeLeaves(node: SceneNode) {
-  return nodeProperties(node).flatMap(property => valueLeaves(property.value, [node.id, property.id]));
+  return nodeParams(node).flatMap(param => valueLeaves(param.value, [node.id, param.id]));
 }
 export function sceneBindings(scene: Scene): SceneBinding[] {
   return scene.nodes.flatMap(node => nodeLeaves(node).map(leaf => ({ key: bindingKey(leaf.path), nodeId: node.id, path: leaf.path.slice(1), type: leaf.value.type })));

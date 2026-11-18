@@ -1,45 +1,67 @@
-import type { NodeMachine, Property, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
-import { nodeProperties } from "./transformations";
-import { leafValues, sceneValues, valueLeaves, valueShape } from "./values";
+import type { NodeMachine, NodeState, Constraint, Scene, SceneNode } from "./schema";
+import { constraintName } from "./constraints";
+import { sceneValues } from "./values";
 
-/** Transformations as seen in one state: the state's values override the base values. */
-export function stateTransformations(node: SceneNode, stateId: string | null | undefined): SemanticTransformation[] {
-  const state = node.machine?.states.find(item => item.id === stateId);
-  if (!state) return node.transformations;
-  return node.transformations.map(transformation => ({ ...transformation, properties: transformation.properties.map(property => {
-    const override = state.values.find(item => item.propertyId === property.id);
-    return override && valueShape(override.value) === valueShape(property.value) ? { ...property, value: override.value } : property;
-  }) }));
+// Each collection and object has its own FSM (as in a declarative FSM sketch): states that list, in evaluation
+// order, the constraints that determine its properties, and event transitions between them. The code evaluates a
+// node's FSM (each constraint of the current state computes its property, in order, and stores it before the next one)
+// and dispatches events to take transitions. A node without a machine is one implicit state with all its constraints.
+
+export const IMPLICIT_STATE = "default";
+/** The node's FSM: its own, or the implicit single state that evaluates every constraint in declaration order. */
+export function nodeMachine(node: Pick<SceneNode, "machine" | "constraints">): NodeMachine {
+  return node.machine ?? { initialState: IMPLICIT_STATE, states: [{ id: IMPLICIT_STATE, label: "Default", description: "", constraintIds: node.constraints.map(constraint => constraint.id) }], transitions: [] };
 }
-/** Every property as seen in one state. */
-export const stateProperties = (node: SceneNode, stateId: string | null | undefined): Property[] => stateTransformations(node, stateId).flatMap(transformation => transformation.properties);
+/** Whether the node has behavior phases of its own (a declared machine), not just the implicit state. */
+export const hasMachine = (node: Pick<SceneNode, "machine">) => Boolean(node.machine);
+export const findState = (node: Pick<SceneNode, "machine" | "constraints">, stateId: string | null | undefined): NodeState | undefined => nodeMachine(node).states.find(state => state.id === stateId);
+/**
+ * The constraints a state evaluates, in its order. Without a state (or for an unknown one): every constraint of the
+ * node, in declaration order.
+ */
+export function stateConstraints(node: Pick<SceneNode, "machine" | "constraints">, stateId: string | null | undefined): Constraint[] {
+  const state = node.machine?.states.find(item => item.id === stateId);
+  if (!state) return node.constraints;
+  return state.constraintIds.flatMap(id => node.constraints.filter(constraint => constraint.id === id));
+}
+/** The states that evaluate a constraint. */
+export const statesOf = (node: Pick<SceneNode, "machine" | "constraints">, constraintId: string) => nodeMachine(node).states.filter(state => state.constraintIds.includes(constraintId));
 
-/** Drop state values whose structure no longer matches the base property (e.g. after swapping a number for an algorithm). */
+/** Keep the machine consistent with the node's constraints: unknown or repeated constraint ids leave its states. */
 export function conformMachine(node: SceneNode): SceneNode {
   if (!node.machine) return node;
-  const shapes = new Map(nodeProperties(node).map(property => [property.id, valueShape(property.value)]));
-  return { ...node, machine: { ...node.machine, states: node.machine.states.map(state => ({ ...state, values: state.values.filter(item => shapes.get(item.propertyId) === valueShape(item.value)) })) } };
+  const ids = new Set(node.constraints.map(constraint => constraint.id));
+  const states = node.machine.states.map(state => {
+    const kept = state.constraintIds.filter((id, i, list) => ids.has(id) && list.indexOf(id) === i);
+    return kept.length === state.constraintIds.length ? state : { ...state, constraintIds: kept };
+  });
+  return states.every((state, i) => state === node.machine!.states[i]) ? node : { ...node, machine: { ...node.machine, states } };
 }
-
-export function setStateValue(node: SceneNode, stateId: string, propertyId: string, value: Value): SceneNode {
-  if (!node.machine) return node;
-  return { ...node, machine: { ...node.machine, states: node.machine.states.map(state => state.id !== stateId ? state : { ...state, values: [...state.values.filter(item => item.propertyId !== propertyId), { propertyId, value }] }) } };
+/** Include (or leave out) a constraint in a state's evaluation order (`beforeId`: where; none: at the end). */
+export function setStateConstraint(node: SceneNode, stateId: string, constraintId: string, included: boolean, beforeId?: string | null): SceneNode {
+  if (!node.machine || !node.constraints.some(constraint => constraint.id === constraintId)) return node;
+  return { ...node, machine: { ...node.machine, states: node.machine.states.map(state => {
+    if (state.id !== stateId) return state;
+    const rest = state.constraintIds.filter(id => id !== constraintId);
+    if (!included) return { ...state, constraintIds: rest };
+    const at = beforeId ? rest.indexOf(beforeId) : -1; rest.splice(at < 0 ? rest.length : at, 0, constraintId);
+    return { ...state, constraintIds: rest };
+  }) } };
 }
 
 export function validateMachine(node: SceneNode, machine: NodeMachine) {
   const ids = machine.states.map(state => state.id), duplicate = (values: string[]) => new Set(values).size !== values.length;
-  const properties = new Map(nodeProperties(node).map(property => [property.id, property]));
+  const constraints = new Set(node.constraints.map(constraint => constraint.id));
   if (duplicate(ids) || !ids.includes(machine.initialState) || duplicate(machine.transitions.map(t => t.id))) throw new Error(`Check the state and transition IDs of ${node.name}.`);
   if (machine.transitions.some(t => !ids.includes(t.from) || !ids.includes(t.to))) throw new Error(`A transition of ${node.name} points to a state that does not exist.`);
+  if (duplicate(machine.transitions.map(t => `${t.from}\n${t.event}`))) throw new Error(`${node.name} has two transitions for the same event from one state.`);
   for (const state of machine.states) {
-    if (duplicate(state.values.map(item => item.propertyId))) throw new Error(`${node.name} · ${state.label} has duplicate property values.`);
-    for (const item of state.values) {
-      const property = properties.get(item.propertyId);
-      if (!property) throw new Error(`${node.name} · ${state.label} refers to a property that does not exist.`);
-      if (valueShape(property.value) !== valueShape(item.value)) throw new Error(`In ${node.name} · ${state.label}, ${property.label} has a different structure from the base property.`);
-    }
+    if (duplicate(state.constraintIds)) throw new Error(`${node.name} · ${state.label} lists a constraint twice.`);
+    if (state.constraintIds.some(id => !constraints.has(id))) throw new Error(`${node.name} · ${state.label} refers to a constraint that does not exist.`);
   }
 }
+/** One line per state: its constraints in evaluation order (for prompts and summaries). */
+export const describeStateOrder = (node: SceneNode, state: NodeState) => `${state.label}: ${stateConstraints(node, state.id).map(constraintName).join(" → ") || "(no constraints)"}`;
 
 export const SCENE_START = "// @rulegen-scene:start";
 export const SCENE_END = "// @rulegen-scene:end";
@@ -90,20 +112,19 @@ export function assembleProgram(scene: Scene, modules: string[], previous?: stri
 /** The key a stored module registers under. */
 export const moduleKey = (text: string) => { const match = /^\/\/ @rulegen-module ("(?:[^"\\\n]|\\.)*")/.exec(text); return match ? JSON.parse(match[1]) as string : null; };
 
+/** Every node's FSM as the running code needs it (implicit machines included): state order of constraints and event transitions. */
 export function machineValues(scene: Scene) {
-  return Object.fromEntries(scene.nodes.filter(node => node.machine).map(node => [node.id, {
-    initialState: node.machine!.initialState, transitions: node.machine!.transitions,
-    states: node.machine!.states.map(state => ({ id: state.id, label: state.label, params: leafValues(stateProperties(node, state.id).flatMap(property => valueLeaves(property.value, [node.id, property.id]))) })),
-  }]));
+  return Object.fromEntries(scene.nodes.map(node => { const machine = nodeMachine(node); return [node.id, {
+    initialState: machine.initialState, transitions: machine.transitions.map(({ id, from, to, event, label }) => ({ id, from, to, event, label })),
+    states: machine.states.map(state => ({ id: state.id, label: state.label, constraints: stateConstraints(node, state.id).map(constraint => ({ id: constraint.id, property: constraint.property })) })),
+  }]; }));
 }
 
 type Block = { params: Record<string, unknown>; machines: ReturnType<typeof machineValues>; instances: SceneInstance[] };
 export function sceneBlock(scene: Scene, previous?: Block) {
   // Old keys stay until code is regenerated, so a structural edit cannot break a running sketch.
   const params = { ...previous?.params, ...sceneValues(scene) };
-  const machines = machineValues(scene);
-  for (const [id, machine] of Object.entries(machines)) for (const state of machine.states) state.params = { ...previous?.machines[id]?.states.find(item => item.id === state.id)?.params, ...state.params };
-  return blockText({ params, machines, instances: sceneInstances(scene) });
+  return blockText({ params, machines: machineValues(scene), instances: sceneInstances(scene) });
 }
 const blockText = (block: Block) => `${SCENE_START}\nconst rulegenParams = ${JSON.stringify(block.params, null, 2)};\nconst rulegenMachines = ${JSON.stringify(block.machines, null, 2)};\nconst rulegenInstances = ${JSON.stringify(block.instances, null, 2)};\n${SCENE_END}`;
 
@@ -114,6 +135,12 @@ function readBlock(source: string) {
   const match = /^const rulegenParams\s*=\s*(\{[\s\S]*?\});\nconst rulegenMachines\s*=\s*(\{[\s\S]*?\});\nconst rulegenInstances\s*=\s*(\[[\s\S]*\]);$/.exec(body);
   if (!match) return null;
   try { return { start, end: endMarker + 1 + SCENE_END.length, block: { params: JSON.parse(match[1]), machines: JSON.parse(match[2]), instances: JSON.parse(match[3]) } as Block }; } catch { return null; }
+}
+/** The program with more values in its scene block (kept by later syncs, as old keys are); null when it has none. */
+export function withBlockParams(source: string, params: Record<string, unknown>) {
+  const found = readBlock(source);
+  if (!found) return null;
+  return source.slice(0, found.start) + blockText({ ...found.block, params: { ...found.block.params, ...params } }) + source.slice(found.end);
 }
 /**
  * A program assembled by an older version, with the current host runtime and
@@ -134,9 +161,7 @@ export function syncScene(source: string, scene: Scene) {
 export function addHostMachines(source: string, scene: Scene) {
   const found = readBlock(source);
   if (!found) return source;
-  const machines = machineValues(scene);
-  for (const [id, machine] of Object.entries(machines)) for (const state of machine.states) state.params = { ...found.block.machines[id]?.states.find(item => item.id === state.id)?.params, ...state.params };
-  return source.slice(0, found.start) + blockText({ ...found.block, machines }) + source.slice(found.end);
+  return source.slice(0, found.start) + blockText({ ...found.block, machines: machineValues(scene) }) + source.slice(found.end);
 }
 /** The source with values the scene does not have added to its host block (a preview's new values); existing ones stay. */
 export function addHostParams(source: string, params: Record<string, unknown>) {
@@ -153,45 +178,94 @@ export function sceneStructureKey(source: string) {
   return found ? source.slice(0, found.start) + SCENE_START + source.slice(found.end) : source;
 }
 
-// Portable per-node controller, shipped in downloads as well as in the sandbox.
+// Portable FSM runtime, shipped in downloads as well as in the sandbox. Each node (collection or object) has an FSM;
+// the code gets an owner of it with m.fsm(nodeId) — or m.fsm(nodeId, key) for one of the many items a node draws, each
+// with its own current state and data. owner.evaluate(...inputs) computes the current state's constraints in order,
+// each storing its result in owner.data[property] before the next one runs; owner.dispatch(event) takes the
+// transition declared for that event from the current state. Owners are plain data (state, data), so a step can be
+// saved and restored.
 export const SCENE_RUNTIME = `
 const rulegenModules = {};
 function rulegenModule(key, factory) { rulegenModules[key] = factory; }
 const rulegenBase = Object.assign({}, rulegenParams);
+// The state each node shows (its own owner's, else the owner that changed last), for the State Machine panel.
 const rulegenState = {};
+// Owners by node id, then by key ("" for the node itself): { state, data }.
+let rulegenOwners = {};
 let rulegenPlaying = true;
-function rulegenApply() {
-  Object.assign(rulegenParams, rulegenBase);
-  for (const nodeId of Object.keys(rulegenMachines)) {
-    const state = rulegenMachines[nodeId].states.find(item => item.id === rulegenState[nodeId].id);
-    if (state) Object.assign(rulegenParams, state.params);
-  }
+// Set by the host: whether the running code may take transitions now (not while a held step is drawn).
+let rulegenFrozen = () => false;
+// Set by the host: called after every transition taken ({ nodeId, key, from, to, transitionId, event }).
+let rulegenOnTransition = null;
+function rulegenApply() { Object.assign(rulegenParams, rulegenBase); }
+function rulegenShown(nodeId) {
+  const machine = rulegenMachines[nodeId], own = rulegenOwners[nodeId], record = own && (own[''] || own[Object.keys(own)[Object.keys(own).length - 1]]);
+  rulegenState[nodeId] = { id: record ? record.state : machine ? machine.initialState : null };
 }
+function rulegenRecordOf(nodeId, key) {
+  const machine = rulegenMachines[nodeId]; if (!machine) throw new Error('Unknown node: ' + nodeId);
+  const own = rulegenOwners[nodeId] || (rulegenOwners[nodeId] = {});
+  let record = own[key];
+  if (!record || !machine.states.some(state => state.id === record.state)) {
+    record = own[key] = { state: machine.initialState, data: record && record.data && typeof record.data === 'object' ? record.data : {} };
+    rulegenShown(nodeId);
+    rulegenFsmEvent('state', nodeId, key, { state: record.state, entered: true });
+  }
+  return record;
+}
+/** Take the transition for an event (or a transition id) from the owner's current state; whether one was taken. */
+function rulegenTransit(nodeId, key, event) {
+  if (rulegenFrozen()) return false;
+  const machine = rulegenMachines[nodeId], record = rulegenRecordOf(nodeId, key);
+  const transition = machine.transitions.find(item => item.from === record.state && (item.event === event || item.id === event));
+  if (!transition) return false;
+  const from = record.state;
+  rulegenFsmEvent('transition', nodeId, key, { state: from, to: transition.to, event: transition.event, transitionId: transition.id, label: transition.label });
+  record.state = transition.to;
+  rulegenShown(nodeId);
+  rulegenFsmEvent('state', nodeId, key, { state: transition.to, entered: true });
+  if (typeof rulegenOnTransition === 'function') rulegenOnTransition({ nodeId, key, from, to: transition.to, transitionId: transition.id, event: transition.event });
+  if (typeof p.stateEntered === 'function') p.stateEntered(nodeId, transition.to, key);
+  return true;
+}
+/** Evaluate the owner's current state: each constraint in order, its result stored before the next one is computed. */
+function rulegenEvaluate(inst, localId, nodeId, key, owner, inputs) {
+  const machine = rulegenMachines[nodeId], record = rulegenRecordOf(nodeId, key);
+  const state = machine.states.find(item => item.id === record.state);
+  rulegenFsmEvent('state', nodeId, key, { state: state.id });
+  const own = inst.handlers.constraints && inst.handlers.constraints[localId];
+  for (const constraint of state.constraints) {
+    const compute = own && own[constraint.id];
+    if (typeof compute !== 'function') throw new Error('No compute function for constraint ' + localId + '/' + constraint.id + ' (return it in constraints["' + localId + '"]["' + constraint.id + '"]).');
+    // What the code computed before this constraint (terms, decisions) belongs to the step before it.
+    if (typeof rulegenFlushTerms === 'function') rulegenFlushTerms();
+    const reads = inst.constraintReads = {};
+    let value;
+    try { value = compute(owner, ...inputs); } finally { inst.constraintReads = null; }
+    record.data[constraint.property] = value;
+    rulegenFsmEvent('constraint', nodeId, key, { state: state.id, constraintId: constraint.id, property: constraint.property, value, reads, inputs });
+  }
+  return record.data;
+}
+/** UI: put every owner of a node (and the node's own) into a state. */
 function rulegenJumpState(nodeId, id) {
   const machine = rulegenMachines[nodeId];
   if (!machine || !machine.states.some(state => state.id === id)) return false;
-  rulegenState[nodeId] = { id, elapsed: 0 };
-  rulegenApply();
-  if (typeof p.stateEntered === 'function') p.stateEntered(nodeId, id);
+  const own = rulegenOwners[nodeId] || (rulegenOwners[nodeId] = {});
+  if (!own['']) own[''] = { state: id, data: {} };
+  for (const key of Object.keys(own)) own[key].state = id;
+  rulegenShown(nodeId);
+  if (typeof p.stateEntered === 'function') p.stateEntered(nodeId, id, '');
   return true;
 }
-function rulegenEmit(nodeId, transitionId) {
-  const machine = rulegenMachines[nodeId], current = rulegenState[nodeId];
-  const transition = machine && current && machine.transitions.find(item => item.id === transitionId && item.from === current.id && item.trigger === 'event');
-  return transition ? rulegenJumpState(nodeId, transition.to) : false;
+/** UI: an event (or transition id) for every owner of a node that can take it; whether any did. */
+function rulegenEmit(nodeId, event) {
+  const own = rulegenOwners[nodeId] || {}, keys = Object.keys(own).length ? Object.keys(own) : [''];
+  let taken = false; for (const key of keys) if (rulegenTransit(nodeId, key, event)) taken = true;
+  return taken;
 }
-function rulegenTickState(delta) {
-  if (!rulegenPlaying) return;
-  const step = Math.max(0, Math.min(Number.isFinite(delta) ? delta : 0, 250));
-  for (const nodeId of Object.keys(rulegenMachines)) {
-    const current = rulegenState[nodeId];
-    current.elapsed += step;
-    const next = rulegenMachines[nodeId].transitions.filter(item => item.from === current.id && item.trigger === 'after' && current.elapsed >= item.afterMs).sort((a, b) => a.afterMs - b.afterMs)[0];
-    if (next) rulegenJumpState(nodeId, next.to);
-  }
-}
-function rulegenResetStates() { for (const nodeId of Object.keys(rulegenMachines)) rulegenJumpState(nodeId, rulegenMachines[nodeId].initialState); }
-for (const nodeId of Object.keys(rulegenMachines)) rulegenState[nodeId] = { id: rulegenMachines[nodeId].initialState, elapsed: 0 };
+function rulegenResetStates() { rulegenOwners = {}; for (const nodeId of Object.keys(rulegenMachines)) rulegenShown(nodeId); }
+for (const nodeId of Object.keys(rulegenMachines)) rulegenShown(nodeId);
 rulegenApply();
 `;
 
@@ -265,12 +339,11 @@ function rulegenFieldSamples() {
   return out;
 }
 // One run of the brush's code, recorded as its execution (only while an exploration frame draws a held moment):
-// every checkpoint the code passes (m.trace(label, data): an internal operation and the state it works on) and
-// every drawing call, in the order they run. With a budget, drawing calls after that many events are not drawn,
-// so the picture is what execution has made up to there; checkpoints are still recorded (what comes next).
-// Only the brush explored is recorded (its roots): other brushes in the frame draw as usual.
-// show: the checkpoint (by its number in the run) whose picture of the brush so far is drawn, when the code draws
-// nothing of its own until later; its drawing is not part of the run (not recorded, not counted, never cut).
+// every FSM step the code takes — a state visit (an owner enters a state, or evaluates the one it is in), each
+// constraint that state computes, in order, and each transition — and every drawing call, in the order they run.
+// The FSM steps are the steps of the execution (kind 'trace', their data says which). With a budget, drawing calls
+// after that many events are not drawn, so the picture is what execution has made up to there; steps are still
+// recorded (what comes next). Only the brush explored is recorded (its roots): other brushes draw as usual.
 let rulegenRun = null, rulegenShape = null, rulegenInOp = 0, rulegenRunRoot = null, rulegenShowing = false;
 const RULEGEN_MAX_EVENTS = 3000;
 const RULEGEN_SHAPES = ['ellipse', 'circle', 'rect', 'square', 'line', 'triangle', 'quad', 'arc', 'point', 'bezier', 'curve', 'text', 'image', 'endShape'];
@@ -452,6 +525,40 @@ let rulegenPath = [], rulegenWrapContext = () => {};
     }
   };
 }
+/** The root (module instance) and the module's own id of a node. */
+function rulegenLocal(nodeId) {
+  for (const inst of rulegenLive) for (const local of Object.keys(inst.entry.map)) if (inst.entry.map[local] === nodeId) return { root: inst.entry.root, local };
+  return { root: rulegenRunRoot, local: nodeId };
+}
+/**
+ * One FSM step of the run: 'state' (a visit: the owner entered the state, or evaluates it — an evaluation right after
+ * entering is the same visit), 'constraint' (one constraint computed its property: the value, the values it read and
+ * the inputs) or 'transition'. Each is a step of the execution, labeled with its owner.
+ */
+function rulegenFsmEvent(kind, nodeId, key, info) {
+  const run = rulegenRun; if (!run || rulegenShowing) return;
+  const where = rulegenLocal(nodeId); if (run.roots && !run.roots.includes(where.root)) return;
+  const open = run.open || (run.open = {}), ownerKey = nodeId + '|' + key;
+  if (kind === 'state' && !info.entered && open[ownerKey] === info.state) { delete open[ownerKey]; return; }
+  if (kind === 'state' && info.entered) open[ownerKey] = info.state; else delete open[ownerKey];
+  // Terms and decisions computed before a visit or a transition belong to the step before it; those computed inside a
+  // constraint's compute function belong to that constraint's step (recorded once the function has returned).
+  if (kind !== 'constraint') rulegenFlushTerms();
+  const machine = rulegenMachines[nodeId], stateOf = id => { const state = machine && machine.states.find(item => item.id === id); return state ? state.label : id; };
+  const owner = where.local + (key !== '' ? ' #' + key : '');
+  const label = kind === 'transition' ? owner + ' · ' + stateOf(info.state) + ' → ' + stateOf(info.to) + ' · ' + info.event
+    : kind === 'constraint' ? owner + ' · ' + stateOf(info.state) + ' · ' + info.property : owner + ' · ' + stateOf(info.state);
+  run.label = label.slice(0, 120);
+  if (key !== '') run.item = key;
+  const thin = value => { const plain = rulegenThin(rulegenPlain(value, 0), 0); return plain === undefined ? null : JSON.stringify(plain).length > 20000 ? '[large]' : plain; };
+  const data = Object.assign({ fsm: kind, nodeId, node: where.local, key, state: info.state },
+    kind === 'constraint' ? { constraint: info.constraintId, property: info.property, value: thin(info.value), reads: thin(info.reads), inputs: thin(info.inputs) } : {},
+    kind === 'transition' ? { to: info.to, event: info.event, transition: info.transitionId } : {});
+  const last = run.events[run.events.length - 1], box = (kind === 'constraint' && rulegenDataBox(data.value)) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});
+  rulegenEvent(Object.assign({ kind: 'trace', root: where.root, data }, box));
+  const own = run.events[run.events.length - 1]; run.lastTrace = own && own.index === run.total - 1 ? own : null;
+  if (kind === 'constraint') rulegenFlushTerms();
+}
 /** Checkpoint data made small: lists of more than 200 items keep every k-th (and the last), numbers keep one decimal. */
 function rulegenThin(value, depth) {
   if (typeof value === 'number') return Math.round(value * 10) / 10;
@@ -506,6 +613,8 @@ function rulegenNeedsReplay() {
   return rulegenLive.some(inst => !inst.usesHistory && ['mousePressed', 'mouseDragged', 'mouseReleased', 'mouseClicked', 'touchStarted', 'touchMoved', 'touchEnded'].some(name => inst.handlers[name]));
 }
 function rulegenKey(inst, key) {
+  // A value an Execution frame's drawn behavior gives its own code ("@tool/<tool>/<value>"): one for every module.
+  if (key.startsWith('@tool/')) return key;
   const cut = key.indexOf('/'), actual = cut > 0 ? inst.entry.map[decodeURIComponent(key.slice(0, cut))] : undefined;
   if (actual === undefined) throw new Error('Unknown value key: ' + key);
   return encodeURIComponent(actual) + key.slice(cut);
@@ -514,7 +623,7 @@ function rulegenInstance(entry) {
   // reads: value keys read while setup runs (setup re-runs only when one of them changes).
   // memo: results a module computes once per key (not part of m.store, so not copied into inspection steps).
   // memoStack: the m.memo computations running now; each records the values it reads (a value change recomputes it).
-  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [], fields: new Map() };
+  const inst = { entry, handlers: {}, store: {}, reads: null, setupReads: null, usesHistory: false, memo: new Map(), memoStack: [], fields: new Map(), owners: new Map(), constraintReads: null };
   const node = id => { const actual = inst.entry.map[id]; if (actual === undefined) throw new Error('Unknown node: ' + id); return actual; };
   const m = {
     p,
@@ -522,13 +631,34 @@ function rulegenInstance(entry) {
     v(key, item) {
       const k = rulegenKey(inst, key); if (!(k in rulegenParams)) throw new Error('Unknown value: ' + key); if (inst.reads) inst.reads.add(k);
       const own = item === undefined || item === null ? undefined : rulegenItemValues[String(item)], value = own && k in own ? own[k] : rulegenParams[k];
-      for (const deps of inst.memoStack) deps.set(k, value); return value;
+      for (const deps of inst.memoStack) deps.set(k, value);
+      // Read while a constraint computes: shown on its step.
+      if (inst.constraintReads && Object.keys(inst.constraintReads).length < 24) inst.constraintReads[key] = value;
+      return value;
     },
     // opt(fallback, key, item): a value that may not exist yet (a suggested parameter an inspection's records read): the fallback until it does.
     opt(fallback, key, item) { try { return m.v(key, item); } catch (error) { return fallback; } },
     box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
-    state(id) { return rulegenState[node(id)] || { id: null, elapsed: 0 }; },
-    emit(id, transitionId) { return rulegenEmit(node(id), transitionId); },
+    // fsm(id, key): the owner of node id's FSM (key: one of the many items the node draws, each with its own state and
+    // data; none: the node itself). owner.state, owner.data, owner.evaluate(...inputs), owner.dispatch(event), owner.remove().
+    fsm(id, key) {
+      const nodeId = node(id), k = key === undefined || key === null ? '' : String(key), cache = inst.owners, ok = id + '|' + k;
+      let owner = cache.get(ok);
+      if (!owner) {
+        owner = {
+          id, key: k,
+          get state() { return rulegenRecordOf(nodeId, k).state; },
+          get data() { return rulegenRecordOf(nodeId, k).data; },
+          evaluate(...inputs) { return rulegenEvaluate(inst, id, nodeId, k, owner, inputs); },
+          dispatch(event) { return rulegenTransit(nodeId, k, String(event)); },
+          remove() { const own = rulegenOwners[nodeId]; if (own) delete own[k]; cache.delete(ok); rulegenShown(nodeId); },
+        };
+        cache.set(ok, owner);
+      }
+      return owner;
+    },
+    // owners(id): the owners of node id that exist now (the node's own and its items'), in creation order.
+    owners(id) { const nodeId = node(id); return Object.keys(rulegenOwners[nodeId] || {}).map(k => m.fsm(id, k === '' ? undefined : k)); },
     history() { inst.usesHistory = true; return rulegenGestures; },
     // field(id, fn): a field the module is driven by (fn(x, y) in canvas pixels gives an angle, [vx, vy] or { x, y }); sample it only
     // through the function returned, which an inspection can show and comb.
@@ -539,13 +669,14 @@ function rulegenInstance(entry) {
       inst.fields.set(String(id), { key, fn, frame: rulegenFrameNo, declared: was && was.frame === rulegenFrameNo && was.fn !== fn ? was.declared + 1 : 1 });
       return (x, y) => rulegenFieldAt(key, fn, x, y);
     },
-    // focus(item, fallback): whether the steps of this item are taken (its checkpoints recorded): the item the user follows
-    // in an Execution frame, else the fallback (the representative items). Every drawing call after it belongs to item.
+    // focus(item, fallback): whether the steps of this item are taken (its checkpoints recorded): the representative items
+    // (the fallback), and the item the user follows in an Execution frame besides them (the run keeps its other steps).
+    // Every drawing call after it belongs to item.
     focus(item, fallback) {
       const run = rulegenRun;
       if (!run || rulegenShowing || (run.roots && !run.roots.includes(inst.entry.root))) return Boolean(fallback);
       run.item = String(item);
-      return run.focus !== null ? run.item === run.focus : Boolean(fallback);
+      return Boolean(fallback) || (run.focus !== null && run.item === run.focus);
     },
     // term(name, value): one inner term of a computation (a pull, an offset, a noise contribution), returned as it is. An
     // Execution frame records it on the step that computes it and can scale it (0: without it) to show what it does.
@@ -584,24 +715,6 @@ function rulegenInstance(entry) {
       }
       return condition;
     },
-    // trace(label, data, show): a checkpoint of the code's own execution (written only by the app's exploration frames). Nothing happens outside a run.
-    // show(): draws the brush as it is after this step (in its own look), for code that draws nothing until later; called right here when this is the step reached.
-    trace(label, data, show) {
-      if (!rulegenRun || rulegenShowing || (rulegenRun.roots && !rulegenRun.roots.includes(inst.entry.root))) return;
-      const ordinal = rulegenRun.traces++;
-      rulegenFlushTerms();
-      rulegenRun.label = String(label).slice(0, 120);
-      // Long lists are thinned (a point list keeps its shape: every k-th point and the last), never dropped.
-      let plain = rulegenThin(rulegenPlain(data, 0), 0);
-      if (plain !== undefined && JSON.stringify(plain).length > 30000) plain = Object.fromEntries(Object.entries(plain && typeof plain === 'object' ? plain : {}).filter(([, value]) => value === null || typeof value !== 'object'));
-      const last = rulegenRun.events[rulegenRun.events.length - 1], box = rulegenDataBox(plain) || (last ? { x: last.x, y: last.y, w: last.w, h: last.h } : {});
-      rulegenEvent(Object.assign({ kind: 'trace', root: inst.entry.root, data: plain === undefined ? null : plain, shows: typeof show === 'function' }, box));
-      const own = rulegenRun.events[rulegenRun.events.length - 1]; rulegenRun.lastTrace = own && own.index === rulegenRun.total - 1 ? own : null;
-      if (typeof show === 'function' && rulegenRun.show === ordinal) {
-        rulegenShowing = true; p.push();
-        try { show(); } catch (error) { /* a picture that fails is left out; the run goes on */ } finally { p.pop(); rulegenShowing = false; }
-      }
-    },
     memo(key, compute) {
       const named = typeof key === 'string' ? key : JSON.stringify(key);
       if (named.length > 2000) throw new Error('m.memo key is too long: build it from gesture ids/revs and values, never from the points.');
@@ -631,7 +744,7 @@ function rulegenInstance(entry) {
 }
 /**
  * A module was replaced in place (its code edited, e.g. a constant exposed as a
- * property): its running instances take the new code and keep their m.store, so
+ * param): its running instances take the new code and keep their m.store, so
  * nothing drawn or held is lost; cached results (m.memo) start over.
  */
 function rulegenRefreshModule(key) {
@@ -667,23 +780,27 @@ function rulegenPlain(value, depth) {
   for (const key of Object.keys(value)) { const copy = rulegenPlain(value[key], depth + 1); if (copy !== undefined) out[key] = copy; }
   return out;
 }
-/** Everything a step needs to come back: each instance's store, the machine states and the random seed. */
+/** Everything a step needs to come back: each instance's store, the FSM owners (state and data), the shown states and the random seed. */
 function rulegenSnapshot() {
   const seed = Math.floor(Math.random() * 2147483647);
   if (typeof p.randomSeed === 'function') p.randomSeed(seed);
   if (typeof p.noiseSeed === 'function') p.noiseSeed(seed);
   const states = {}, stores = {};
-  for (const nodeId of Object.keys(rulegenState)) states[nodeId] = { id: rulegenState[nodeId].id, elapsed: rulegenState[nodeId].elapsed };
+  for (const nodeId of Object.keys(rulegenState)) states[nodeId] = { id: rulegenState[nodeId].id };
   for (const inst of rulegenLive) stores[inst.entry.root] = rulegenPlain(inst.store, 0);
-  return { seed, states, stores, history: rulegenPlain(rulegenGestures, 0) };
+  return { seed, states, owners: rulegenPlain(rulegenOwners, 0), stores, history: rulegenPlain(rulegenGestures, 0) };
 }
 /** Put a snapshot back (with the current values): stores are refilled in place, objects that are not plain data are kept. */
 function rulegenRestore(snapshot) {
   if (!snapshot || typeof snapshot !== 'object') return;
-  for (const nodeId of Object.keys(snapshot.states || {})) {
-    const saved = snapshot.states[nodeId], machine = rulegenMachines[nodeId];
-    if (machine && saved && machine.states.some(state => state.id === saved.id)) rulegenState[nodeId] = { id: saved.id, elapsed: Number(saved.elapsed) || 0 };
+  // Owners come back as they were (only those of known nodes, in states that still exist); without any saved, they start over.
+  const owners = {}, saved = snapshot.owners && typeof snapshot.owners === 'object' ? snapshot.owners : {};
+  for (const nodeId of Object.keys(saved)) {
+    const machine = rulegenMachines[nodeId], own = saved[nodeId]; if (!machine || !own || typeof own !== 'object') continue;
+    for (const key of Object.keys(own)) { const record = own[key]; if (record && machine.states.some(state => state.id === record.state)) (owners[nodeId] || (owners[nodeId] = {}))[key] = { state: record.state, data: rulegenPlain(record.data, 0) || {} }; }
   }
+  rulegenOwners = owners;
+  for (const nodeId of Object.keys(rulegenMachines)) rulegenShown(nodeId);
   rulegenApply();
   for (const inst of rulegenLive) {
     const saved = (snapshot.stores || {})[inst.entry.root];
@@ -721,7 +838,6 @@ p.setup = () => { p.createCanvas(900, 600); rulegenResetStates(); rulegenSync();
 let rulegenFrameNo = 0;
 const RULEGEN_MEMO_MAX = 4000, RULEGEN_MEMO_IDLE = 240;
 p.draw = () => {
-  rulegenTickState(p.deltaTime);
   p.clear();
   rulegenFrameNo++;
   for (const inst of rulegenLive) {

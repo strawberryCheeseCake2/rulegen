@@ -1,12 +1,17 @@
 import type { GeneratedCode } from "../schema";
 import type { Scene } from "./schema";
-import { hasModules, hasSceneBlock, programModules, syncScene } from "./machines";
+import { hasModules, hasSceneBlock, nodeMachine, programModules, syncScene } from "./machines";
 import { findNode } from "./graph";
 import { sceneBindings } from "./values";
 
-/** Which machine structure a generated sketch was written for. */
+/**
+ * Which FSM structure a generated sketch was written for: per node, its constraints (each has a compute function in
+ * the code), its state ids and the events the code dispatches. Which constraints a state evaluates and in what order,
+ * where transitions lead and every label are host data, live without new code.
+ */
 export function machineSignature(scene: Scene) {
-  return JSON.stringify(scene.nodes.filter(node => node.machine).map(node => [node.id, node.machine!.states.map(state => state.id), node.machine!.transitions.map(t => [t.id, t.from, t.to])]));
+  return JSON.stringify(scene.nodes.map(node => { const machine = nodeMachine(node);
+    return [node.id, node.constraints.map(constraint => constraint.id), machine.states.map(state => state.id), [...new Set(machine.transitions.map(t => t.event))].sort()]; }));
 }
 
 /** live: every control drives the code · changed: structure differs, regenerate · unlinked: no scene block. */

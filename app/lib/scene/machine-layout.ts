@@ -8,7 +8,7 @@ export const STATE_WIDTH = 154, STATE_HEIGHT = 72;
 type Point = { x: number; y: number };
 export type GraphStroke = Point[];
 export type StateBox = { id: string; label: string; x: number; y: number; initial: boolean };
-export type EdgeLayout = { id: string; label: string; fullLabel: string; event: boolean; from: string; to: string;
+export type EdgeLayout = { id: string; label: string; fullLabel: string; event: string; from: string; to: string;
   /** Cubic Bézier: start, control 1, control 2, end. */
   curve: [Point, Point, Point, Point]; labelPoint: Point; labelWidth: number; description: string };
 export type MachineLayout = { width: number; height: number; states: StateBox[]; edges: EdgeLayout[] };
@@ -68,8 +68,8 @@ export function machineLayout(machine: NodeMachine, override: LayoutOverride = e
     const chars = Array.from(transition.label), label = chars.length > 20 ? `${chars.slice(0, 19).join("")}…` : transition.label;
     const labelWidth = Math.min(180, Math.max(60, Array.from(label).reduce((sum, char) => sum + (char.charCodeAt(0) > 127 ? 10 : 5.5), 16)));
     const name = (id: string) => machine.states.find(item => item.id === id)?.label;
-    return { id: transition.id, label, fullLabel: transition.label, event: transition.trigger === "event", from: transition.from, to: transition.to, curve,
-      labelPoint: middle, labelWidth, description: `${name(transition.from)} → ${name(transition.to)}: ${transition.label}` };
+    return { id: transition.id, label, fullLabel: transition.label, event: transition.event, from: transition.from, to: transition.to, curve,
+      labelPoint: middle, labelWidth, description: `${name(transition.from)} → ${name(transition.to)}: ${transition.label} (event “${transition.event}”)` };
   });
   const width = Math.max(320, ...states.map(state => state.x + STATE_WIDTH + 24), ...edges.map(edge => edge.labelPoint.x + edge.labelWidth / 2 + 24));
   const height = Math.max(160, ...states.map(state => state.y + STATE_HEIGHT + 32), ...edges.map(edge => edge.labelPoint.y + 32));
@@ -121,7 +121,7 @@ export function machineSnapshotSvg(layout: MachineLayout, strokes: GraphStroke[]
   const picked = (kind: MachineTarget["kind"], id: string) => target?.kind === kind && target.id === id;
   const edges = layout.edges.map(edge => {
     const on = picked("transition", edge.id), color = on ? "#e07b00" : "#8fa79a";
-    return `<path d="${curvePath(edge.curve)}" fill="none" stroke="${color}" stroke-width="${on ? 3 : 1.4}"${edge.event ? " stroke-dasharray=\"4 3\"" : ""} marker-end="url(#${on ? "arrow-on" : "arrow"})"/>`
+    return `<path d="${curvePath(edge.curve)}" fill="none" stroke="${color}" stroke-width="${on ? 3 : 1.4}" marker-end="url(#${on ? "arrow-on" : "arrow"})"/>`
       + `<g transform="translate(${edge.labelPoint.x},${edge.labelPoint.y})"><rect x="${-edge.labelWidth / 2}" y="-10" width="${edge.labelWidth}" height="20" rx="4" fill="#fffefa" stroke="${on ? "#e07b00" : "#c9d6cd"}" stroke-width="${on ? 2.5 : .8}"/>`
       + `<text text-anchor="middle" dominant-baseline="central" font-size="10" fill="#4f6b5c" ${font}>${escape(edge.label)}</text></g>`;
   }).join("");

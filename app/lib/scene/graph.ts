@@ -103,7 +103,7 @@ export function groupNodes(scene: Scene, ids: string[], id: string, name = "Coll
   // Group into the shared parent when possible, as layer editors do.
   const parentId = roots.every(rootId => findNode(scene, rootId)!.parentId === first.parentId) ? first.parentId : null;
   const region = unionRegion(roots.map(rootId => findNode(scene, rootId)!.region))!;
-  const collection: SceneNode = { id, kind: "collection", parentId, name, description: "", primitive: "group", region, transformations: [], visible: true, machine: null };
+  const collection: SceneNode = { id, kind: "collection", parentId, name, description: "", primitive: "group", region, constraints: [], visible: true, machine: null };
   const index = scene.nodes.findIndex(node => node.id === first.id);
   const nodes = scene.nodes.map(node => roots.includes(node.id) ? { ...node, parentId: id } : node);
   return fitCollections({ ...scene, nodes: [...nodes.slice(0, index), collection, ...nodes.slice(index)] });

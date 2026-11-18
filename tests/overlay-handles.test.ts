@@ -19,7 +19,7 @@ after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previo
 
 // The orb's size: a square around its center with a grip on the corner, slid away from the center to scale it.
 const size: Overlay = { id: "size", kind: "rect", name: "크기", x: "300 - p(\"orb/radius\")", y: "300 - p(\"orb/radius\")", w: "p(\"orb/radius\") * 2", h: "p(\"orb/radius\") * 2", label: "", color: "#e0457b",
-  link: { kind: "constraint", nodeId: "orb", id: "radius" }, when: "", each: "",
+  link: { kind: "param", nodeId: "orb", id: "radius" }, when: "", each: "",
   handle: { key: "orb/radius", gesture: "slide", x: "300 + p(\"orb/radius\")", y: "300 + p(\"orb/radius\")", pivotX: "300", pivotY: "300", value: "start * dist / startDist", hint: "모서리를 끌어 키우기" } };
 const step = (values: Record<string, number>, stores: Record<string, unknown> = {}): InspectionStep => ({ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values, runtime: { stores, states: {} } });
 
@@ -55,22 +55,22 @@ test("an each overlay gets a grip on its first items whose condition holds, each
 
 test("handles from AI are kept only when they change a number or toggle of the brush with readable expressions; ids translate between frames", async () => {
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
-  const constraints = [{ key: "orb/radius", nodeId: "orb", transformationId: "t", transformation: "T", propertyId: "radius", property: "Radius", path: "", type: "number" },
-    { key: "orb/tint", nodeId: "orb", transformationId: "t", transformation: "T", propertyId: "tint", property: "Tint", path: "", type: "color" }];
+  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", path: "", type: "number" },
+    { key: "orb/tint", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "tint", param: "Tint", path: "", type: "color" }];
   const overlays = [size, { ...size, id: "elsewhere", handle: { ...size.handle!, key: "tree/nope" } }, { ...size, id: "color", handle: { ...size.handle!, key: "orb/tint" } },
     { ...size, id: "broken", handle: { ...size.handle!, value: "start * window.x" } }, { ...size, id: "unknown", handle: { ...size.handle!, value: "start * speed" } }];
-  const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], constraints, steps: [] };
-  await withMockedAI(() => ({ summary: "s", overlays, valueFixes: [], recommendations: [], parameters: [] }), async calls => {
+  const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], params, steps: [] };
+  await withMockedAI(() => ({ summary: "s", overlays, parameters: [] }), async calls => {
     const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "크기", previous: code, inspection }), new AbortController().signal));
     assert.deepEqual(result.overlays.map(item => [item.id, Boolean(item.handle)]), [["size", true], ["elsewhere", false], ["color", false], ["broken", false], ["unknown", false]], "the overlay stays without its handle");
     assert.match(calls[0].instructions, /handle — direct manipulation on the overlay/);
   });
-  const moved = remapResult(targetedResultSchema.parse({ summary: "s", overlays: [size], valueFixes: [], recommendations: [] }), new Map([["orb", "orb-2"]]));
+  const moved = remapResult(targetedResultSchema.parse({ summary: "s", overlays: [size] }), new Map([["orb", "orb-2"]]));
   assert.equal(moved.overlays[0].handle!.key, "orb-2/radius"); assert.equal(moved.overlays[0].handle!.x, "300 + p(\"orb-2/radius\")");
-  assert.equal(targetedResultSchema.parse({ summary: "s", overlays: [{ ...size, handle: undefined }], valueFixes: [], recommendations: [] }).overlays[0].handle, null, "older overlays have none");
+  assert.equal(targetedResultSchema.parse({ summary: "s", overlays: [{ ...size, handle: undefined }] }).overlays[0].handle, null, "older overlays have none");
 });
 
-test("a drag is a what-if of the step looked at only: that step reads it, the others and the property keep theirs", async () => {
+test("a drag is a what-if of the step looked at only: that step reads it, the others and the param keep theirs", async () => {
   const { editStep, stepValues, changedKeys, historyOverlays } = await import("../app/lib/inspection");
   const state = { ...emptyInspection("b"), steps: [step({ "orb/radius": 24 }), { ...step({ "orb/radius": 24 }), id: 2 }, { ...step({ "orb/radius": 24 }), id: 3 }] };
   const edited = editStep(state, 1, "orb/radius", 60);
@@ -93,7 +93,7 @@ test("a drag is a what-if of the step looked at only: that step reads it, the ot
 });
 
 test("grips are drawn on the frame with what they do, only with an inspection tool that can drag them", () => {
-  const result = targetedResultSchema.parse({ summary: "s", overlays: [size], valueFixes: [], recommendations: [] });
+  const result = targetedResultSchema.parse({ summary: "s", overlays: [size] });
   const render = (props: object) => renderToStaticMarkup(createElement(InspectionOverlay, { state: { ...emptyInspection("b"), steps: [step({ "orb/radius": 24 })] }, marks: [], result, liveValues: {}, clickable: true, zoom: 1, onFocus: () => {}, ...props }));
   const html = render({ onHandle: () => {}, specs: valueSpecs(sampleScene(), ["orb"]) });
   assert.match(html, /class="inspection-grip gesture-slide "/); assert.match(html, /role="slider" aria-label="모서리를 끌어 키우기"/); assert.match(html, /<title>모서리를 끌어 키우기<\/title>/);
@@ -163,26 +163,26 @@ test("a grip on one item changes that item only: the code is made to read the va
   const { readsPerItem } = await import("../app/lib/inspection");
   const { guardSuggestedReads, parameterProblem, recordingProblem } = await import("../app/lib/hidden-parameters");
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
-  const READ = `p.circle(m.box("orb").x + speed * m.state("orb").elapsed / 1000, 300, m.v("orb/radius") * 2);`;
-  const PER_ITEM = `const id = "orb:0"; m.store.items = [{ id, x: 300 }]; p.circle(m.box("orb").x + speed * m.state("orb").elapsed / 1000, 300, m.v("orb/radius", id) * 2);`;
+  const READ = `function computeSize() { return m.v("orb/radius") * 2; }`;
+  const PER_ITEM = `function computeSize() { const id = "orb:0"; m.store.items = [{ id, x: 300 }]; return m.v("orb/radius", id) * 2; }`;
   const records = { nodeId: "tree", fields: ["items"], perItem: ["orb/radius"], reason: "원마다 크기", edits: [{ find: READ, replace: PER_ITEM }] };
   assert.equal(recordingProblem(scene, code, records), null);
   assert.match(recordingProblem(scene, code, { ...records, edits: [{ find: READ, replace: `m.store.items = []; ${READ}` }] })!, /does not read orb\/radius per item/, "perItem must really be read per item");
   assert.ok(readsPerItem(`m.opt(1, "orb/radius", id)`, "orb/radius"), "a guarded read per item counts");
   // A records edit reading a suggested parameter (not a value until accepted) falls back to the code's value.
-  const suggestion = { nodeId: "orb", transformationId: "t", id: "bend", label: "굽힘", effect: "spatial" as const, description: "", form: "scale" as const, value: { type: "number" as const, value: 1, min: .2, max: 3, step: .1, unit: "×" }, reason: "", edits: [{ find: "x", replace: "x" }] };
+  const suggestion = { nodeId: "orb", constraintId: "t", id: "bend", label: "굽힘", effect: "spatial" as const, description: "", form: "scale" as const, value: { type: "number" as const, value: 1, min: .2, max: 3, step: .1, unit: "×" }, reason: "", edits: [{ find: "x", replace: "x" }] };
   assert.equal(guardSuggestedReads({ ...records, edits: [{ find: "a", replace: `k = m.v("orb/bend", id) + m.v('orb/bend') + m.v("orb/bendy")` }] }, [suggestion]).edits[0].replace,
     `k = m.opt(1, "orb/bend", id) + m.opt(1, 'orb/bend') + m.v("orb/bendy")`);
   // A suggestion's edits may read it per item.
-  const orbTransformation = scene.nodes.find(node => node.id === "orb")!.transformations[0];
-  const exposed = { ...suggestion, transformationId: orbTransformation.id, edits: [{ find: READ, replace: READ.replace(`m.v("orb/radius")`, `m.v("orb/radius") * m.v("orb/bend", id)`) }] };
+  const orbConstraint = scene.nodes.find(node => node.id === "orb")!.constraints[0];
+  const exposed = { ...suggestion, constraintId: orbConstraint.id, edits: [{ find: READ, replace: READ.replace(`m.v("orb/radius")`, `m.v("orb/radius") * m.v("orb/bend", id)`) }] };
   assert.equal(parameterProblem(scene, code, exposed), null);
 
   // From AI: a grip on each item of an overlay is kept only when the code (with the records) reads its value per item.
-  const constraints = [{ key: "orb/radius", nodeId: "orb", transformationId: "t", transformation: "T", propertyId: "radius", property: "Radius", path: "", type: "number" }];
-  const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], constraints, steps: [] };
+  const params = [{ key: "orb/radius", nodeId: "orb", constraintId: "t", constraint: "T", paramId: "radius", param: "Radius", path: "", type: "number" }];
+  const inspection = { brushName: "Orb", nodeIds: ["tree", "orb"], cursor: null, marks: [[{ x: .4, y: .2 }]], params, steps: [] };
   const each = { ...size, id: "each", each: "tree:items", x: "item(\"x\")" };
-  const ask = (output: object) => withMockedAI(() => ({ summary: "s", overlays: [size, each], valueFixes: [], recommendations: [], parameters: [], ...output }), async () =>
+  const ask = (output: object) => withMockedAI(() => ({ summary: "s", overlays: [size, each], parameters: [], ...output }), async () =>
     inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "크기", previous: code, inspection }), new AbortController().signal)));
   const flat = await ask({ records: null });
   assert.deepEqual(flat.overlays.map(item => [item.id, Boolean(item.handle)]), [["size", true], ["each", false]], "read once for all: one grip would move every item");
@@ -225,12 +225,12 @@ test("letting go of a handle plays the held step on with the new value: what the
   };
   const slow = playOn(40, 3), fast = playOn(100, 3);
   assert.deepEqual([slow.xs[2] - slow.xs[0], fast.xs[2] - fast.xs[0]], [8, 20], "it moves on at the value set at the held step");
-  assert.equal(playOn(100, 14).state, "idle", "and the machine goes on to what comes next (the timed transition)");
+  assert.equal(playOn(100, 50).state, "idle", "and the machine goes on to what comes next (the code dispatches settle at the edge)");
   // The frame does that, lets transitions happen only while playing on (not recorded as steps), and asks for it when a handle is let go.
   const preview = readFileSync("app/components/code-preview.tsx", "utf8"), home = readFileSync("app/routes/home.tsx", "utf8");
   assert.match(preview, /function startPlayOn\(ms\)\{if\(!pinned\|\|typeof rulegenRestore!=='function'\)return;rulegenRestore\(pinned\);if\(pinnedParams\)/);
-  assert.match(preview, /rulegenEmit=function\(nodeId,transitionId\)\{if\(pinned&&!following\)return false;/);
-  assert.match(preview, /if\(ok&&tracing&&!replaying&&!following\)/, "transitions while playing on are not recorded as steps");
+  assert.match(preview, /rulegenFrozen=\(\)=>Boolean\(pinned&&!following\);/);
+  assert.match(preview, /if\(tracing&&!replaying&&!following\)traceQueue/, "transitions while playing on are not recorded as steps");
   assert.match(preview, /if\(following\)\{if\(\+\+followDrawn%4===0\)reportDrawn\(null\);if\(performance\.now\(\)>=following\)endPlayOn\(\);\}/, "the overlays follow it");
   assert.match(home, /if \(drag\.ended && drag\.last !== null && autoPlayOnRef\.current\) requestPlayOn\(drag\.frameId, brush\.id\);/);
 });
@@ -238,10 +238,8 @@ test("letting go of a handle plays the held step on with the new value: what the
 test("a grip on one item never changes every item; handles try a runtime state of the moment, and a pair test is drawn to meet at its threshold", async () => {
   const { readFileSync } = await import("node:fs");
   assert.doesNotMatch(readFileSync("app/routes/home.tsx", "utf8"), /shared = drag\.each/, "a grip on one item never changes every item");
-  for (const file of ["prompts/inspect.md", "prompts/explore.md"]) {
-    const prompt = readFileSync(file, "utf8");
-    assert.match(prompt, /m\.runtime\("<name>", <the item's id>, <the expression as it is>\)/, `${file}: one item's quantity kept in the execution state, changed by the handle`);
-    assert.match(prompt, /each thing's OWN shape at its own value, around it, so the two shapes touch exactly when the test passes/, `${file}: drawn so the shapes touch at the threshold`);
-    assert.doesNotMatch(prompt, /is ONE value|`d < t\(a\) \* ra|heart|merged!/i, `${file}: no change-them-all or pair-value rule, no words of one case`);
-  }
+  assert.match(readFileSync("prompts/inspect.md", "utf8"), /m\.runtime\("<name>", <the item's id>, <the expression as it is>\)/, "one item's quantity kept in the execution state, changed by the handle");
+  for (const file of ["prompts/inspect.md", "prompts/explore.md"]) assert.match(readFileSync(file, "utf8"), /each thing's OWN shape at its own value, around it, so the two shapes touch exactly when the test passes/, `${file}: drawn so the shapes touch at the threshold`);
+  for (const file of ["prompts/inspect.md", "prompts/explore.md", "prompts/align-kit.md", "prompts/align.md"])
+    assert.doesNotMatch(readFileSync(file, "utf8"), /is ONE value|`d < t\(a\) \* ra|heart|merged!/i, `${file}: no change-them-all or pair-value rule, no words of one case`);
 });

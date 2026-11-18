@@ -2,29 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { sampleScene } from "./fixtures/scene";
-import { minimalExampleInstruction, minimalExampleScene } from "../app/lib/scene/minimal-example";
+import { num, sampleScene } from "./fixtures/scene";
+import { decomposeTargets, minimalExampleInstruction, minimalExampleScene, nodeExampleInstruction, nodeExampleScene } from "../app/lib/scene/minimal-example";
 import { sceneSchema } from "../app/lib/scene/validate";
 import { sceneBindings } from "../app/lib/scene/values";
-import { PropertyInspector } from "../app/components/scene/property-inspector";
+import { ConstraintInspector } from "../app/components/scene/constraint-inspector";
 
-test("a minimal example keeps only the chosen transformation, centered, without machines", () => {
+test("a minimal example keeps only the chosen constraint, centered, without machines", () => {
   const scene = sampleScene();
   const orb = sceneSchema.parse(minimalExampleScene(scene, "orb", "pulse"));
   assert.deepEqual(orb.nodes.map(node => [node.id, node.kind, node.parentId]), [["collection", "collection", null], ["orb", "object", "collection"]], "an object goes inside a plain collection");
-  assert.deepEqual(orb.nodes[1].transformations.map(item => item.id), ["pulse"]);
-  assert.deepEqual(orb.nodes[0].transformations, []);
+  assert.deepEqual(orb.nodes[1].constraints.map(item => item.id), ["pulse"]);
+  assert.deepEqual(orb.nodes[0].constraints, []);
   assert.ok(orb.nodes.every(node => node.machine === null));
   const r = orb.nodes[1].region;
   assert.ok(Math.abs(r.x + r.w / 2 - .5) < 1e-9 && Math.abs(r.y + r.h / 2 - .5) < 1e-9, "centered");
-  assert.deepEqual(sceneBindings(orb).map(binding => binding.key).sort(), ["orb/radius", "orb/speed"]);
+  assert.deepEqual(sceneBindings(orb).map(binding => binding.key).sort(), ["orb/radius"], "only the chosen constraint's params");
 
   const tree = scene.nodes.find(node => node.id === "tree")!;
   const only = sceneSchema.parse(minimalExampleScene(scene, "tree", "ink-wash"));
-  assert.deepEqual(only.nodes.find(node => node.id === "tree")!.transformations.map(item => item.id), ["ink-wash"]);
-  assert.ok(only.algorithms.length < scene.algorithms.length || tree.transformations.length === 1, "only the algorithms this transformation uses");
+  assert.deepEqual(only.nodes.find(node => node.id === "tree")!.constraints.map(item => item.id), ["ink-wash"]);
+  assert.ok(only.algorithms.length < scene.algorithms.length || tree.constraints.length === 1, "only the algorithms this constraint uses");
   for (const algorithm of only.algorithms) assert.ok(scene.algorithms.some(item => item.id === algorithm.id));
-  assert.throws(() => minimalExampleScene(scene, "orb", "missing"), /Could not find the Transformation/);
+  assert.throws(() => minimalExampleScene(scene, "orb", "missing"), /Could not find the Constraint/);
   assert.match(minimalExampleInstruction(tree, "ink-wash"), /minimal example/);
 });
 
@@ -38,31 +38,31 @@ test("collections keep one plain member inside their new box", () => {
   const example = sceneSchema.parse(minimalExampleScene(scene, "ring", "pulse"));
   assert.deepEqual(example.nodes.map(node => node.id), ["ring", "dot"]);
   const [ring, dot] = example.nodes;
-  assert.equal(dot.parentId, "ring"); assert.deepEqual(dot.transformations, []);
+  assert.equal(dot.parentId, "ring"); assert.deepEqual(dot.constraints, []);
   assert.ok(dot.region.x >= ring.region.x && dot.region.x + dot.region.w <= ring.region.x + ring.region.w + 1e-9);
   assert.ok(dot.region.y >= ring.region.y && dot.region.y + dot.region.h <= ring.region.y + ring.region.h + 1e-9);
   const empty = sceneSchema.parse(minimalExampleScene({ ...scene, nodes: [scene.nodes[0]] }, "ring", "pulse"));
   assert.deepEqual(empty.nodes.map(node => [node.kind, node.parentId]), [["collection", null], ["object", "ring"]], "an empty collection gets one plain object");
 });
 
-test("each semantic transformation card offers Create Minimal Example", () => {
+test("each constraint card offers Create Minimal Example", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!;
   const noop = () => {};
-  const props = new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, onMinimalExample: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop });
-  const html = renderToStaticMarkup(createElement(PropertyInspector, props as never));
-  assert.equal(html.match(/Create Minimal Example/g)?.length, node.transformations.length);
+  const props = new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, onMinimalExample: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop });
+  const html = renderToStaticMarkup(createElement(ConstraintInspector, props as never));
+  assert.equal(html.match(/Create Minimal Example/g)?.length, node.constraints.length);
 });
 
 test("regenerating opens a composer with what is attached, a text box and drawing on the frame", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
-  const render = (draft: unknown) => renderToStaticMarkup(createElement(PropertyInspector, new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, draft } as Record<string, unknown>,
+  const render = (draft: unknown) => renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, draft } as Record<string, unknown>,
     { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   assert.doesNotMatch(render(null), /REGENERATE WITH AI/, "nothing runs or opens until a regenerate button is pressed");
-  const html = render({ nodeId: "tree", target: { transformationId: "ink-wash" }, instruction: "", annotating: false, marks: [] });
+  const html = render({ nodeId: "tree", target: { constraintId: "ink-wash" }, instruction: "", annotating: false, marks: [] });
   assert.equal(html.match(/REGENERATE WITH AI/g)?.length, 1);
-  assert.match(html, /<b>Transformation<\/b>[^<]* attached/); assert.match(html, /Draw on frame/); assert.match(html, /aria-label="How to regenerate"/);
+  assert.match(html, /<b>Constraint<\/b>[^<]* attached/); assert.match(html, /Draw on frame/); assert.match(html, /aria-label="How to regenerate"/);
   const drawn = render({ nodeId: "tree", target: {}, instruction: "흔들리게", annotating: true, marks: [[{ x: .1, y: .1 }, { x: .2, y: .2 }]] });
-  assert.match(drawn, /<b>New transformation<\/b>/); assert.match(drawn, /Annotation<\/b>1 stroke attached/); assert.match(drawn, /Done drawing/);
+  assert.match(drawn, /<b>New constraint<\/b>/); assert.match(drawn, /Annotation<\/b>1 stroke attached/); assert.match(drawn, /Done drawing/);
 });
 
 test("the bottom panel (code, state machine, inspection) has a height handle on its top edge", async () => {
@@ -71,15 +71,15 @@ test("the bottom panel (code, state machine, inspection) has a height handle on 
   assert.match(html, /role="separator" aria-orientation="horizontal" aria-label="Resize bottom panel"/);
 });
 
-test("a transformation picked from a recommendation is highlighted in the inspector", () => {
+test("a constraint picked from a recommendation is highlighted in the inspector", () => {
   const scene = sampleScene(), node = scene.nodes.find(item => item.id === "tree")!, noop = () => {};
-  const html = renderToStaticMarkup(createElement(PropertyInspector, new Proxy({ node, transformations: node.transformations, state: null, busy: false, library: scene.algorithms, highlightTransformationId: "ink-wash" } as Record<string, unknown>,
+  const html = renderToStaticMarkup(createElement(ConstraintInspector, new Proxy({ node, constraints: node.constraints, state: null, busy: false, library: scene.algorithms, highlightConstraintId: "ink-wash" } as Record<string, unknown>,
     { get: (target, key) => key in target ? target[key as string] : noop }) as never));
-  assert.match(html, /class="transformation-card inspection-highlight" data-transformation-id="ink-wash"/);
+  assert.match(html, /class="constraint-card inspection-highlight" data-constraint-id="ink-wash"/);
   assert.equal(html.match(/inspection-highlight/g)?.length, 1);
 });
 
-test("Create Minimal Example adds a sub brush to the brush the transformation belongs to, shown inside its tool group", async () => {
+test("Create Minimal Example adds a sub brush to the brush the constraint belongs to, shown inside its tool group", async () => {
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const { brushesFor, brushGroup, groupBrushes, markBrushes, subBrushFor, brushTool, brushNodeIds } = await import("../app/lib/brushes");
@@ -114,32 +114,68 @@ test("Create Minimal Example adds a sub brush to the brush the transformation be
   assert.match(html, /SUB BRUSHES/); assert.match(html, new RegExp(`class="brush-sub-row picked"><button class="active" aria-pressed="true" aria-label="${sub.name} Brush"`));
 });
 
-test("Decompose makes a linked minimal example frame for every transformation of the base state and renders each", async () => {
+/** A ribbon brush: brush (2) > unit (1) > body (2) and strokes (2) > stroke (2). */
+function ribbonScene() {
+  const c = (id: string) => ({ id, property: id, description: `${id} rule`, params: [{ id: `${id}-p`, label: id, effect: "spatial", description: "", value: num(3, 0, 10) }], inputs: [], drags: [] });
+  const node = (id: string, kind: "collection" | "object", parentId: string | null, ids: string[], region = { x: .2, y: .2, w: .5, h: .5 }) =>
+    ({ id, kind, parentId, name: id, description: "", primitive: kind === "collection" ? "group" : "shape", region, constraints: ids.map(c), visible: true, machine: null });
+  return sceneSchema.parse({ algorithms: [], nodes: [
+    node("brush", "collection", null, ["count", "positions"], { x: .1, y: .1, w: .8, h: .8 }),
+    node("unit", "collection", "brush", ["path"]),
+    node("body", "object", "unit", ["shape", "color"], { x: .3, y: .3, w: .2, h: .2 }),
+    node("strokes", "collection", "unit", ["spacing", "tint"], { x: .3, y: .3, w: .3, h: .3 }),
+    node("stroke", "object", "strokes", ["stroke-shape", "weight"], { x: .35, y: .35, w: .1, h: .1 }),
+  ] });
+}
+
+test("Decompose goes one level at a time: a node into its constraints as one group and its child nodes whole, then single constraints", () => {
+  const scene = ribbonScene(), keys = (targets: ReturnType<typeof decomposeTargets>) => targets.map(t => `${t.scope}:${t.nodeId}${t.constraintId ? `/${t.constraintId}` : ""}`);
+  assert.deepEqual(keys(decomposeTargets(scene, null)), ["constraints:brush", "node:unit"], "one brush: straight into its parts");
+  assert.deepEqual(keys(decomposeTargets(scene, { nodeId: "unit", scope: "node", constraintId: "" })), ["constraint:unit/path", "node:body", "node:strokes"], "a group of one is that constraint");
+  assert.deepEqual(keys(decomposeTargets(scene, { nodeId: "strokes", scope: "node", constraintId: "" })), ["constraints:strokes", "node:stroke"]);
+  assert.deepEqual(keys(decomposeTargets(scene, { nodeId: "body", scope: "node", constraintId: "" })), ["constraint:body/shape", "constraint:body/color"], "a leaf object: its constraints one by one");
+  assert.deepEqual(keys(decomposeTargets(scene, { nodeId: "brush", scope: "constraints", constraintId: "" })), ["constraint:brush/count", "constraint:brush/positions"]);
+  const two = { ...scene, nodes: [...scene.nodes, { ...scene.nodes[2], id: "other", parentId: null }] };
+  assert.deepEqual(keys(decomposeTargets(two, null)), ["node:brush", "node:other"], "several roots: one frame each");
+
+  const whole = sceneSchema.parse(nodeExampleScene(scene, "strokes", "node"));
+  assert.deepEqual(whole.nodes.map(n => [n.id, n.parentId, n.constraints.map(c => c.id).join(",")]), [["strokes", null, "spacing,tint"], ["stroke", "strokes", "stroke-shape,weight"]], "a node whole, constraints not split");
+  const group = sceneSchema.parse(nodeExampleScene(scene, "unit", "constraints"));
+  assert.deepEqual(group.nodes.map(n => [n.id, n.constraints.length]), [["unit", 1], ["body", 0]], "its own constraints on one plain member");
+  const leaf = sceneSchema.parse(nodeExampleScene(scene, "body", "node"));
+  assert.deepEqual(leaf.nodes.map(n => [n.id, n.kind, n.parentId]), [["collection", "collection", null], ["body", "object", "collection"]], "an object goes inside a plain collection");
+  assert.match(nodeExampleInstruction(scene.nodes[3], "node"), /everything below it/);
+});
+
+test("Decompose makes linked frames for the next level only, and decomposing a part makes its children linked to it", async () => {
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
-  const scene = sampleScene(), panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: createSketchPanel({ scene }) };
-  const expected = scene.nodes.flatMap(node => node.transformations.filter(item => item.properties.length).map(item => `${node.id}/${item.id}`));
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: createSketchPanel({ scene: ribbonScene() }) };
   let frames = 0, activated = 0;
-  const requests: string[] = [], subs: string[] = [];
+  const requests: string[] = [];
   const deps = {
     panel: (id: string) => panels[id] ?? createSketchPanel(), activate: () => { activated++; }, toast: () => {}, focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, active: () => "a", refreshBrushCode: () => {},
     updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
-    createFrame: () => { const id = `sketch-${++frames}`; panels[id] = createSketchPanel(); return id; },
-    addSubBrush: (_owner: string, nodeId: string, frameId: string) => { subs.push(`${nodeId}@${frameId}`); return null; },
+    createFrame: () => { const id = `sketch-${++frames}`; panels[id] = createSketchPanel(); return id; }, addSubBrush: () => null,
     task: async (_label: string, work: () => Promise<void>) => { await work(); },
-    request: async (_intent: string, body: any) => { requests.push(body.instruction); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
+    request: async (intent: string, body: any) => { requests.push(`${intent}:${body.instruction}`); return { title: "Example", explanation: "", code: "rulegenModule(\"x\", function (m) { return { draw() {} }; });" }; },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => ({ name: id, photo: null, strokes: [], revision: 1 }),
   } as any;
+  const childrenOf = (id: string) => Object.entries(panels).filter(([, panel]) => panel.exampleOf?.frameId === id);
   await sceneAI(deps, "a").decompose();
-  const examples = Object.entries(panels).filter(([id]) => id !== "a");
-  assert.equal(examples.length, expected.length);
-  assert.deepEqual(examples.map(([, panel]) => `${panel.exampleOf?.nodeId}/${panel.exampleOf?.transformationId}`).sort(), [...expected].sort());
-  assert.ok(examples.every(([, panel]) => panel.exampleOf?.frameId === "a" && panel.generated && !panel.pendingResult), "each is linked to the frame and rendered");
-  assert.ok(examples.every(([, panel]) => panel.scene.nodes.every(node => !node.machine) && panel.scene.nodes.flatMap(node => node.transformations).length === 1), "one transformation each, without state machines");
-  assert.equal(requests.length, expected.length); assert.ok(requests.every(text => /minimal example/.test(text)));
+  assert.deepEqual(childrenOf("a").map(([, panel]) => panel.exampleOf), [{ frameId: "a", nodeId: "brush", constraintId: "", scope: "constraints" }, { frameId: "a", nodeId: "unit", constraintId: "", scope: "node" }]);
+  assert.ok(childrenOf("a").every(([, panel]) => panel.generated && !panel.pendingResult), "each is rendered");
+  assert.equal(requests.length, 2); assert.match(requests[0], /ONLY the constraints/); assert.match(requests[1], /everything below it/);
   assert.equal(activated, 0, "the view stays on the decomposed frame");
-  assert.equal(subs.length, expected.length, "every example becomes a sub brush, interactive or not");
+  const unit = childrenOf("a")[1][0];
+  assert.deepEqual(panels[unit].scene.nodes.map(node => node.id), ["unit", "body", "strokes", "stroke"]);
+  await sceneAI(deps, unit).decompose();
+  assert.deepEqual(childrenOf(unit).map(([, panel]) => `${panel.exampleOf!.scope ?? "constraint"}:${panel.exampleOf!.nodeId}`), ["constraint:unit", "node:body", "node:strokes"], "the next level hangs off the part");
+  assert.equal(childrenOf("a").length, 2, "nothing more on the original");
+  const path = childrenOf(unit)[0];
+  assert.deepEqual(path[1].scene.nodes.flatMap(node => node.constraints.map(item => item.id)), ["path"]);
+  assert.match(requests.at(-3)!, /minimal example/);
 });
 
 test("a minimal example's sub brush goes into the tool group of the brush its node comes from", async () => {
@@ -154,7 +190,7 @@ test("a minimal example's sub brush goes into the tool group of the brush its no
   assert.equal(sourceBrushGroup(unmarked, "source", "orb", brushes)?.id, own.id);
 });
 
-test("example frames show non-input transformations without input, keep the hint on every generation and wait when the server is busy", async () => {
+test("example frames show non-input constraints without input, keep the hint on every generation and wait when the server is busy", async () => {
   const { sceneAI, exampleRetry } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const scene = sampleScene(), tree = scene.nodes.find(node => node.id === "tree")!;

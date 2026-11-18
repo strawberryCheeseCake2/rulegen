@@ -3,23 +3,22 @@ import { z } from "zod";
 import { MAX_PARAMETER_SUGGESTIONS, parameterSuggestionSchema, recordingSchema, suggestionKey, type ParameterSuggestion } from "./hidden-parameters";
 import { findNode } from "./scene/graph";
 export { readsPerItem } from "./item-values";
-import { idSchema, numberValueSchema, toggleValueSchema, type ScalarValue, type Scene, type SceneBinding } from "./scene/schema";
-import { findProperty, propertyOwner } from "./scene/transformations";
+import { type ScalarValue, type Scene, type SceneBinding } from "./scene/schema";
+import { findParam, paramOwner } from "./scene/constraints";
 import { bindingKey, nodeLeaves, sceneBindings, layoutKey } from "./scene/values";
-import { machineChangeSchema } from "./machine-change";
 import { editRuntime, isRuntimeKey, moveValue, parseMove, runtimeTarget, STORE_KEY, targetNumber, targetPoint } from "./runtime-edits";
 
 // Inspection of one brush in one frame: the running result records a step at
 // every state change (up to MAX_STEPS), with the brush's live values and the
-// runtime state, so the user can step through states, transitions and constraint
-// (semantic transformation) values. Targeted inspection adds AI overlays.
+// runtime state, so the user can step through states, transitions and param
+// (constraint) values. Targeted inspection adds AI overlays.
 
 export const MAX_STEPS = 20;
 export type Scalar = number | string | boolean;
 export type InspectionStep = {
   id: number; at: number;
-  /** null for the start of recording. */
-  nodeId: string | null; from: string | null; to: string | null; transitionId: string | null;
+  /** A state machine step: the owner (a node; `key`: one item of it, "" the node itself) that took a transition. null for the start of recording. */
+  nodeId: string | null; key?: string | null; from: string | null; to: string | null; transitionId: string | null;
   values: Record<string, Scalar>;
   /** What-if values set at this step only (a handle dragged while looking at it): the step is drawn with them; nothing else changes. */
   edits?: Record<string, Scalar>;
@@ -29,14 +28,13 @@ export type InspectionStep = {
   runtime: unknown;
 };
 /**
- * What an overlay, row or recommendation points at (a transformation only from
- * recommendations; a parameter is a hidden constant the inspection suggests exposing,
- * `id` = the property id it gets).
+ * What an overlay, row or execution part points at (a parameter is a hidden constant the inspection suggests exposing,
+ * `id` = the param id it gets).
  */
-export type InspectionFocus = { kind: "constraint" | "state" | "transition" | "transformation" | "parameter"; nodeId: string; id: string };
-/** Whether two foci point at the same thing: a suggested parameter is the constraint it becomes once accepted (same property id). */
+export type InspectionFocus = { kind: "param" | "state" | "transition" | "constraint" | "parameter"; nodeId: string; id: string };
+/** Whether two foci point at the same thing: a suggested parameter is the param it becomes once accepted (same param id). */
 export function sameFocus(a: InspectionFocus | null, b: InspectionFocus) {
-  const value = (kind: string) => kind === "parameter" ? "constraint" : kind;
+  const value = (kind: string) => kind === "parameter" ? "param" : kind;
   return Boolean(a && value(a.kind) === value(b.kind) && a.nodeId === b.nodeId && a.id === b.id);
 }
 /** How an annotation mark is drawn: color, width (canvas pixels of the 900×600 frame) and opacity. */
@@ -93,20 +91,20 @@ export function addStep(state: InspectionState, step: Omit<InspectionStep, "id">
 }
 
 const prefixOf = (nodeId: string) => `${encodeURIComponent(nodeId)}/`;
-/** Values of the given nodes only: their constraint keys and layout boxes. */
+/** Values of the given nodes only: their param keys and layout boxes. */
 export function filterValues(values: Record<string, unknown>, nodeIds: string[]) {
   const prefixes = nodeIds.map(prefixOf);
   return Object.fromEntries(Object.entries(values).filter(([key, value]) => prefixes.some(prefix => key.startsWith(prefix)) && ["number", "string", "boolean"].includes(typeof value))) as Record<string, Scalar>;
 }
 
-export type ConstraintRow = { key: string; binding: SceneBinding; node: string; transformation: string; transformationId: string; property: string; path: string };
-/** Constraint (semantic transformation) rows of the brush, in node/transformation order. */
-export function constraintRows(scene: Scene, nodeIds: string[]): ConstraintRow[] {
+export type ParamRow = { key: string; binding: SceneBinding; node: string; constraint: string; constraintId: string; param: string; path: string };
+/** Param (constraint) rows of the brush, in node/constraint order. */
+export function paramRows(scene: Scene, nodeIds: string[]): ParamRow[] {
   const ids = new Set(nodeIds);
   return sceneBindings(scene).filter(binding => ids.has(binding.nodeId)).map(binding => {
-    const node = findNode(scene, binding.nodeId)!, property = findProperty(node, binding.path[0]), owner = propertyOwner(node, binding.path[0]);
-    return { key: binding.key, binding, node: node.name, transformation: owner?.label || "", transformationId: owner?.id || "",
-      property: property?.label || binding.path[0], path: binding.path.slice(1).join(" › ") };
+    const node = findNode(scene, binding.nodeId)!, param = findParam(node, binding.path[0]), owner = paramOwner(node, binding.path[0]);
+    return { key: binding.key, binding, node: node.name, constraint: owner?.property || "", constraintId: owner?.id || "",
+      param: param?.label || binding.path[0], path: binding.path.slice(1).join(" › ") };
   });
 }
 export const layoutKeys = (nodeIds: string[]) => nodeIds.flatMap(id => (["x", "y", "w", "h"] as const).map(field => layoutKey(id, field)));
@@ -120,12 +118,12 @@ export const formatScalar = (value: Scalar | undefined) => value === undefined ?
 
 // ── Targeted inspection result (AI) ─────────────────────────────────────────
 
-/** "parameter": a hidden constant suggested in the same result (`id` = the suggested property id). */
-const link = z.object({ kind: z.enum(["constraint", "state", "transition", "parameter"]), nodeId: z.string().max(80), id: z.string().max(80) });
+/** "parameter": a hidden constant suggested in the same result (`id` = the suggested param id). */
+const link = z.object({ kind: z.enum(["param", "constraint", "state", "transition", "parameter"]), nodeId: z.string().max(80), id: z.string().max(80) });
 const scalar = z.union([z.number(), z.string().max(200), z.boolean()]);
 /**
  * A direct manipulation handle on an overlay: a grip the user drags on the frame
- * to change one value (a constraint, or a suggested parameter). Where the grip sits
+ * to change one value (a param, or a suggested parameter). Where the grip sits
  * and how a drag maps to the value are expressions chosen for the concern (drag a
  * leaf tip to bend it, rotate an arm to open an angle, slide along a row to add
  * items), so the result and the overlay follow the value as it is dragged.
@@ -134,7 +132,7 @@ export const HANDLE_GESTURES = ["drag", "rotate", "slide", "move"] as const;
 /** What the `value` expression may read besides the overlay readers (canvas pixels; angles in radians). */
 export const HANDLE_VARIABLES = ["hx", "hy", "sx", "sy", "dx", "dy", "start", "px", "py", "angle", "startAngle", "dist", "startDist"] as const;
 export const handleSchema = z.object({
-  /** The value it changes: a key from `constraints` (number or toggle) or a suggested parameter's key; or the running state
+  /** The value it changes: a key from `params` (number or toggle) or a suggested parameter's key; or the running state
    * at the step (runtime-edits: `@input:…` the recorded input, `@store:…` a module's store), `${…}` parts read per item. */
   key: z.string().max(1200),
   /** drag: the grip follows the pointer; rotate: it turns around the pivot; slide: it moves along the line from the pivot through it;
@@ -166,86 +164,44 @@ export const overlaySchema = z.object({
   handle: handleSchema.nullable().default(null),
 });
 const change = z.object({ key: z.string().max(1200), stateId: z.string().max(80), value: scalar });
-/** "add-transformation": nothing existing is related, so a NEW semantic transformation is stacked on node `nodeId` (targetId ""). */
-export const recommendationSchema = z.object({ kind: z.enum(["value", "transformation", "add-transformation", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
-  /** A transformation fix that needs other transformations of the node changed too: those ids (targetId is the main one). */
+/**
+ * A change of the brush that makes it do what the user showed: values (`changes`), a constraint
+ * rewritten (`targetId`, and others of the node that change with it in `targetIds`), a NEW one stacked on node
+ * `nodeId` ("add-constraint", targetId ""), or a state or transition refined.
+ */
+export const fixSchema = z.object({ kind: z.enum(["value", "constraint", "add-constraint", "state", "transition"]), nodeId: z.string().max(80), targetId: z.string().max(80),
   targetIds: z.array(z.string().max(80)).max(6).default([]),
   title: z.string().min(1).max(160), detail: z.string().max(800), changes: z.array(change).max(12) });
+export type Fix = z.infer<typeof fixSchema>;
 export const inspectResultSchema = z.object({
   summary: z.string().min(1).max(1500),
   overlays: z.array(overlaySchema).max(12),
-  /** Value-only fixes for the concern, applied with one click. */
-  valueFixes: z.array(change.extend({ reason: z.string().max(400) })).max(12),
-  /** Other ways to resolve it: values, or changing a transformation, state or transition. */
-  recommendations: z.array(recommendationSchema).max(6),
-  /** Constants the code hard-codes that the concern depends on, suggested as new properties (accept / reject). */
+  /** Constants the code hard-codes that the concern depends on, suggested as new params (accept / reject). */
   parameters: z.array(parameterSuggestionSchema).max(MAX_PARAMETER_SUGGESTIONS).default([]),
   /** Fields added to the module's item records so overlays can read a per-item quantity it computes but did not keep (applied with the result). */
   records: recordingSchema.nullable().default(null),
   /** Fields of the brush the concern is about (a flow or direction field): shown over the held step and combed by hand. */
   fields: z.array(fieldHookSchema).max(MAX_FIELD_HOOKS).default([]),
 });
-/**
- * A targeted tool's stored result. A new-transformation recommendation that was
- * applied remembers the transformation it added (`addedId`), so it then reads as
- * that transformation (while it exists).
- */
-export const MAX_PREVIEW_MARKS = 4, MAX_PREVIEW_HANDLES = 3;
-/** What a preview mark is: an overlay shape (canvas-pixel expressions) with a short label saying what changes there. */
-export const previewMarkSchema = overlaySchema.omit({ link: true, handle: true });
-export type PreviewMark = z.input<typeof previewMarkSchema>;
-/**
- * A quick visual preview of a recommendation (asked with the inspection when previews are on): small edits to
- * the brush's module that make it draw roughly as it would with the recommendation, and the new values those
- * edits read. Run on the held step's marks in the panel; nothing is applied.
- */
-export const recommendationPreviewSchema = z.object({ caption: z.string().max(160),
-  edits: z.array(z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(3000), replace: z.string().min(1).max(12000) })).max(4),
-  values: z.array(z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) })).max(3),
-  /** The states and transitions the change brings to the brush's state machine (the edits emit its event transitions). */
-  machine: machineChangeSchema.nullable().default(null),
-  /** Simple marks drawn over the preview where it differs from now (what changes there), read like overlays. */
-  marks: z.array(previewMarkSchema).max(MAX_PREVIEW_MARKS).default([]),
-  /** Handles on the preview for what the recommendation hinges on (a value of the brush or one the preview brings): dragging one redraws the preview with it. */
-  handles: z.array(overlaySchema).max(MAX_PREVIEW_HANDLES).default([]) });
-export type RecommendationPreview = z.infer<typeof recommendationPreviewSchema>;
-/** A mark as an overlay (no link, no handle), so the overlay layer draws it. */
-export const previewMarkOverlay = (mark: PreviewMark, nodeId = ""): Overlay => ({ ...mark, link: { kind: "constraint", nodeId, id: "" }, handle: null });
-/** What the model returns with previews on: each recommendation with its preview (null for value ones: their values are the preview). */
-export const inspectPreviewResultSchema = inspectResultSchema.extend({ recommendations: z.array(recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable() })).max(6) });
-/** Recommendations a targeted tool keeps: the inspection's (6 at most) and ones made later from its Execution frames. */
-export const MAX_LISTED_RECOMMENDATIONS = 12;
-export const targetedResultSchema = inspectResultSchema.extend({ fields: z.array(fieldHookSchema).max(MAX_FIELD_HOOKS).optional(), recommendations: z.array(recommendationSchema.extend({ addedId: z.string().max(80).optional(), preview: recommendationPreviewSchema.nullable().optional() })).max(MAX_LISTED_RECOMMENDATIONS),
+/** A targeted tool's stored result (results saved before keep only what is still read). */
+export const targetedResultSchema = inspectResultSchema.extend({ fields: z.array(fieldHookSchema).max(MAX_FIELD_HOOKS).optional(),
   /** A suggested parameter the user turned down keeps `rejected`. */
   parameters: z.array(parameterSuggestionSchema.extend({ rejected: z.boolean().optional() })).max(MAX_PARAMETER_SUGGESTIONS).default([]) });
 export type InspectResult = z.infer<typeof targetedResultSchema>;
-/**
- * The user's direct manipulation of one part of a recommendation's preview, cropped by hand: the freeform `outline`
- * drawn around it and its box (canvas pixels), and how it was moved (canvas pixels, its center), scaled and rotated
- * (degrees, clockwise, about its center). `object` / `label` name the crop.
- */
-export const previewManipulationSchema = z.object({ object: z.string().max(200), label: z.string().max(80),
-  box: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }), outline: z.array(z.object({ x: z.number(), y: z.number() })).max(64).default([]),
-  dx: z.number(), dy: z.number(), scale: z.number().min(.05).max(20), rotate: z.number().min(-360).max(360) });
-export type PreviewManipulation = z.infer<typeof previewManipulationSchema>;
-/** A recommendation revised at its preview (annotation and/or direct manipulation): the same recommendation, changed, with its preview, and what changed. */
-export const revisedRecommendationSchema = recommendationSchema.extend({ preview: recommendationPreviewSchema.nullable(), reply: z.string().max(400) });
-export type RevisedRecommendation = z.infer<typeof revisedRecommendationSchema>;
-
-// Overlays after an applied recommendation: the user rebuilds a targeted tool's
-// overlays for what was applied ("Update overlays"). The parts it replaced are kept
+// Overlays after an applied fix: a targeted tool's overlays are rebuilt for what was
+// applied. The parts it replaced are kept
 // with the applied entries they follow, so Undo apply brings them back.
-const overlayPartSchema = targetedResultSchema.pick({ summary: true, overlays: true, valueFixes: true, parameters: true, records: true });
+const overlayPartSchema = targetedResultSchema.pick({ summary: true, overlays: true, parameters: true, records: true });
 export type OverlayPart = z.infer<typeof overlayPartSchema>;
 export const overlayUpdateSchema = z.object({
-  /** The applied entries it follows: the recommendation's, then the item records the update applied (if any). */
+  /** The applied entries it follows: the fix's, then the item records the update applied (if any). */
   appliedIds: z.array(z.string().max(80)).min(1).max(4),
   before: overlayPartSchema, after: overlayPartSchema,
 });
 export type OverlayUpdate = z.infer<typeof overlayUpdateSchema>;
 export const MAX_OVERLAY_UPDATES = 10;
-/** The parts of a result an overlay update replaces (the recommendations stay the list the user works from). */
-export const overlayPart = (result: OverlayPart): OverlayPart => ({ summary: result.summary, overlays: result.overlays, valueFixes: result.valueFixes, parameters: result.parameters, records: result.records });
+/** The parts of a result an overlay update replaces. */
+export const overlayPart = (result: OverlayPart): OverlayPart => ({ summary: result.summary, overlays: result.overlays, parameters: result.parameters, records: result.records });
 const samePart = (a: OverlayPart, b: OverlayPart) => JSON.stringify(overlayPart(a)) === JSON.stringify(overlayPart(b));
 /**
  * The tool after an applied entry was undone or redone: undoing any entry an update
@@ -261,14 +217,8 @@ export function overlaysAfterApplied<T extends { result: InspectResult; overlayU
 /** Whether the tool shows overlays updated for this applied entry. */
 export const overlaysUpdatedFor = (tool: { result: InspectResult; overlayUpdates?: OverlayUpdate[] }, appliedId: string) =>
   (tool.overlayUpdates ?? []).some(item => item.appliedIds.includes(appliedId) && samePart(tool.result, item.after));
-export type Recommendation = InspectResult["recommendations"][number];
 /** A result as given (older results have no `parameters` or `records`). */
 export type InspectResultInput = Omit<InspectResult, "parameters" | "records"> & { parameters?: InspectResult["parameters"]; records?: InspectResult["records"] };
-/** A recommendation as it reads in `scene`: a new transformation that was added (and is still there) is that transformation. */
-export function currentRecommendation(item: Recommendation, scene: Scene): Recommendation {
-  if (item.kind !== "add-transformation" || !item.addedId || !findNode(scene, item.nodeId)?.transformations.some(entry => entry.id === item.addedId)) return item;
-  return { ...item, kind: "transformation", targetId: item.addedId, targetIds: [] };
-}
 /**
  * Concern autocomplete: from the inspection annotation (and what the user has
  * typed so far), AI suggests up to three concerns to inspect. Each is a whole
@@ -281,9 +231,9 @@ export function concernCompletion(typed: string, suggestion: string) {
   if (!typed.trim() || typed.length >= suggestion.length) return "";
   return suggestion.startsWith(typed) ? suggestion.slice(typed.length) : "";
 }
-/** Every transformation a recommendation changes (the main target first); none for other kinds. */
-export const recommendationTransformations = (item: Pick<InspectResult["recommendations"][number], "kind" | "targetId" | "targetIds">) =>
-  item.kind === "transformation" ? [...new Set([item.targetId, ...(item.targetIds ?? [])].filter(Boolean))] : [];
+/** Every constraint a fix changes (the main target first); none for other kinds. */
+export const fixConstraints = (item: Pick<Fix, "kind" | "targetId" | "targetIds">) =>
+  item.kind === "constraint" ? [...new Set([item.targetId, ...(item.targetIds ?? [])].filter(Boolean))] : [];
 /** Overlays written before when/each existed lack them. */
 export type Overlay = z.input<typeof overlaySchema>;
 
@@ -332,10 +282,15 @@ function tokenize(source: string): Token[] {
 const FUNCTIONS: Record<string, (...args: number[]) => number> = { min: Math.min, max: Math.max, abs: Math.abs, sqrt: Math.sqrt, round: Math.round, floor: Math.floor, ceil: Math.ceil, sin: Math.sin, cos: Math.cos, atan2: Math.atan2, pow: Math.pow,
   if: (condition, a, b) => condition ? a : b };
 const numeric = (value: unknown) => typeof value === "number" ? value : typeof value === "boolean" ? Number(value) : Array.isArray(value) ? value.length : NaN;
-/** Follow "a.b.0.c" into plain data ("" is the value itself). */
+/**
+ * Follow "a.b.0.c" into plain data ("" is the value itself). A part "<field>=<value>" on a list takes the item whose
+ * field is that value (`items.id=1:3.w`): it stays the same item at every moment, wherever it is in the list.
+ */
 export function pathValue(value: unknown, path: string): unknown {
   for (const part of path.split(".").filter(Boolean)) {
     if (part.startsWith("@") && Array.isArray(value)) { value = pointsBox(value)?.[part as keyof PointsBox]; continue; }
+    const match = Array.isArray(value) ? /^([A-Za-z_$][\w$]*)=(.+)$/.exec(part) : null;
+    if (match) { value = (value as unknown[]).find(item => item && typeof item === "object" && String((item as Record<string, unknown>)[match[1]]) === match[2]); continue; }
     if (value === null || typeof value !== "object") return undefined;
     value = (value as Record<string, unknown>)[part];
   }
@@ -512,7 +467,7 @@ export function placeOverlays(overlays: Overlay[], input: Record<string, Scalar>
       const cut = overlay.each?.indexOf(":") ?? -1;
       const each = overlay.each ?? "", list = cut > 0 ? pathValue(context.stores[each.slice(0, cut)], each.slice(cut + 1)) : undefined;
       const items: (OverlayContext | null)[] = cut > 0 ? (Array.isArray(list) ? list.slice(0, maxItems).map((item, itemIndex) => ({ ...context, item, itemIndex })) : []) : [null];
-      // A label that is the same for every item (property values, thresholds) is shown once, on the first.
+      // A label that is the same for every item (param values, thresholds) is shown once, on the first.
       const perItem = cut <= 0 || labelReadsItem(overlay.label);
       return items.flatMap((itemContext, n) => {
         const scope = itemContext ?? context;
@@ -631,7 +586,7 @@ export function clampValue(spec: ScalarValue | undefined, raw: number): number |
   const decimals = Math.min(6, Math.max(0, -Math.floor(Math.log10(spec.step > 0 ? spec.step : 1)) + 1));
   return Number(Math.min(spec.max, Math.max(spec.min, stepped)).toFixed(decimals));
 }
-/** The spec (type, range, step) of every value a handle of the brush may change: its constraints and the parameters suggested for it. */
+/** The spec (type, range, step) of every value a handle of the brush may change: its params and the parameters suggested for it. */
 export function valueSpecs(scene: Scene, nodeIds: string[], parameters: ParameterSuggestion[] = []): Record<string, ScalarValue> {
   const ids = new Set(nodeIds);
   return { ...Object.fromEntries(parameters.map(item => [suggestionKey(item), item.value])),
@@ -692,9 +647,35 @@ export function layoutLabels(requests: LabelRequest[], size: number, bounds = { 
   return placed;
 }
 
+/** A block of text (or a control) to place near what it is about (`shape`), `width` × `height` (canvas pixels). */
+export type BlockRequest = { key: string; width: number; height: number; shape: { x: number; y: number; w: number; h: number } };
+/** A block placed: its top-left corner and size. */
+export type PlacedBlock = { key: string; x: number; y: number; width: number; height: number };
+/**
+ * Blocks placed one after another so none covers another, an obstacle or what another is about: above what it is about,
+ * below, right, left, then farther above and below (sliding sideways); kept inside the bounds. A block with no free
+ * place goes where it covers the least.
+ */
+export function layoutBlocks(requests: BlockRequest[], bounds = { width: 900, height: 600 }, obstacles: { x: number; y: number; width: number; height: number }[] = []): PlacedBlock[] {
+  const placed: PlacedBlock[] = [], gap = 6, shapes = requests.map(request => ({ x: Math.min(request.shape.x, request.shape.x + request.shape.w), y: Math.min(request.shape.y, request.shape.y + request.shape.h), width: Math.abs(request.shape.w), height: Math.abs(request.shape.h) }));
+  for (const [n, request] of requests.entries()) {
+    const { width, height } = request, own = shapes[n], cx = own.x + own.width / 2, cy = own.y + own.height / 2;
+    const clampX = (x: number) => Math.max(0, Math.min(bounds.width - width, x)), clampY = (y: number) => Math.max(0, Math.min(bounds.height - height, y));
+    const spots = [{ x: cx - width / 2, y: own.y - gap - height }, { x: cx - width / 2, y: own.y + own.height + gap }, { x: own.x + own.width + gap, y: cy - height / 2 }, { x: own.x - gap - width, y: cy - height / 2 },
+      ...Array.from({ length: 12 }, (_, step) => step + 1).flatMap(step => [-1, 0, 1].flatMap(side => [{ x: cx - width / 2 + side * (width / 2 + gap), y: own.y - gap - height - step * 18 }, { x: cx - width / 2 + side * (width / 2 + gap), y: own.y + own.height + gap + step * 18 }]))]
+      .map(spot => ({ x: clampX(spot.x), y: clampY(spot.y) }));
+    const others = [...obstacles, ...placed, ...shapes.filter((_, other) => other !== n)];
+    const covered = (spot: { x: number; y: number }) => { const box = { x: spot.x, y: spot.y, width, height };
+      return [...others, own].reduce((sum, other) => sum + (overlaps(box, other) ? (Math.min(box.x + width, other.x + other.width) - Math.max(box.x, other.x)) * (Math.min(box.y + height, other.y + other.height) - Math.max(box.y, other.y)) : 0), 0); };
+    const spot = spots.find(candidate => covered(candidate) === 0) ?? spots.reduce((best, candidate) => covered(candidate) < covered(best) ? candidate : best);
+    placed.push({ key: request.key, x: spot.x, y: spot.y, width, height });
+  }
+  return placed;
+}
+
 // ── One targeted inspection for every stamp of a brush ──────────────────────
 // A targeted tool keeps its result in the brush's shared node ids (the ids its
-// code uses), so the same overlays, value fixes and recommendations work on the
+// code uses), so the same overlays work on the
 // master and on every instance: they are translated to a frame's ids when shown.
 
 const READERS = /\b(p|prev|delta|s|len|in|elapsed)\(\s*(["'])(.*?)\2/g;
@@ -739,14 +720,6 @@ export function remapResult(result: InspectResultInput, ids: Map<string, string>
   return {
     summary: result.summary,
     overlays: result.overlays.map(remapOverlay),
-    valueFixes: result.valueFixes.map(fix => ({ ...fix, key: remapKey(fix.key, map) })),
-    recommendations: result.recommendations.map(item => ({ ...item, nodeId: map(item.nodeId), changes: item.changes.map(change => ({ ...change, key: remapKey(change.key, map) })),
-      // Asked with previews: the key stays (null for none), so the panel knows to show the value ones too.
-      ...("preview" in item ? { preview: item.preview ? { ...item.preview, edits: item.preview.edits.map(edit => ({ ...edit, nodeId: map(edit.nodeId) })), values: item.preview.values.map(value => ({ ...value, nodeId: map(value.nodeId) })),
-        machine: item.preview.machine ? { ...item.preview.machine, nodeId: map(item.preview.machine.nodeId) } : null,
-        marks: (item.preview.marks ?? []).map(mark => { const cut = (mark.each ?? "").indexOf(":");
-          return { ...mark, x: expression(mark.x), y: expression(mark.y), w: expression(mark.w), h: expression(mark.h), label: expression(mark.label), when: expression(mark.when ?? ""), each: cut < 0 ? mark.each ?? "" : `${map(mark.each!.slice(0, cut))}${mark.each!.slice(cut)}` }; }),
-        handles: (item.preview.handles ?? []).map(overlay => remapOverlay({ ...overlay, each: overlay.each ?? "", when: overlay.when ?? "", name: overlay.name ?? "", handle: overlay.handle ?? null })) } : null } : {}) })),
     // The edits are module code: it uses the code's node ids, the same in every frame.
     parameters: (result.parameters ?? []).map(item => ({ ...item, nodeId: map(item.nodeId) })),
     records: result.records ? { ...result.records, nodeId: map(result.records.nodeId) } : null,
@@ -755,7 +728,7 @@ export function remapResult(result: InspectResultInput, ids: Map<string, string>
 }
 /**
  * A stored (shared-id) result shown in one frame: overlays for every root of the
- * brush there (master or instances), fixes and recommendations for `primary`.
+ * brush there (master or instances), the rest for `primary`.
  */
 export function resultInFrame(result: InspectResultInput, rootIds: Map<string, string>[], primary = 0): InspectResult {
   if (!rootIds.length) return { ...result, parameters: result.parameters ?? [], records: result.records ?? null };
@@ -767,7 +740,7 @@ export function resultInFrame(result: InspectResultInput, rootIds: Map<string, s
  * What an inspection points at in one node's state machine: the state the node
  * was in at the inspected step (and where it came from, by which transition when
  * the step was this node's), and the states/transitions the inspection is about
- * (the focused one, targeted overlays' links and conditions, recommendations).
+ * (the focused one, targeted overlays' links and conditions).
  */
 export function machineInspection(state: InspectionState, result: InspectResult | null, nodeId: string) {
   const step = state.steps[state.cursor ?? state.steps.length - 1];
@@ -780,7 +753,6 @@ export function machineInspection(state: InspectionState, result: InspectResult 
     for (const source of [overlay.when, overlay.x, overlay.y, overlay.w, overlay.h, overlay.label])
       for (const match of source.matchAll(/\bin\(\s*(["'])(.*?)\1\s*,\s*(["'])(.*?)\3/g)) if (match[2] === nodeId) states.add(match[4]);
   }
-  for (const item of result?.recommendations ?? []) if (item.nodeId === nodeId) add(item.kind, item.targetId);
   return { state: own ? step!.to : runtime, from: own ? step!.from : null, transition: own ? step!.transitionId : null, states: [...states], transitions: [...transitions] };
 }
 

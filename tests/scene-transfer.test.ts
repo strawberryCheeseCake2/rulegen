@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { num, sampleScene } from "./fixtures/scene";
-import { addBlockProperty, ALGORITHM_DRAG_TYPE, copyAlgorithm, moveNodeTo, NODE_DRAG_TYPE, pasteAlgorithm, readAlgorithmDrag, readNodeDrag, transplantNodes } from "../app/lib/scene/transfer";
+import { addBlockParam, ALGORITHM_DRAG_TYPE, copyAlgorithm, moveNodeTo, NODE_DRAG_TYPE, pasteAlgorithm, readAlgorithmDrag, readNodeDrag, transplantNodes } from "../app/lib/scene/transfer";
 import { instantiate } from "../app/lib/scene/algorithms";
 import { sceneBindings, valueAt } from "../app/lib/scene/values";
 import { findNode } from "../app/lib/scene/graph";
@@ -9,21 +9,20 @@ import type { AlgorithmCall, Scene } from "../app/lib/scene/schema";
 
 const other = (): Scene => ({ algorithms: [{ id: "power-decay", name: "Different", description: "다른 정의", params: [] }], nodes: [
   { id: "orb", kind: "object", parentId: null, name: "Existing orb", description: "", primitive: "ellipse", region: { x: .1, y: .1, w: .2, h: .2 }, visible: true, machine: null,
-    transformations: [{ id: "main", label: "", description: "", properties: [{ id: "size", label: "Size", effect: "spatial", description: "", value: num(5, 0, 10) }] }] },
+    constraints: [{ id: "main", property: "", description: "", params: [{ id: "size", label: "Size", effect: "spatial", description: "", value: num(5, 0, 10) }] }] },
 ] });
 
 test("a copied block keeps its arguments and can be pasted into any socket, even in another sketch", () => {
   const scene = sampleScene();
-  const branch = scene.nodes[0].transformations[0].properties[0].value as AlgorithmCall;
+  const branch = scene.nodes[0].constraints[0].params[0].value as AlgorithmCall;
   const clip = copyAlgorithm(scene, valueAt(branch, ["length"]) as AlgorithmCall);
   assert.equal(clip.label, "Power decay");
   // Same sketch: the orb's radius becomes a power-decay block with the copied argument values.
   const pasted = pasteAlgorithm(scene, "orb", "radius", [], clip);
-  assert.deepEqual(findNode(pasted, "orb")!.transformations[0].properties[0].value, clip.call);
-  assert.equal(findNode(pasted, "orb")!.machine!.states[1].values.some(item => item.propertyId === "radius"), false, "state overrides follow the new structure");
+  assert.deepEqual(findNode(pasted, "orb")!.constraints[0].params[0].value, clip.call);
   // Another sketch with a different `power-decay`: the pasted block is renamed, not merged.
   const elsewhere = pasteAlgorithm(other(), "orb", "size", [], clip);
-  const call = findNode(elsewhere, "orb")!.transformations[0].properties[0].value as AlgorithmCall;
+  const call = findNode(elsewhere, "orb")!.constraints[0].params[0].value as AlgorithmCall;
   assert.equal(call.algorithmId, "power-decay-2");
   assert.equal(elsewhere.algorithms.find(a => a.id === "power-decay")!.name, "Different");
   // A whole nested block (branch → power decay) carries its dependencies too.
@@ -35,12 +34,12 @@ test("a copied block keeps its arguments and can be pasted into any socket, even
   assert.throws(() => pasteAlgorithm(scene, "tree", "structure", ["length", "base"], { ...deep, call: { ...deep.call, args: deep.call.args.map(a => a.id === "depth" ? { ...a, value: instantiate(scene.algorithms, "recursive-branch") } : a) } }), /Algorithms can be nested at most/);
 });
 
-test("dropping a block on a node's empty socket adds a property holding that block", () => {
+test("dropping a block on a node's empty socket adds a param holding that block", () => {
   const scene = sampleScene();
-  const next = addBlockProperty(scene, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave")));
-  const added = findNode(next, "orb")!.transformations[0].properties[2];
+  const next = addBlockParam(scene, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave")));
+  const added = findNode(next, "orb")!.constraints.at(-1)!.params.at(-1)!;
   assert.equal(added.id, "sine-wave"); assert.equal(added.label, "Sine wave");
-  assert.equal(findNode(addBlockProperty(next, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave"))), "orb")!.transformations[0].properties[3].id, "sine-wave-2");
+  assert.equal(findNode(addBlockParam(next, "orb", copyAlgorithm(scene, instantiate(scene.algorithms, "sine-wave"))), "orb")!.constraints.at(-1)!.params.at(-1)!.id, "sine-wave-2");
 });
 
 test("a layer dropped on another sketch frame is copied with members, blocks and machines; on the same frame it moves", () => {
@@ -51,7 +50,7 @@ test("a layer dropped on another sketch frame is copied with members, blocks and
   assert.equal(orbCopy.id, "orb-2", "colliding ids are renamed");
   assert.equal(orbCopy.machine!.states.length, 2);
   assert.ok(target.algorithms.some(a => a.id === "recursive-branch"));
-  const length = valueAt(findNode(target, "tree")!.transformations[0].properties[0].value, ["length"]) as AlgorithmCall;
+  const length = valueAt(findNode(target, "tree")!.constraints[0].params[0].value, ["length"]) as AlgorithmCall;
   assert.equal(length.algorithmId, "power-decay-2", "references follow renamed blocks");
   const tree = findNode(target, "tree")!;
   assert.ok(Math.abs(tree.region.x + tree.region.w / 2 - .7) < .21, "placed around the drop point (clamped to the canvas)");
@@ -132,7 +131,7 @@ test("Extract puts the scene into a NEW sketch frame beside the source and rende
   assert.equal(derived.scene.nodes.find(node => node.id === "tree")?.brushId, "brush-1");
 });
 
-test("regenerating a transformation rewrites the frame's code right away, so the running result does the new thing", async () => {
+test("regenerating a constraint rewrites the frame's code right away, so the running result does the new thing", async () => {
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const { sampleScene, sceneProgram } = await import("./fixtures/scene");
@@ -146,16 +145,16 @@ test("regenerating a transformation rewrites the frame's code right away, so the
     task: async (_label: string, work: () => Promise<void>) => { await work(); },
     request: async (intent: string, body: any) => {
       requests.push({ intent, body });
-      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "tree" ? { ...node, transformations: node.transformations.map((item: any) => item.id === "ink-wash" ? { ...item, label: "Speed ink", description: "속도에 따라" } : item) } : node) };
+      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "tree" ? { ...node, constraints: node.constraints.map((item: any) => item.id === "ink-wash" ? { ...item, property: "speed-ink", description: "속도에 따라" } : item) } : node) };
       return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
     },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
   } as any;
-  await sceneAI(deps, "a").regenerate("tree", { transformationId: "ink-wash" }, "속도에 따라 바뀌게");
+  await sceneAI(deps, "a").regenerate("tree", { constraintId: "ink-wash" }, "속도에 따라 바뀌게");
   assert.deepEqual(requests.map(r => r.intent), ["transform", "code"]);
   assert.equal(requests[0].body.instruction, "속도에 따라 바뀌게");
-  assert.match(requests[1].body.instruction, /"Speed ink" \(ink-wash\) of node "Tree"[\s\S]*was just regenerated/);
+  assert.match(requests[1].body.instruction, /constraint "speed-ink" \(ink-wash\) of node "Tree"[\s\S]*was just regenerated/);
   assert.equal(panels.a.generated?.code.includes("rulegenModule(\"tree\", function (m) { return { draw() {} }; })"), true, "the new code is in place");
   assert.deepEqual(panels.a.dirtyNodeIds, []);
 });
@@ -184,8 +183,8 @@ test("AI work keeps running per frame: a frame made after the user moved away ap
   assert.deepEqual(activated, []); assert.deepEqual(focused, []);
 });
 
-test("a fix that changes several transformations regenerates each in turn (told about the others), then rewrites the code once", async () => {
-  const { applyRecommendation } = await import("../app/studio/inspection-actions");
+test("a fix that changes several constraints regenerates each in turn (told about the others), then rewrites the code once", async () => {
+  const { applyFix } = await import("../app/studio/inspection-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const { sampleScene, sceneProgram } = await import("./fixtures/scene");
   const { connectScene } = await import("../app/server/scene-code.server");
@@ -198,23 +197,23 @@ test("a fix that changes several transformations regenerates each in turn (told 
     task: async (_label: string, work: () => Promise<void>) => { await work(); },
     request: async (intent: string, body: any) => {
       requests.push({ intent, body });
-      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "tree" ? { ...node, transformations: node.transformations.map((item: any) => item.id === body.targetTransformationId ? { ...item, description: `${item.description} (new)` } : item) } : node) };
+      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "tree" ? { ...node, constraints: node.constraints.map((item: any) => item.id === body.targetConstraintId ? { ...item, description: `${item.description} (new)` } : item) } : node) };
       return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
     },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
   } as any;
-  await applyRecommendation(deps, "a", { kind: "transformation", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth"], title: "둘 다", detail: "함께 바꿉니다", changes: [] });
-  assert.deepEqual(requests.map(r => [r.intent, r.body.targetTransformationId ?? ""]), [["transform", "ink-wash"], ["transform", "branching-growth"], ["code", ""]]);
-  assert.match(requests[0].body.instruction, /changes 2 semantic transformations[\s\S]*1\/2: regenerate only "ink-wash"/);
+  await applyFix(deps, "a", { kind: "constraint", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth"], title: "둘 다", detail: "함께 바꿉니다", changes: [] });
+  assert.deepEqual(requests.map(r => [r.intent, r.body.targetConstraintId ?? ""]), [["transform", "ink-wash"], ["transform", "branching-growth"], ["code", ""]]);
+  assert.match(requests[0].body.instruction, /changes 2 constraints[\s\S]*1\/2: regenerate only "ink-wash"/);
   assert.match(requests[2].body.instruction, /\(ink-wash\)[\s\S]*; [\s\S]*\(branching-growth\)[\s\S]*were just regenerated together/);
-  assert.ok(panels.a.scene.nodes[0].transformations.every(item => item.description.endsWith("(new)")));
+  assert.ok(panels.a.scene.nodes[0].constraints.every(item => item.description.endsWith("(new)")));
   assert.equal(panels.a.applied.past.length, 1, "one undo entry for the whole fix");
-  assert.ok(panels.a.applied.past[0].before.scene.nodes[0].transformations.every(item => !item.description.endsWith("(new)")), "undo apply goes back to before both");
+  assert.ok(panels.a.applied.past[0].before.scene.nodes[0].constraints.every(item => !item.description.endsWith("(new)")), "undo apply goes back to before both");
 });
 
-test("an add-transformation recommendation stacks a new transformation on the node, then rewrites the code", async () => {
-  const { applyRecommendation } = await import("../app/studio/inspection-actions");
+test("an add-constraint fix stacks a new constraint on the node, then rewrites the code", async () => {
+  const { applyFix } = await import("../app/studio/inspection-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const { sampleScene, sceneProgram } = await import("./fixtures/scene");
   const { connectScene } = await import("../app/server/scene-code.server");
@@ -227,16 +226,44 @@ test("an add-transformation recommendation stacks a new transformation on the no
     task: async (_label: string, work: () => Promise<void>) => { await work(); },
     request: async (intent: string, body: any) => {
       requests.push({ intent, body });
-      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "orb" ? { ...node, transformations: [...node.transformations, { ...node.transformations[0], id: "tail", label: "Tail", description: "꼬리", properties: [] }] } : node) };
+      if (intent === "transform") return { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "orb" ? { ...node, constraints: [...node.constraints, { ...node.constraints[0], id: "tail", property: "tail", description: "꼬리", params: [] }] } : node) };
       return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
     },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
   } as any;
-  await applyRecommendation(deps, "a", { kind: "add-transformation", nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [] });
+  await applyFix(deps, "a", { kind: "add-constraint", nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [] });
   assert.deepEqual(requests.map(r => r.intent), ["transform", "code"]);
-  assert.equal(requests[0].body.targetTransformationId, ""); assert.equal(requests[0].body.alternative, false, "a new one, not a rewrite of an existing one");
-  assert.match(requests[1].body.instruction, /"Tail" \(tail\)[\s\S]*was just regenerated/);
-  assert.deepEqual(panels.a.scene.nodes.find(node => node.id === "orb")!.transformations.map(item => item.id), ["pulse", "tail"]);
+  assert.equal(requests[0].body.targetConstraintId, ""); assert.equal(requests[0].body.alternative, false, "a new one, not a rewrite of an existing one");
+  assert.match(requests[1].body.instruction, /constraint "tail" \(tail\)[\s\S]*was just regenerated/);
+  assert.deepEqual(panels.a.scene.nodes.find(node => node.id === "orb")!.constraints.map(item => item.id), ["pulse", "drift", "tail"]);
   assert.equal(panels.a.applied.past.length, 1);
+});
+
+test("a state or transition fix refines the node's machine, then rewrites the code to it (else the frame draws as before)", async () => {
+  const { applyFix } = await import("../app/studio/inspection-actions");
+  const { createSketchPanel } = await import("../app/lib/sketch-panels");
+  const { sampleScene, sceneProgram } = await import("./fixtures/scene");
+  const { connectScene } = await import("../app/server/scene-code.server");
+  const scene = sampleScene(), generated = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene);
+  const panels: Record<string, ReturnType<typeof createSketchPanel>> = { a: { ...createSketchPanel({ scene }), generated } };
+  const requests: { intent: string; body: any }[] = [], toasts: string[] = [];
+  const deps = {
+    panel: (id: string) => panels[id], activate: () => {}, toast: (text: string) => toasts.push(text), focus: () => {}, documentId: () => 1, requestId: () => 1, preview: () => undefined, refreshBrushCode: () => {},
+    updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; },
+    task: async (_label: string, work: () => Promise<void>) => { await work(); },
+    request: async (intent: string, body: any) => {
+      requests.push({ intent, body });
+      if (intent === "machine-refine") return { scene: { ...body.scene, nodes: body.scene.nodes.map((node: any) => node.id === "orb" ? { ...node, machine: { ...node.machine, states: node.machine.states.map((state: any) => state.id === "moving" ? { ...state, description: "겹치면 하나로 합칩니다" } : state) } } : node) }, composePrompt: "p" };
+      return { title: "Tree", explanation: "", code: "rulegenModule(\"tree\", function (m) { return { draw() {} }; });" };
+    },
+    capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
+    artwork: (id: string) => id === "a" ? { name: "A", photo: null, strokes: [], revision: 1 } : undefined,
+  } as any;
+  await applyFix(deps, "a", { kind: "state", nodeId: "orb", targetId: "moving", targetIds: [], title: "합치기", detail: "겹치면 합칩니다", changes: [] });
+  assert.deepEqual(requests.map(r => r.intent), ["machine-refine", "code"]);
+  assert.match(requests[1].body.instruction, /The state "이동" \(moving\) of Orb's state machine was just regenerated/);
+  assert.equal(panels.a.generated!.code, "rulegenModule(\"tree\", function (m) { return { draw() {} }; });", "the frame runs the new code");
+  assert.ok(!toasts.some(text => /Press Update/.test(text)), "nothing is left for the user to press");
+  assert.equal(panels.a.applied.past.length, 1, "one undo entry for the refinement and the code");
 });

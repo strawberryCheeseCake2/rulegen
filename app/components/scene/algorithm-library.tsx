@@ -15,7 +15,7 @@ type Props = {
 };
 
 /**
- * The sketch's algorithm blocks. They are independent of properties: drag one
+ * The sketch's algorithm blocks. They are independent of params: drag one
  * into any socket, right-click to copy it, or open it to edit the shared definition.
  */
 export function AlgorithmLibrary({ scene, busy, targetName, imports, onEdit, onUse, onMakePen, onImport, onCopy, clipFor }: Props) {
@@ -25,16 +25,16 @@ export function AlgorithmLibrary({ scene, busy, targetName, imports, onEdit, onU
   const names = (id: string) => scene.algorithms.find(algorithm => algorithm.id === id)?.name || id;
   return <section className="block-palette" aria-label="Algorithm blocks">{menu}
     <header className="block-palette-header"><Icon name="function" size={14} /><strong>Algorithm blocks</strong><span>{scene.algorithms.length}</span></header>
-    <p className="algorithm-library-help">Drag a block into any property socket. You can also right-click to copy it and paste it into another property or sketch. Editing a block's definition updates every place it's plugged in.</p>
+    <p className="algorithm-library-help">Drag a block into any param socket. You can also right-click to copy it and paste it into another param or sketch. Editing a block's definition updates every place it's plugged in.</p>
     {!scene.algorithms.length && <p className="empty-panel">No blocks yet. Extract brush stamps first.</p>}
     <div className="block-palette-list">{scene.algorithms.map(algorithm => {
       const uses = [...new Set((usage.get(algorithm.id) || []).map(use => nodeName(use.nodeId)))];
       return <details key={algorithm.id} className="palette-block" style={blockStyle(algorithm.id)} onContextMenu={event => openMenu(event, [
         { label: "Copy block", hint: "default arguments", onSelect: () => onCopy(algorithm.id) },
-        { label: targetName ? `Plug into ${targetName} as new property` : "Plug into a node", disabled: busy || !targetName, onSelect: () => onUse(algorithm.id) },
+        { label: targetName ? `Plug into ${targetName} as new param` : "Plug into a node", disabled: busy || !targetName, onSelect: () => onUse(algorithm.id) },
         { label: "Make pen", onSelect: () => onMakePen(algorithm.id) },
       ], algorithm.name)}>
-        <summary className="palette-block-header" draggable={!busy} title="Drag into a property socket" onDragStart={event => dragBlock(event, clipFor(algorithm.id))}>
+        <summary className="palette-block-header" draggable={!busy} title="Drag into a param socket" onDragStart={event => dragBlock(event, clipFor(algorithm.id))}>
           <span className="block-grip" aria-hidden="true">⠿</span><span className="algorithm-badge">ƒ</span><strong>{algorithm.name}</strong>
           <small>{algorithm.params.length} in · {uses.length ? `${uses.length} use${uses.length > 1 ? "s" : ""}` : "unused"}</small>
         </summary>
@@ -51,7 +51,7 @@ export function AlgorithmLibrary({ scene, busy, targetName, imports, onEdit, onU
         </div>
       </details>;
     })}</div>
-    {imports.length > 0 && <label className="add-property algorithm-import"><span>BLOCKS FROM OTHER SKETCHES & PENS</span>
+    {imports.length > 0 && <label className="add-param algorithm-import"><span>BLOCKS FROM OTHER SKETCHES & PENS</span>
       <select aria-label="Import algorithm" value="" disabled={busy} onChange={e => { if (e.target.value) onImport(e.target.value); }}>
         <option value="">Bring a block into this sketch…</option>{imports.map(item => <option key={item.key} value={item.key}>{item.label} · {item.algorithm.name}</option>)}
       </select></label>}

@@ -13,13 +13,13 @@ export function BrushRoleBadge({ role }: { role: Pick<BrushRole, "master"> & { b
 type BannerProps = { role: BrushRole; nodeName: string; masterFrame: string | null; onMaster: () => void; onDetach: () => void; onAdopt: () => void;
   /** Delete this brush stamp (the whole collection) from the frame. */
   onDelete?: () => void };
-/** Above the selected node's properties: which brush it belongs to, as its master or an instance. */
+/** Above the selected node's params: which brush it belongs to, as its master or an instance. */
 export function BrushRoleBanner({ role, nodeName, masterFrame, onMaster, onDetach, onAdopt, onDelete }: BannerProps) {
   const { brush, master } = role;
   return <div className={`brush-role-banner ${master ? "master" : "instance"}`} role="note" aria-label={`${brush.name} brush ${master ? "master" : "instance"}`}>
     <div className="brush-role-heading"><BrushRoleBadge role={role} /><strong>{brush.name}</strong><i style={{ background: brush.color }} /></div>
-    {master ? <span>{nodeName === brush.name ? "This node is" : `The collection “${nodeName}” belongs to is`} the brush's original. Semantic transformations and state machines changed here are used by brushes you stamp from now on.</span>
-      : <span>{masterFrame ? <>This is an instance of the brush. Change semantic transformations and state machines on the master (<b>{masterFrame}</b>), or detach it into a new brush and change them there.</>
+    {master ? <span>{nodeName === brush.name ? "This node is" : `The collection “${nodeName}” belongs to is`} the brush's original. constraints and state machines changed here are used by brushes you stamp from now on.</span>
+      : <span>{masterFrame ? <>This is an instance of the brush. Change constraints and state machines on the master (<b>{masterFrame}</b>), or detach it into a new brush and change them there.</>
         : <>The frame that held this brush's master was deleted. Make this instance the master, or detach it into a new brush and change it there.</>}</span>}
     <div className="brush-role-actions">
       {!master && (masterFrame ? <button onClick={onMaster}><Icon name="arrow" size={12} />Go to master</button> : <button onClick={onAdopt}>◆ Make master</button>)}

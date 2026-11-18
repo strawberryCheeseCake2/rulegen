@@ -16,12 +16,12 @@ after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previo
 const image = "data:image/png;base64,AAAA";
 const annotations = [{ id: "a", points: [{ x: .1, y: .1 }, { x: .3, y: .2 }] }];
 
-test("review lists added, changed and removed collections, properties and algorithms without mutating the scene", () => {
+test("review lists added, changed and removed collections, params and algorithms without mutating the scene", () => {
   const scene = sampleScene(), original = JSON.stringify(scene);
-  let proposed = updateNode(scene, "orb", node => ({ ...node, transformations: [{ ...node.transformations[0], properties: [{ ...node.transformations[0].properties[0], value: num(60, 10, 140, 1, "px") }] }] }));
+  let proposed = updateNode(scene, "orb", node => ({ ...node, constraints: [{ ...node.constraints[0], params: [{ ...node.constraints[0].params[0], value: num(60, 10, 140, 1, "px") }] }] }));
   proposed = { ...proposed, nodes: [...proposed.nodes, { ...proposed.nodes[1], id: "leaf", name: "Leaf", machine: null }] };
   const changes = sceneChanges(scene, proposed);
-  assert.ok(changes.some(change => change.kind === "change" && change.path === "Object · Orb · Pulse · Radius (spatial)" && /60 px/.test(change.after)));
+  assert.ok(changes.some(change => change.kind === "change" && change.path === "Object · Orb · size · Radius (spatial)" && /60 px/.test(change.after)));
   assert.ok(changes.some(change => change.kind === "remove" && /Speed/.test(change.path)));
   assert.ok(changes.some(change => change.kind === "add" && change.path === "Object · Leaf · Name"));
   assert.ok(sceneChanges(scene, removeNodes(scene, ["orb"])).some(change => change.kind === "remove" && change.path === "Object · Orb · Name"));
@@ -58,7 +58,7 @@ test("AI clarification compares before/after images with the scene as context an
 });
 
 test("confirmed changes regenerate code from the proposed scene with the annotated image and summary", async () => {
-  const proposed = updateNode(sampleScene(), "orb", node => ({ ...node, transformations: [{ ...node.transformations[0], properties: node.transformations[0].properties.map(p => p.id === "radius" ? { ...p, value: num(60, 10, 140, 1, "px") } : p) }] }));
+  const proposed = updateNode(sampleScene(), "orb", node => ({ ...node, constraints: node.constraints.map(item => ({ ...item, params: item.params.map(p => p.id === "radius" ? { ...p, value: num(60, 10, 140, 1, "px") } : p) })) }));
   await withMockedAI(() => ({ title: "Tree", explanation: "큰 원", code: sceneProgram }), async calls => {
     const generated = generatedSchema.parse(await runAI(requestSchema.parse({ intent: "code", scene: proposed, image, annotations, revisionSummary: "원을 키웁니다", instruction: "원을 키워줘" }), new AbortController().signal));
     assert.match(generated.code, /"orb\/radius": 60/);

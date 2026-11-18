@@ -28,9 +28,9 @@ type Props = {
 
 export const BRUSH_TOOL_INFO: Record<BrushToolKind, { icon: IconName; label: string; hint: string }> = {
   brush: { icon: "brush", label: "Brush", hint: "Brush on a frame: adds this brush where you start if the frame doesn't have it yet; on a frame that has it, you play with it (the result takes your input, Esc to stop)." },
-  inspect: { icon: "inspect", label: "Inspection", hint: "Step through states, transitions and constraint values of this brush." },
+  inspect: { icon: "inspect", label: "Inspection", hint: "Step through states, transitions and param values of this brush." },
   "inspect-annotate": { icon: "inspect-pen", label: "Inspection annotation", hint: "Mark a concern on the frame; each one becomes a targeted inspection tool." },
-  targeted: { icon: "target", label: "Targeted inspection", hint: "A visualization, fixes and recommendations tailored to one concern." },
+  targeted: { icon: "target", label: "Targeted inspection", hint: "A visualization tailored to one concern, and an Execution frame where you draw the state you want." },
 };
 
 /** Left toolbar: frames, drawing tools, semantic pens, history and zoom. */
@@ -55,6 +55,7 @@ export function ToolRail(props: Props) {
     <div className="rail-line" />
     <div className="left-sketch-tools" role="toolbar" aria-label="Sketch tools">
       {toolButton("select", "select", "Select and move brush stamps (V)")}
+      {toolButton("adjust", "adjust", "Adjust by dragging (A): drag on a drawn object; the mouse's x, y and speed change the values mapped to them")}
       <div className="left-tool-anchor">{toolButton("pen", "pen", "Pencil")}{props.pencilOpen && <div className="pencil-popover" role="group" aria-label="Pencil settings">
         <div className="pencil-popover-heading"><span>Pencil settings</span><button aria-label="Close pencil settings" onClick={props.onPencilClose}><Icon name="close" size={14} /></button></div>
         <span className="left-setting-title">INK COLOR</span>
@@ -114,7 +115,7 @@ export function ToolRail(props: Props) {
                 {props.onTargetedRemove && <button className="brush-targeted-remove" aria-label={`Remove targeted inspection ${tool.name}`} title="Remove this targeted inspection" onClick={() => props.onTargetedRemove!(brush.id, tool.id)}><Icon name="close" size={11} /></button>}</div>;
             })}
             {!brush.targeted.length && <span className="brush-targeted-hint">Mark a concern with an inspection annotation and a targeted inspection tool appears here.</span>}</div>
-            {/* Minimal examples of this brush's transformations: each a brush of its own (brush with it, inspect it). */}
+            {/* Minimal examples of this brush's constraints: each a brush of its own (brush with it, inspect it). */}
             {subs.length > 0 && <div className="brush-sub-list" role="group" aria-label={`${brush.name} sub brushes`}><span className="left-setting-title">SUB BRUSHES</span>
               {subs.map(item => { const picked = inGroup && selected!.brushId === item.id;
                 return <div key={item.id} className={`brush-sub-row ${picked ? "picked" : ""}`}>

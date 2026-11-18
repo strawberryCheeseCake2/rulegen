@@ -31,7 +31,7 @@ test("stamping into a frame with its own program keeps its modules; a different 
   const target = { scene: source, generated: generated() };
   const same = stampModule(target, source, "tree", moduleOf(code), [{ x: .2, y: .2 }], "Tree");
   assert.deepEqual([...programModules(same.generated.code).keys()], ["tree"], "the same module is reused");
-  const other = { key: "tree", text: moduleOf(code).text.replace("p.stroke(m.v(\"tree/ink\"));", "p.stroke(m.v(\"tree/ink\")); // thicker") };
+  const other = { key: "tree", text: moduleOf(code).text.replace("p.stroke(tree.color);", "p.stroke(tree.color); // thicker") };
   const renamed = stampModule(target, source, "tree", other, [{ x: .2, y: .2 }], "Tree");
   assert.deepEqual([...programModules(renamed.generated.code).keys()], ["tree", "tree~2"]);
   assert.equal(renamed.scene.nodes.find(node => node.id === renamed.roots[0])?.codeModule, "tree~2");
@@ -140,14 +140,14 @@ test("deleting a brush stamp keeps the frame's program live (no Update needed), 
   assert.equal(relinkStamps(two.generated, two.scene, changed), two.generated, "a new state machine on a stamp that was there is not covered");
 });
 
-test("an applied recommendation can be undone and redone as a whole (scene and code together)", async () => {
-  const { applyRecommendation, appliedCurrent, stepApplied } = await import("../app/studio/inspection-actions");
+test("an applied fix can be undone and redone as a whole (scene and code together)", async () => {
+  const { applyFix, appliedCurrent, stepApplied } = await import("../app/studio/inspection-actions");
   const scene = sampleScene(), gen = generated();
   const panels: Record<string, ReturnType<typeof createSketchPanel>> = { f: { ...createSketchPanel({ scene }), generated: gen, codeDraft: gen.code } };
   const deps = { panel: (id: string) => panels[id], updatePanel: (id: string, patch: any) => { panels[id] = { ...panels[id], ...(typeof patch === "function" ? patch(panels[id]) : patch) }; }, refreshBrushCode: () => {} } as any;
   const key = Object.keys(sceneValues(scene)).find(item => item.startsWith("tree/") && typeof sceneValues(scene)[item] === "number" && !item.includes("/@"))!;
   const original = sceneValues(scene)[key] as number;
-  await applyRecommendation(deps, "f", { kind: "value", nodeId: "tree", targetId: "x", targetIds: [], title: "더 크게", detail: "d", changes: [{ key, stateId: "", value: original + 1 }] });
+  await applyFix(deps, "f", { kind: "value", nodeId: "tree", targetId: "x", targetIds: [], title: "더 크게", detail: "d", changes: [{ key, stateId: "", value: original + 1 }] });
   assert.equal(sceneValues(panels.f.scene)[key], original + 1);
   assert.equal(panels.f.applied.past.length, 1); assert.equal(appliedCurrent(panels.f, "undo"), true);
   // As if AI had also rewritten the code with it.
@@ -181,8 +181,8 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   // A flow field over the whole canvas (lines traced by an algorithm) is the drawing itself, not a background: a brush; plain paper is not.
   const full = { x: 0, y: 0, w: 1, h: 1 }, orb = scene.nodes.find(node => node.id === "orb")!;
   const flow = { ...scene, nodes: [
-    { ...orb, id: "paper", name: "Paper", parentId: null, region: full, machine: null, transformations: [{ id: "ground", label: "White ground", description: "", properties: [{ id: "fill", label: "Fill", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#ffffff" } }] }] },
-    { ...orb, id: "flowing-ink", name: "Flowing ink", parentId: null, region: full, machine: null, transformations: [{ id: "trace", label: "Trace currents", description: "", properties: [{ id: "paths", label: "Paths", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "power-decay", args: [] } }] }] },
+    { ...orb, id: "paper", name: "Paper", parentId: null, region: full, machine: null, constraints: [{ id: "ground", property: "color", description: "", params: [{ id: "fill", label: "Fill", effect: "stylistic" as const, description: "", value: { type: "color" as const, value: "#ffffff" } }] }] },
+    { ...orb, id: "flowing-ink", name: "Flowing ink", parentId: null, region: full, machine: null, constraints: [{ id: "trace", property: "paths", description: "", params: [{ id: "paths", label: "Paths", effect: "spatial" as const, description: "", value: { type: "algorithm" as const, algorithmId: "power-decay", args: [] } }] }] },
   ] };
   assert.deepEqual(brushesFor(flow, "sketch-f", [], () => "b").map(brush => brush.nodeId), ["flowing-ink"]);
   // A root form left without a brush can be made one by hand, from the layer panel.
@@ -190,9 +190,19 @@ test("a composed scene of one drawn form (an object at the root) still makes a b
   assert.match(home, /return node && !node\.parentId && !isBackdrop\(node\) \? <button type="button" className="layer-make-brush"/);
   assert.match(home, /updatePanel\(frameId, panel => \(\{ scene: markBrushes\(panel\.scene, \[brush\]\) \}\)\);/);
   // The object brush stamps into another frame and runs its own module, like a collection's.
-  const program = connectScene({ title: "Plant", explanation: "", code: 'rulegenModule("background", function (m) { return { draw() { m.v("background/radius"); m.v("background/speed"); } }; });\nrulegenModule("plant", function (m) { return { draw() { const b = m.box("plant"); m.v("plant/speed"); p.circle(b.x, b.y, m.v("plant/radius") * 2); } }; });' }, composed).code;
+  const program = connectScene({ title: "Plant", explanation: "", code: 'rulegenModule("background", function (m) { function size() { return m.v("background/radius") * 2; } function x() { return m.v("background/speed"); } return { draw() { m.fsm("background").evaluate(); }, mousePressed() { m.fsm("background").dispatch("press"); }, mouseReleased() { m.fsm("background").dispatch("settle"); }, constraints: { background: { pulse: size, drift: x } } }; });\nrulegenModule("plant", function (m) { function size() { return m.v("plant/radius") * 2; } function x() { return m.v("plant/speed"); } return { draw() { const b = m.box("plant"), data = m.fsm("plant").evaluate(); p.circle(b.x, b.y, data.size); }, mousePressed() { m.fsm("plant").dispatch("press"); }, mouseReleased() { m.fsm("plant").dispatch("settle"); }, constraints: { plant: { pulse: size, drift: x } } }; });' }, composed).code;
   const result = stampModule({ scene: { algorithms: [], nodes: [] }, generated: null }, composed, "plant", { key: "plant", text: programModules(program).get("plant")! }, [{ x: .5, y: .5 }], "Draggable plant");
   assert.equal(result.roots.length, 1);
   const sketch = run(result.generated.code); sketch.draw();
   assert.equal(sketch.circles.length, 1, "the stamp draws");
+});
+
+test("re-rendering a frame from the start deletes its inspect history (every brush's), keeping what the user wrote and marked", async () => {
+  const { withoutHistory } = await import("../app/studio/inspection-actions");
+  const { emptyInspection } = await import("../app/lib/inspection");
+  const panel = createSketchPanel();
+  const held = { ...emptyInspection("a"), steps: [{ id: "s1" }, { id: "s2" }] as never[], cursor: 1, concern: "why", marks: [[{ x: 0, y: 0 }]] as never, focus: { kind: "state", nodeId: "n", id: "i" } as never };
+  const reset = withoutHistory({ ...panel, inspections: { a: held, b: { ...emptyInspection("b"), steps: [{ id: "t" }] as never[], cursor: 0 } } }).inspections;
+  assert.deepEqual([reset.a.steps, reset.a.cursor, reset.a.focus, reset.b.steps, reset.b.cursor], [[], null, null, [], null]);
+  assert.deepEqual([reset.a.concern, reset.a.marks], ["why", [[{ x: 0, y: 0 }]]]);
 });

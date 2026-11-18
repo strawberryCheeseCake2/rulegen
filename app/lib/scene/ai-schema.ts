@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { colorValueSchema, effectSchema, idSchema, MAX_ALGORITHM_PARAMS, MAX_NODE_STATES, MAX_NODE_TRANSITIONS, MAX_PROPERTIES, MAX_SCENE_NODES, nodeKindSchema, nodeTransitionSchema, numberValueSchema, regionSchema, selectValueSchema, toggleValueSchema } from "./schema";
+import { colorValueSchema, MAX_CONSTRAINT_INPUTS, MAX_CONSTRAINT_DRAGS, MAX_PARAMS, pointerInputSchema, valueDragSchema, effectSchema, idSchema, MAX_ALGORITHM_PARAMS, MAX_NODE_STATES, MAX_NODE_TRANSITIONS, MAX_SCENE_NODES, nodeKindSchema, nodeTransitionSchema, numberValueSchema, regionSchema, selectValueSchema, toggleValueSchema } from "./schema";
 
 // Structured-output schemas sent to the model. They are deliberately
 // non-recursive (strict JSON schema friendly): nested algorithms are given by
@@ -18,35 +18,48 @@ export const aiAlgorithmSchema = z.object({
   id: idSchema, name: z.string().min(1).max(100), description: z.string().max(1500),
   params: z.array(z.object({ id: idSchema, label: z.string().min(1).max(80), description: z.string().max(600), value: aiArgValue })).max(MAX_ALGORITHM_PARAMS),
 });
-export const aiPropertySchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: aiValueSchema });
-export const aiTransformationSchema = z.object({ id: idSchema, label: z.string().max(100), description: z.string().max(1000), properties: z.array(aiPropertySchema).max(MAX_PROPERTIES) });
-/** Semantic transformations a model may stack on one node. */
-export const MAX_AI_TRANSFORMATIONS = 10;
+export const aiParamSchema = z.object({ id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600), value: aiValueSchema });
+/**
+ * A constraint: the relationship that determines one property of the node (`property`: exactly the property's name),
+ * how it depends on the others (`description`), the params it is tuned by (sliders or algorithm blocks), the pointer
+ * attributes it reads and the values a drag on the object adjusts.
+ */
+export const aiConstraintSchema = z.object({ id: idSchema, property: z.string().min(1).max(80), description: z.string().max(1000), params: z.array(aiParamSchema).max(MAX_PARAMS),
+  inputs: z.array(pointerInputSchema).max(MAX_CONSTRAINT_INPUTS),
+  /** The values a mouse drag on its object adjusts (`off` is the user's, never the model's). */
+  drags: z.array(valueDragSchema.omit({ off: true })).max(MAX_CONSTRAINT_DRAGS) });
+/** Constraints a model may give one node. */
+export const MAX_AI_CONSTRAINTS = 10;
+/** A node's FSM: states list the node's constraint ids in evaluation order; transitions are taken by dispatched events. */
 export const aiMachineSchema = z.object({
   initialState: idSchema,
-  states: z.array(z.object({ id: idSchema, label: z.string().min(1).max(100), description: z.string().max(1000), values: z.array(z.object({ propertyId: idSchema, value: aiValueSchema })).max(MAX_PROPERTIES) })).min(1).max(MAX_NODE_STATES),
+  states: z.array(z.object({ id: idSchema, label: z.string().min(1).max(100), description: z.string().max(1000), constraintIds: z.array(idSchema).max(MAX_AI_CONSTRAINTS) })).min(1).max(MAX_NODE_STATES),
   transitions: z.array(nodeTransitionSchema).max(MAX_NODE_TRANSITIONS),
 });
 export const aiNodeSchema = z.object({
   id: idSchema, kind: nodeKindSchema, parentId: idSchema.nullable(), name: z.string().min(1).max(100), description: z.string().max(600),
-  primitive: z.string().max(40), region: regionSchema, transformations: z.array(aiTransformationSchema).max(MAX_AI_TRANSFORMATIONS), machine: aiMachineSchema.nullable(),
+  primitive: z.string().max(40), region: regionSchema, constraints: z.array(aiConstraintSchema).max(MAX_AI_CONSTRAINTS), machine: aiMachineSchema.nullable(),
 });
 export type AIAlgorithm = z.infer<typeof aiAlgorithmSchema>;
 export type AINode = z.infer<typeof aiNodeSchema>;
 export type AIMachine = z.infer<typeof aiMachineSchema>;
-export type AITransformation = z.infer<typeof aiTransformationSchema>;
+export type AIParam = z.infer<typeof aiParamSchema>;
+export type AIConstraint = z.infer<typeof aiConstraintSchema>;
 
 const algorithms = z.array(aiAlgorithmSchema).max(24);
 /** Extracted/composed scenes generate repetition procedurally, so they stay small. */
 export const MAX_AI_SCENE_NODES = 24;
 /** extract / compose: the scene found in (or composed from) a sketch. */
 export const aiSceneSchema = z.object({ algorithms, nodes: z.array(aiNodeSchema).min(1).max(MAX_AI_SCENE_NODES) });
-/** transform: one new or regenerated semantic transformation for one node. */
-export const aiTransformSchema = z.object({ algorithms, transformation: aiTransformationSchema });
-/** split: one transformation divided into the meaningful algorithms inside it (or why it cannot be). */
-export const aiSplitSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms, parts: z.array(aiTransformationSchema).max(5) });
-/** state-machine: one node's machine. */
-export const aiNodeMachineSchema = z.object({ algorithms, machine: aiMachineSchema });
+/** transform: one new or regenerated constraint (or one param of it) for one node. */
+export const aiTransformSchema = z.object({ algorithms, constraint: aiConstraintSchema });
+/** split: one constraint divided into the meaningful algorithms inside it, each a constraint of its own (or why it cannot be). */
+export const aiSplitSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), algorithms, parts: z.array(aiConstraintSchema).max(5) });
+/**
+ * state-machine: one node's FSM, with the constraints its states need that the node does not have yet (new ids; a
+ * state may evaluate the node's existing constraints and these, in its own order).
+ */
+export const aiNodeMachineSchema = z.object({ algorithms, constraints: z.array(aiConstraintSchema).max(MAX_AI_CONSTRAINTS), machine: aiMachineSchema });
 /** machine-refine: the refined machine and the Compose prompt rewritten to describe it. */
 export const aiMachineRefineSchema = aiNodeMachineSchema.extend({ composePrompt: z.string().max(2000) });
 /** revision: a complete proposed scene. */

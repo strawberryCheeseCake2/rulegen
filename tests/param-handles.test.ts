@@ -10,7 +10,7 @@ import { num, sampleScene, withMockedAI } from "./fixtures/scene";
 import { applyHandles, CELL_HEADER, handleFits, handleSuggestionsSchema, keepHandles, proxyCells, setHandle, settleHandles } from "../app/lib/scene/handles";
 import { findNode } from "../app/lib/scene/graph";
 import { sceneSchema } from "../app/lib/scene/validate";
-import { findProperty } from "../app/lib/scene/transformations";
+import { findParam } from "../app/lib/scene/constraints";
 import { sceneLiveStatus } from "../app/lib/scene/live";
 import { settleProposal } from "../app/lib/scene/revisions";
 import { requestSchema } from "../app/lib/schema";
@@ -19,8 +19,8 @@ import { proxyRuntime, type ProxyCell } from "../app/lib/proxy-runtime";
 import { runAI } from "../app/server/ai.server";
 import { prepareHandle } from "../app/server/code.server";
 import { proxyCellsFor, ProxyFrame } from "../app/components/proxy-frame";
-import { PropertyInspector } from "../app/components/scene/property-inspector";
-import type { PropertyHandle, SceneNode } from "../app/lib/scene/schema";
+import { ConstraintInspector } from "../app/components/scene/constraint-inspector";
+import type { ParamHandle, SceneNode } from "../app/lib/scene/schema";
 
 const logDirectory = mkdtempSync(path.join(tmpdir(), "rulegen-handles-"));
 const previousLogDirectory = process.env.RULEGEN_AI_LOG_DIR;
@@ -35,17 +35,17 @@ const pullWidget = `rulegenHandle(function (h) {
     dragged() { h.setRatio('', h.mouseX / h.w); },
   };
 });`;
-const widget = (code = pullWidget, paths: string[][] = [[]]): PropertyHandle => ({ code, prepared: prepareHandle(code), paths, hint: "끌어서 크기" });
+const widget = (code = pullWidget, paths: string[][] = [[]]): ParamHandle => ({ code, prepared: prepareHandle(code), paths, hint: "끌어서 크기" });
 
-test("a property's handle is its own widget, saved with the scene; an older or broken handle is dropped", () => {
+test("a param's handle is its own widget, saved with the scene; an older or broken handle is dropped", () => {
   const scene = sampleScene();
   const withHandle = setHandle(scene, "orb", "radius", widget());
   const parsed = sceneSchema.parse(JSON.parse(JSON.stringify(withHandle)));
-  assert.equal(findProperty(findNode(parsed, "orb")!, "radius")!.handle!.hint, "끌어서 크기");
-  assert.match(findProperty(findNode(parsed, "orb")!, "radius")!.handle!.prepared, /__rulegenGuard/, "the stored widget runs guarded");
-  const old = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, transformations: [{ ...node.transformations[0], properties: node.transformations[0].properties.map(p => p.id === "radius" ? { ...p, handle: { metaphor: "stretch", anchor: { x: .5, y: .5 } } } : p) }] } : node) };
-  assert.equal(findProperty(findNode(sceneSchema.parse(old), "orb")!, "radius")!.handle, undefined, "the earlier metaphor handles do not block opening a project");
-  assert.equal(findProperty(findNode(setHandle(withHandle, "orb", "radius", null), "orb")!, "radius")!.handle, undefined);
+  assert.equal(findParam(findNode(parsed, "orb")!, "radius")!.handle!.hint, "끌어서 크기");
+  assert.match(findParam(findNode(parsed, "orb")!, "radius")!.handle!.prepared, /__rulegenGuard/, "the stored widget runs guarded");
+  const old = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, constraints: node.constraints.map(item => ({ ...item, params: item.params.map(p => p.id === "radius" ? { ...p, handle: { metaphor: "stretch", anchor: { x: .5, y: .5 } } } : p) })) } : node) };
+  assert.equal(findParam(findNode(sceneSchema.parse(old), "orb")!, "radius")!.handle, undefined, "the earlier metaphor handles do not block opening a project");
+  assert.equal(findParam(findNode(setHandle(withHandle, "orb", "radius", null), "orb")!, "radius")!.handle, undefined);
 });
 
 test("handles are UI only: the code stays live, and they survive regeneration while their scalars exist", () => {
@@ -53,12 +53,12 @@ test("handles are UI only: the code stays live, and they survive regeneration wh
   const withHandles = setHandle(setHandle(scene, "tree", "structure", widget(pullWidget, [["depth"]])), "tree", "ink", widget(pullWidget, [[]]));
   assert.equal(sceneLiveStatus(generated, withHandles), sceneLiveStatus(generated, scene));
   const node = findNode(withHandles, "tree")!;
-  const regenerated: SceneNode = { ...node, transformations: node.transformations.map(item => ({ ...item, properties: item.properties.map(({ handle: _gone, ...rest }) => rest) })) };
-  assert.deepEqual(keepHandles(node, regenerated), node, "same property ids and scalars: handles come back");
-  const swapped: SceneNode = { ...regenerated, transformations: regenerated.transformations.map(item => ({ ...item, properties: item.properties.map(p => p.id === "structure" ? { ...p, value: num(3, 1, 9) } : p) })) };
-  assert.equal(findProperty(keepHandles(node, swapped), "structure")!.handle, undefined, "a widget whose scalar is gone is dropped");
-  assert.equal(handleFits({ ...findProperty(swapped, "structure")!, handle: findProperty(node, "structure")!.handle }), false);
-  assert.ok(findProperty(findNode(settleProposal(withHandles, scene), "tree")!, "ink")!.handle, "a revision proposal keeps them");
+  const regenerated: SceneNode = { ...node, constraints: node.constraints.map(item => ({ ...item, params: item.params.map(({ handle: _gone, ...rest }) => rest) })) };
+  assert.deepEqual(keepHandles(node, regenerated), node, "same param ids and scalars: handles come back");
+  const swapped: SceneNode = { ...regenerated, constraints: regenerated.constraints.map(item => ({ ...item, params: item.params.map(p => p.id === "structure" ? { ...p, value: num(3, 1, 9) } : p) })) };
+  assert.equal(findParam(keepHandles(node, swapped), "structure")!.handle, undefined, "a widget whose scalar is gone is dropped");
+  assert.equal(handleFits({ ...findParam(swapped, "structure")!, handle: findParam(node, "structure")!.handle }), false);
+  assert.ok(findParam(findNode(settleProposal(withHandles, scene), "tree")!, "ink")!.handle, "a revision proposal keeps them");
 });
 
 test("widget code is guarded like sketch code and may not take over the frame", () => {
@@ -68,49 +68,49 @@ test("widget code is guarded like sketch code and may not take over the frame", 
   assert.match(prepareHandle(pullWidget), /__rulegenGuard\(\)/);
 });
 
-test("AI builds one interface per property, with the property's meaning, scalars and algorithms as context", async () => {
+test("AI builds one interface per param, with the param's meaning, scalars and algorithms as context", async () => {
   const scene = sampleScene();
   const output = { handles: [
-    { propertyId: "structure", paths: [["depth"], ["length", "base"], ["nope"]], hint: "가지 끝을 끌어 늘이기", code: pullWidget },
-    { propertyId: "structure", paths: [], hint: "중복", code: pullWidget },
-    { propertyId: "ink", paths: [], hint: "먹색", code: "rulegenHandle(function (h) { document.title = 'x'; return {}; });" },
-    { propertyId: "radius", paths: [], hint: "다른 노드", code: pullWidget },
+    { paramId: "structure", paths: [["depth"], ["length", "base"], ["nope"]], hint: "가지 끝을 끌어 늘이기", code: pullWidget },
+    { paramId: "structure", paths: [], hint: "중복", code: pullWidget },
+    { paramId: "ink", paths: [], hint: "먹색", code: "rulegenHandle(function (h) { document.title = 'x'; return {}; });" },
+    { paramId: "radius", paths: [], hint: "다른 노드", code: pullWidget },
   ] };
   await withMockedAI(() => output, async calls => {
-    const result = handleSuggestionsSchema.parse(await runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetTransformationId: "branching-growth", image: "data:image/png;base64,AAAA", instruction: "가지를 직접 잡고 싶어" }), new AbortController().signal));
-    assert.deepEqual(result.handles.map(item => item.propertyId), ["structure"], "duplicates, other transformations' and other nodes' properties are dropped");
-    assert.deepEqual(result.handles[0].handle.paths, [["depth"], ["length", "base"]], "only paths of the property's scalars");
+    const result = handleSuggestionsSchema.parse(await runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetConstraintId: "branching-growth", image: "data:image/png;base64,AAAA", instruction: "가지를 직접 잡고 싶어" }), new AbortController().signal));
+    assert.deepEqual(result.handles.map(item => item.paramId), ["structure"], "duplicates, other constraints' and other nodes' params are dropped");
+    assert.deepEqual(result.handles[0].handle.paths, [["depth"], ["length", "base"]], "only paths of the param's scalars");
     const context = JSON.parse(calls[0].input[0].content[0].text);
-    assert.deepEqual(context.properties.map((item: { propertyId: string }) => item.propertyId), ["structure"], "one transformation's properties");
-    const structure = context.properties[0];
+    assert.deepEqual(context.params.map((item: { paramId: string }) => item.paramId), ["structure"], "one constraint's params");
+    const structure = context.params[0];
     assert.deepEqual(structure.scalars.map((item: { path: string[] }) => item.path.join("/")), ["depth", "length/base", "length/ratio"]);
     assert.deepEqual(structure.algorithms.map((item: { id: string }) => item.id).sort(), ["power-decay", "recursive-branch"], "the algorithms behind it, to draw a faithful miniature");
     assert.equal(context.instruction, "가지를 직접 잡고 싶어");
     assert.ok(context.widgetArea.w > 300 && context.widgetArea.h > 200, "the room each widget gets in the proxy frame");
-    assert.match(calls[0].instructions, /bespoke interface per property/);
+    assert.match(calls[0].instructions, /bespoke interface per param/);
     const applied = applyHandles(scene, "tree", result.handles);
-    assert.equal(findProperty(findNode(applied, "tree")!, "structure")!.handle!.hint, "가지 끝을 끌어 늘이기");
+    assert.equal(findParam(findNode(applied, "tree")!, "structure")!.handle!.hint, "가지 끝을 끌어 늘이기");
     // Later requests carry the scene without widget code.
-    await runAI(requestSchema.parse({ intent: "transform", scene: applied, targetNodeId: "tree", targetTransformationId: "ink-wash" }), new AbortController().signal).catch(() => null);
+    await runAI(requestSchema.parse({ intent: "transform", scene: applied, targetNodeId: "tree", targetConstraintId: "ink-wash" }), new AbortController().signal).catch(() => null);
     assert.doesNotMatch(calls[1].input[0].content[0].text, /rulegenHandle/);
   });
   await withMockedAI(() => output, async calls => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetTransformationId: "ink-wash" }), new AbortController().signal), /Could not run the handle code: .*document/, "a widget using a blocked API is left out with why");
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetConstraintId: "ink-wash" }), new AbortController().signal), /Could not run the handle code: .*document/, "a widget using a blocked API is left out with why");
     assert.equal(calls.length, 1);
-    // Never the whole node at once: one property or one transformation.
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree" }), new AbortController().signal), /one property or one transformation/);
+    // Never the whole node at once: one param or one constraint.
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree" }), new AbortController().signal), /one param or one constraint/);
     assert.equal(calls.length, 1, "no AI call for a whole-node request");
   });
-  await withMockedAI(() => ({ handles: [{ propertyId: "radius", paths: [], hint: "", code: pullWidget }, { propertyId: "speed", paths: [], hint: "", code: pullWidget }] }), async calls => {
-    const result = handleSuggestionsSchema.parse(await runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "orb", targetPropertyId: "speed" }), new AbortController().signal));
-    assert.deepEqual(result.handles.map(item => item.propertyId), ["speed"], "a property request designs that property only");
-    assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).properties.map((item: { propertyId: string }) => item.propertyId), ["speed"]);
+  await withMockedAI(() => ({ handles: [{ paramId: "radius", paths: [], hint: "", code: pullWidget }, { paramId: "speed", paths: [], hint: "", code: pullWidget }] }), async calls => {
+    const result = handleSuggestionsSchema.parse(await runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "orb", targetParamId: "speed" }), new AbortController().signal));
+    assert.deepEqual(result.handles.map(item => item.paramId), ["speed"], "a param request designs that param only");
+    assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).params.map((item: { paramId: string }) => item.paramId), ["speed"]);
   });
-  await withMockedAI(() => ({ handles: [{ propertyId: "ink", paths: [], hint: "", code: "rulegenHandle(function (h) { window.x = 1; return {}; });" }] }), async () => {
-    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetPropertyId: "ink" }), new AbortController().signal), /Could not run the handle code/);
+  await withMockedAI(() => ({ handles: [{ paramId: "ink", paths: [], hint: "", code: "rulegenHandle(function (h) { window.x = 1; return {}; });" }] }), async () => {
+    await assert.rejects(runAI(requestSchema.parse({ intent: "handles", scene, targetNodeId: "tree", targetParamId: "ink" }), new AbortController().signal), /Could not run the handle code/);
   });
-  assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ propertyId: "radius", paths: [["missing"]], hint: "", code: pullWidget }] }, { propertyId: "radius" }, code => code).handles[0].handle.paths, [[]], "no valid path: all of its scalars");
-  assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ propertyId: "radius", paths: [], hint: "", code: pullWidget }] }, {}, code => code).handles, [], "no target: nothing (never the whole node)");
+  assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ paramId: "radius", paths: [["missing"]], hint: "", code: pullWidget }] }, { paramId: "radius" }, code => code).handles[0].handle.paths, [[]], "no valid path: all of its scalars");
+  assert.deepEqual(settleHandles(findNode(scene, "orb")!, { handles: [{ paramId: "radius", paths: [], hint: "", code: pullWidget }] }, {}, code => code).handles, [], "no target: nothing (never the whole node)");
 });
 
 /** Run the proxy runtime against a fake p5 and record what it posts. */
@@ -155,23 +155,23 @@ test("the proxy runtime routes a drag to the widget under it and reports coerced
   assert.equal(proxy.lines[0][2], 0, "values from outside redraw the widget (ratio 0)");
 });
 
-test("the proxy frame and the inspector show and edit each property's interface; projects keep proxy frames", () => {
+test("the proxy frame and the inspector show and edit each param's interface; projects keep proxy frames", () => {
   const scene = setHandle(sampleScene(), "tree", "structure", widget(pullWidget, [["depth"]])), tree = findNode(scene, "tree")!;
-  const cells = proxyCellsFor(tree.transformations);
+  const cells = proxyCellsFor(tree.constraints);
   assert.deepEqual(cells.map(cell => [cell.id, Object.keys(cell.specs)]), [["structure", ["depth"]]], "a widget reads only what it drives");
-  assert.match(renderToStaticMarkup(createElement(ProxyFrame, { node: tree, transformations: tree.transformations, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop })), /<iframe[^>]*sandbox="allow-scripts"/);
+  assert.match(renderToStaticMarkup(createElement(ProxyFrame, { node: tree, constraints: tree.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop })), /<iframe[^>]*sandbox="allow-scripts"/);
   // Only the widget areas take handle input; the rest of the body (cell titles, gaps) drags the frame on the board.
-  const moving = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: tree, transformations: tree.transformations, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
+  const moving = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: tree, constraints: tree.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
   assert.match(moving, /class="proxy-move" data-frame-handle="proxy-1"/);
   const [cell] = cells, input = /class="proxy-input" aria-label="[^"]*" style="left:([\d.]+)%;top:([\d.]+)%;width:([\d.]+)%;height:([\d.]+)%"/.exec(moving)!;
   assert.deepEqual(input.slice(1).map(Number).map(v => Math.round(v * 100) / 100), [cell.box.x / 9, (cell.box.y + CELL_HEADER) / 6, cell.box.w / 9, (cell.box.h - CELL_HEADER) / 6].map(v => Math.round(v * 100) / 100), "below the cell's title strip");
   const bare = findNode(sampleScene(), "orb")!;
-  const empty = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: bare, transformations: bare.transformations, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
+  const empty = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-1", node: bare, constraints: bare.constraints, targetName: "Sketch 2", busy: "", onSet: noop, onError: noop, onDesign: noop }));
   assert.match(empty, /class="proxy-frame-surface" data-frame-handle="proxy-1"/, "an empty proxy frame drags from anywhere");
-  assert.deepEqual([...empty.matchAll(/Design <b>([^<]*)<\/b>/g)].map(match => match[1]), bare.transformations.map(item => item.label), "an empty proxy frame designs one transformation at a time");
-  const props = { node: tree, transformations: tree.transformations, library: scene.algorithms, state: undefined, busy: false, clip: null, clipFor: () => null,
+  assert.deepEqual([...empty.matchAll(/Design <b>([^<]*)<\/b>/g)].map(match => match[1]), bare.constraints.map(item => item.property), "an empty proxy frame designs one constraint at a time");
+  const props = { node: tree, constraints: tree.constraints, library: scene.algorithms, state: undefined, busy: false, clip: null, clipFor: () => null,
     onHandle: noop, onDesignHandles: noop, onOpenProxy: noop, handleErrors: { structure: "boom" } };
-  const inspector = renderToStaticMarkup(createElement(PropertyInspector, props as never));
+  const inspector = renderToStaticMarkup(createElement(ConstraintInspector, props as never));
   assert.match(inspector, /PROXY HANDLE/); assert.match(inspector, /⚠ boom/); assert.match(inspector, /Fix with AI/); assert.match(inspector, /Widget code/);
   assert.match(inspector, /Design a direct manipulation handle for Ink/); assert.match(inspector, /Open proxy frame/);
   const project = projectSchema.parse({ version: 2, name: "p", artwork: { strokes: [], photo: null, name: "a", revision: 0 }, sketchFrames: [{ id: "sketch-a", artwork: { strokes: [], photo: null, name: "b", revision: 0 } }],

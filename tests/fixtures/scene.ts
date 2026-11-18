@@ -20,25 +20,29 @@ export const aiScene: AIScene = {
   ],
   nodes: [
     { id: "tree", kind: "collection", parentId: null, name: "Tree", description: "가지가 갈라지는 나무", primitive: "group", region: { x: .3, y: .05, w: .4, h: .9 },
-      transformations: [
-        { id: "branching-growth", label: "Branching growth", description: "재귀 분기", properties: [
+      constraints: [
+        { id: "branching-growth", property: "branches", description: "재귀 분기로 세대마다 가지 길이가 줄어든다", params: [
           { id: "structure", label: "Branching", effect: "spatial", description: "가지 구조", value: { type: "algorithm", algorithmId: "recursive-branch", args: [{ id: "depth", value: num(5, 1, 9) }] } },
-        ] },
-        { id: "ink-wash", label: "Ink wash", description: "먹색", properties: [
+        ], inputs: [], drags: [] },
+        { id: "ink-wash", property: "color", description: "먹색", params: [
           { id: "ink", label: "Ink", effect: "stylistic", description: "가지 색", value: { type: "color", value: "#75664e" } },
-        ] },
+        ], inputs: [], drags: [] },
       ], machine: null },
     { id: "orb", kind: "object", parentId: "tree", name: "Orb", description: "누르면 움직이는 원", primitive: "ellipse", region: { x: .45, y: .2, w: .1, h: .1 },
-      transformations: [{ id: "pulse", label: "Pulse", description: "크기와 이동", properties: [
-        { id: "radius", label: "Radius", effect: "spatial", description: "", value: num(24, 10, 140, 1, "px") },
-        { id: "speed", label: "Speed", effect: "temporal", description: "", value: num(0, 0, 120, 1, "px/s") },
-      ] }],
+      constraints: [
+        { id: "pulse", property: "size", description: "반지름의 두 배", params: [
+          { id: "radius", label: "Radius", effect: "spatial", description: "", value: num(24, 10, 140, 1, "px") },
+        ], inputs: [], drags: [] },
+        { id: "drift", property: "x", description: "속도만큼 오른쪽으로 이동", params: [
+          { id: "speed", label: "Speed", effect: "temporal", description: "", value: num(0, 0, 120, 1, "px/s") },
+        ], inputs: [], drags: [] },
+      ],
       machine: { initialState: "idle", states: [
-        { id: "idle", label: "대기", description: "클릭을 기다립니다", values: [] },
-        { id: "moving", label: "이동", description: "오른쪽으로 이동", values: [{ propertyId: "radius", value: num(80, 10, 140, 1, "px") }, { propertyId: "speed", value: num(40, 0, 120, 1, "px/s") }] },
+        { id: "idle", label: "대기", description: "클릭을 기다립니다", constraintIds: ["pulse"] },
+        { id: "moving", label: "이동", description: "오른쪽으로 이동", constraintIds: ["pulse", "drift"] },
       ], transitions: [
-        { id: "press", from: "idle", to: "moving", label: "원 클릭", trigger: "event", afterMs: 1000 },
-        { id: "settle", from: "moving", to: "idle", label: "정착 후 대기", trigger: "after", afterMs: 1200 },
+        { id: "press", from: "idle", to: "moving", event: "press", label: "원 클릭" },
+        { id: "settle", from: "moving", to: "idle", event: "settle", label: "오른쪽 끝에 닿음" },
       ] } },
   ],
 };
@@ -47,17 +51,26 @@ export const sampleScene = () => convertScene(structuredClone(aiScene));
 /** A model-written program honoring the scene code contract. */
 export const sceneProgram = `rulegenModule("tree", function (m) {
   function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }
+  function computeBranches(owner) {
+    const depth = m.v("tree/structure/depth"), base = m.v("tree/structure/length/base"), ratio = m.v("tree/structure/length/ratio");
+    const lengths = [];
+    for (let i = 0; i < depth; i++) lengths.push(algo_power_decay(base, ratio, i));
+    return lengths;
+  }
+  function computeColor() { return m.v("tree/ink"); }
+  function computeSize() { return m.v("orb/radius") * 2; }
+  function computeX(owner, dt) { const start = m.box("orb").x; return (owner.data.x ?? start) + m.v("orb/speed") * dt / 1000; }
   return {
     draw() {
-      const box = m.box("tree"), x = box.x + box.w / 2, bottom = box.y + box.h;
-      const depth = m.v("tree/structure/depth");
-      const base = m.v("tree/structure/length/base"), ratio = m.v("tree/structure/length/ratio");
-      p.stroke(m.v("tree/ink"));
-      for (let i = 0; i < depth; i++) p.line(x, bottom - i * 10, x, bottom - i * 10 - algo_power_decay(base, ratio, i));
-      const speed = m.v("orb/speed");
-      p.circle(m.box("orb").x + speed * m.state("orb").elapsed / 1000, 300, m.v("orb/radius") * 2);
+      const tree = m.fsm("tree").evaluate(), box = m.box("tree"), x = box.x + box.w / 2, bottom = box.y + box.h;
+      p.stroke(tree.color);
+      tree.branches.forEach((length, i) => p.line(x, bottom - i * 10, x, bottom - i * 10 - length));
+      const orb = m.fsm("orb"), data = orb.evaluate(p.deltaTime);
+      p.circle(data.x ?? m.box("orb").x, 300, data.size);
+      if (orb.state === "moving" && data.x > 800) orb.dispatch("settle");
     },
-    mousePressed() { if (m.state("orb").id === "idle") m.emit("orb", "press"); },
+    mousePressed() { m.fsm("orb").dispatch("press"); },
+    constraints: { tree: { "branching-growth": computeBranches, "ink-wash": computeColor }, orb: { pulse: computeSize, drift: computeX } },
   };
 });`;
 

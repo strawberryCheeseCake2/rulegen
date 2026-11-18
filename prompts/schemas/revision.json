@@ -265,7 +265,7 @@
             ],
             "additionalProperties": false
           },
-          "transformations": {
+          "constraints": {
             "maxItems": 10,
             "type": "array",
             "items": {
@@ -276,15 +276,16 @@
                   "minLength": 1,
                   "maxLength": 80
                 },
-                "label": {
+                "property": {
                   "type": "string",
-                  "maxLength": 100
+                  "minLength": 1,
+                  "maxLength": 80
                 },
                 "description": {
                   "type": "string",
                   "maxLength": 1000
                 },
-                "properties": {
+                "params": {
                   "maxItems": 8,
                   "type": "array",
                   "items": {
@@ -586,13 +587,101 @@
                     ],
                     "additionalProperties": false
                   }
+                },
+                "inputs": {
+                  "maxItems": 6,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "x",
+                          "y",
+                          "dx",
+                          "dy",
+                          "speed",
+                          "direction",
+                          "distance",
+                          "duration",
+                          "pressed"
+                        ]
+                      },
+                      "paramId": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "how": {
+                        "type": "string",
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "paramId",
+                      "how"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "drags": {
+                  "maxItems": 2,
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "paramId": {
+                        "type": "string",
+                        "maxLength": 80
+                      },
+                      "path": {
+                        "type": "string",
+                        "maxLength": 200
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "x",
+                          "y",
+                          "speed"
+                        ]
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "direct",
+                          "ratio",
+                          "range"
+                        ]
+                      },
+                      "invert": {
+                        "type": "boolean"
+                      },
+                      "how": {
+                        "type": "string",
+                        "maxLength": 160
+                      }
+                    },
+                    "required": [
+                      "paramId",
+                      "path",
+                      "source",
+                      "mode",
+                      "invert",
+                      "how"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
                 "id",
-                "label",
+                "property",
                 "description",
-                "properties"
+                "params",
+                "inputs",
+                "drags"
               ],
               "additionalProperties": false
             }
@@ -628,287 +717,13 @@
                           "type": "string",
                           "maxLength": 1000
                         },
-                        "values": {
-                          "maxItems": 8,
+                        "constraintIds": {
+                          "maxItems": 10,
                           "type": "array",
                           "items": {
-                            "type": "object",
-                            "properties": {
-                              "propertyId": {
-                                "type": "string",
-                                "minLength": 1,
-                                "maxLength": 80
-                              },
-                              "value": {
-                                "anyOf": [
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string",
-                                        "const": "number"
-                                      },
-                                      "value": {
-                                        "type": "number"
-                                      },
-                                      "min": {
-                                        "type": "number"
-                                      },
-                                      "max": {
-                                        "type": "number"
-                                      },
-                                      "step": {
-                                        "type": "number",
-                                        "minimum": 1e-8
-                                      },
-                                      "unit": {
-                                        "type": "string",
-                                        "maxLength": 20
-                                      }
-                                    },
-                                    "required": [
-                                      "type",
-                                      "value",
-                                      "min",
-                                      "max",
-                                      "step",
-                                      "unit"
-                                    ],
-                                    "additionalProperties": false
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string",
-                                        "const": "color"
-                                      },
-                                      "value": {
-                                        "type": "string",
-                                        "pattern": "^#[0-9a-fA-F]{6}$"
-                                      }
-                                    },
-                                    "required": [
-                                      "type",
-                                      "value"
-                                    ],
-                                    "additionalProperties": false
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string",
-                                        "const": "select"
-                                      },
-                                      "value": {
-                                        "type": "string",
-                                        "maxLength": 80
-                                      },
-                                      "options": {
-                                        "minItems": 2,
-                                        "maxItems": 8,
-                                        "type": "array",
-                                        "items": {
-                                          "type": "string",
-                                          "minLength": 1,
-                                          "maxLength": 80
-                                        }
-                                      }
-                                    },
-                                    "required": [
-                                      "type",
-                                      "value",
-                                      "options"
-                                    ],
-                                    "additionalProperties": false
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string",
-                                        "const": "toggle"
-                                      },
-                                      "value": {
-                                        "type": "boolean"
-                                      }
-                                    },
-                                    "required": [
-                                      "type",
-                                      "value"
-                                    ],
-                                    "additionalProperties": false
-                                  },
-                                  {
-                                    "type": "object",
-                                    "properties": {
-                                      "type": {
-                                        "type": "string",
-                                        "const": "algorithm"
-                                      },
-                                      "algorithmId": {
-                                        "type": "string",
-                                        "minLength": 1,
-                                        "maxLength": 80
-                                      },
-                                      "args": {
-                                        "maxItems": 8,
-                                        "type": "array",
-                                        "items": {
-                                          "type": "object",
-                                          "properties": {
-                                            "id": {
-                                              "type": "string",
-                                              "minLength": 1,
-                                              "maxLength": 80
-                                            },
-                                            "value": {
-                                              "anyOf": [
-                                                {
-                                                  "type": "object",
-                                                  "properties": {
-                                                    "type": {
-                                                      "type": "string",
-                                                      "const": "number"
-                                                    },
-                                                    "value": {
-                                                      "type": "number"
-                                                    },
-                                                    "min": {
-                                                      "type": "number"
-                                                    },
-                                                    "max": {
-                                                      "type": "number"
-                                                    },
-                                                    "step": {
-                                                      "type": "number",
-                                                      "minimum": 1e-8
-                                                    },
-                                                    "unit": {
-                                                      "type": "string",
-                                                      "maxLength": 20
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "type",
-                                                    "value",
-                                                    "min",
-                                                    "max",
-                                                    "step",
-                                                    "unit"
-                                                  ],
-                                                  "additionalProperties": false
-                                                },
-                                                {
-                                                  "type": "object",
-                                                  "properties": {
-                                                    "type": {
-                                                      "type": "string",
-                                                      "const": "color"
-                                                    },
-                                                    "value": {
-                                                      "type": "string",
-                                                      "pattern": "^#[0-9a-fA-F]{6}$"
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "type",
-                                                    "value"
-                                                  ],
-                                                  "additionalProperties": false
-                                                },
-                                                {
-                                                  "type": "object",
-                                                  "properties": {
-                                                    "type": {
-                                                      "type": "string",
-                                                      "const": "select"
-                                                    },
-                                                    "value": {
-                                                      "type": "string",
-                                                      "maxLength": 80
-                                                    },
-                                                    "options": {
-                                                      "minItems": 2,
-                                                      "maxItems": 8,
-                                                      "type": "array",
-                                                      "items": {
-                                                        "type": "string",
-                                                        "minLength": 1,
-                                                        "maxLength": 80
-                                                      }
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "type",
-                                                    "value",
-                                                    "options"
-                                                  ],
-                                                  "additionalProperties": false
-                                                },
-                                                {
-                                                  "type": "object",
-                                                  "properties": {
-                                                    "type": {
-                                                      "type": "string",
-                                                      "const": "toggle"
-                                                    },
-                                                    "value": {
-                                                      "type": "boolean"
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "type",
-                                                    "value"
-                                                  ],
-                                                  "additionalProperties": false
-                                                },
-                                                {
-                                                  "type": "object",
-                                                  "properties": {
-                                                    "type": {
-                                                      "type": "string",
-                                                      "const": "algorithm-ref"
-                                                    },
-                                                    "algorithmId": {
-                                                      "type": "string",
-                                                      "minLength": 1,
-                                                      "maxLength": 80
-                                                    }
-                                                  },
-                                                  "required": [
-                                                    "type",
-                                                    "algorithmId"
-                                                  ],
-                                                  "additionalProperties": false
-                                                }
-                                              ]
-                                            }
-                                          },
-                                          "required": [
-                                            "id",
-                                            "value"
-                                          ],
-                                          "additionalProperties": false
-                                        }
-                                      }
-                                    },
-                                    "required": [
-                                      "type",
-                                      "algorithmId",
-                                      "args"
-                                    ],
-                                    "additionalProperties": false
-                                  }
-                                ]
-                              }
-                            },
-                            "required": [
-                              "propertyId",
-                              "value"
-                            ],
-                            "additionalProperties": false
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 80
                           }
                         }
                       },
@@ -916,7 +731,7 @@
                         "id",
                         "label",
                         "description",
-                        "values"
+                        "constraintIds"
                       ],
                       "additionalProperties": false
                     }
@@ -942,31 +757,23 @@
                           "minLength": 1,
                           "maxLength": 80
                         },
+                        "event": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
+                        },
                         "label": {
                           "type": "string",
                           "minLength": 1,
                           "maxLength": 100
-                        },
-                        "trigger": {
-                          "type": "string",
-                          "enum": [
-                            "after",
-                            "event"
-                          ]
-                        },
-                        "afterMs": {
-                          "type": "integer",
-                          "minimum": 100,
-                          "maximum": 60000
                         }
                       },
                       "required": [
                         "id",
                         "from",
                         "to",
-                        "label",
-                        "trigger",
-                        "afterMs"
+                        "event",
+                        "label"
                       ],
                       "additionalProperties": false
                     }
@@ -993,7 +800,7 @@
           "description",
           "primitive",
           "region",
-          "transformations",
+          "constraints",
           "machine"
         ],
         "additionalProperties": false

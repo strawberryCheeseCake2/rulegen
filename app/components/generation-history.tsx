@@ -4,7 +4,7 @@ import { recoveredGenerationSchema, type RecoveredGeneration } from "../lib/gene
 import { downloadFile } from "../lib/project";
 
 type Entry = { key: string; intent: string; model: string; startedAt: string; status: string; durationMs?: number };
-const labels: Record<string, string> = { extract: "Brush stamp extraction", transform: "Transformation regeneration", code: "Code", compose: "Sketch composition", "compose-prompt": "Compose prompt", "tag-revise": "Tag change", clarification: "Description draft", revision: "Change proposal", "state-machine": "Node states and transitions", "machine-refine": "State machine refinement", inspect: "Targeted inspection", handles: "Direct manipulation handle", concern: "Concern suggestions" };
+const labels: Record<string, string> = { extract: "Brush stamp extraction", transform: "Constraint regeneration", code: "Code", compose: "Sketch composition", "compose-prompt": "Compose prompt", "tag-revise": "Tag change", clarification: "Description draft", revision: "Change proposal", "state-machine": "Node states and transitions", "machine-refine": "State machine refinement", inspect: "Targeted inspection", handles: "Direct manipulation handle", concern: "Concern suggestions" };
 async function getHistory(query = "", signal?: AbortSignal) {
   const response = await fetch(`/api/generations${query}`, { signal });
   const data = await response.json();

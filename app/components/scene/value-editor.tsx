@@ -8,7 +8,7 @@ import { Icon } from "../icons";
 import { ScalarWidget } from "./scalar-widget";
 import type { MenuItem } from "./context-menu";
 
-// Properties are sockets; algorithms are blocks that can be dropped into any
+// Params are sockets; algorithms are blocks that can be dropped into any
 // socket (from the block palette or another socket), copied, pasted or swapped.
 
 export type SocketActions = {
@@ -83,7 +83,7 @@ function AlgorithmBlock(props: SocketProps & { value: AlgorithmCall }) {
   </div>;
 }
 
-/** A property or argument slot. Number and algorithm sockets accept dropped blocks. */
+/** A param or argument slot. Number and algorithm sockets accept dropped blocks. */
 export function ValueSocket(props: SocketProps) {
   const { value, label, path, root } = props;
   const [over, setOver] = useState(false);

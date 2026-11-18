@@ -1,7 +1,9 @@
-export type IconName = "select" | "collection" | "object" | "eye" | "eye-off" | "layers" | "function" | "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush" | "inspect" | "target" | "inspect-pen";
+export type IconName = "select" | "collection" | "object" | "eye" | "eye-off" | "layers" | "function" | "interaction" | "trash" | "arrow" | "pen" | "eraser" | "lasso" | "hand" | "undo" | "redo" | "plus" | "minus" | "chevron" | "spark" | "code" | "close" | "edit" | "grid" | "play" | "pause" | "copy" | "upload" | "download" | "brush" | "inspect" | "target" | "inspect-pen" | "tag" | "adjust";
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
     select: <path d="M5 3l14 8-6 2-2 6L5 3Z" />,
+    // A hand pulling a value out from a center along an arc: dragging the object adjusts it.
+    adjust: <><circle cx="9" cy="15" r="2" /><path d="M10.5 13.5 18 6M14 6h4v4" /><path d="M4 15a5 5 0 0 1 5-5" strokeDasharray="2 2" /></>,
     collection: <><path d="M3 7h7l2 2h9v10H3V7Z" /><path d="M3 7V5h6l2 2" /></>,
     object: <><rect x="5" y="5" width="14" height="14" rx="3" /></>,
     eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
@@ -20,6 +22,7 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
     arrow: <><path d="M5 12h14M13 6l6 6-6 6" /></>,
     pen: <><path d="m4 20 4-1L20 7l-3-3L5 16l-1 4ZM14 7l3 3" /></>,
     eraser: <><path d="m4 13 9-9 7 7-9 9H7l-3-3v-4ZM9 8l7 7M11 20h9" /></>,
+    tag: <><path d="M3 12V4h8l10 10-8 8L3 12Z" /><circle cx="7.5" cy="8.5" r="1.5" /></>,
     lasso: <><ellipse cx="12" cy="9" rx="9" ry="6" strokeDasharray="3 3" /><path d="M6 14c-5 7 6 9 5 3" /></>,
     hand: <><path d="M8 12V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-5a2 2 0 0 1 4 0v9c0 5-3 7-7 7-3 0-5-2-7-5l-3-4c-1-2 1-4 3-2l2 2Z" /></>,
     undo: <><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12" /></>,

@@ -28,15 +28,19 @@ export type CodePreviewHandle = {
    * index of the run) moves, whether it is gone, and which steps come out different. Null when no run is held.
    */
   influence: (variants: RunVariant[], target: number | { item: string } | null) => Promise<VariantEffect[] | null>;
-  /** The held step drawn with one variant, executed as far as the held run is, as a picture (null when nothing is held). */
-  variantShot: (variant: RunVariant) => Promise<string | null>;
+  /**
+   * The held step drawn with one variant, executed as far as the held run is (`whole`: the whole run, by the code's own
+   * drawing, not a checkpoint's picture), as a picture (null when nothing is held).
+   */
+  variantShot: (variant: RunVariant, whole?: boolean) => Promise<string | null>;
 };
 /** One way to draw the held step differently: values over its own, inner term scales (m.term, by "<root>/<name>"), another runtime. */
 export type RunVariant = { id: string; params?: Record<string, unknown>; terms?: Record<string, number>; runtime?: unknown };
 /** What a variant changes in the held run: how far the mark looked at moves (canvas pixels), whether it is gone, the steps that differ. */
 export type VariantEffect = { id: string; moved: number; gone: boolean; steps: number[] };
 /** A state change (or manual capture) recorded by the running sketch, with its runtime snapshot (module stores, machine states, random seed). */
-export type TraceStep = { nodeId: string | null; from: string | null; to: string | null; transitionId: string | null; params: Record<string, unknown>; runtime: unknown };
+/** A state machine step of the running result: a transition an owner (a node, or one item of it: `key`) took, with the moment's runtime. */
+export type TraceStep = { nodeId: string | null; key: string | null; from: string | null; to: string | null; transitionId: string | null; params: Record<string, unknown>; runtime: unknown };
 /** A recorded step to hold the running sketch at (null: run live). */
 /** A recorded step to hold the sketch at: its runtime, and what-if values it is drawn with (that step only). */
 export type RestorePoint = { id: string; runtime: unknown; params?: Record<string, unknown>;
@@ -126,7 +130,7 @@ export const CodePreview = forwardRef<CodePreviewHandle, Props>(function CodePre
   });
   useImperativeHandle(ref, () => ({ capture: () => image,
     influence: (variants, target) => ask<VariantEffect[]>({ type: "influence", variants: variants.slice(0, 24), target }),
-    variantShot: variant => ask<string>({ type: "variant-shot", variant }), emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
+    variantShot: (variant, whole = false) => ask<string>({ type: "variant-shot", variant, whole }), emit: (nodeId, transitionId) => post({ type: "event", nodeId, transitionId }),
     isReady: () => ready.current, snapshot: () => post({ type: "snapshot" }), replay: points => post({ type: "replay", points: points.slice(0, 2000) }),
     // A forwarded press focuses the sketch, as a real one would: sketches may ignore input while unfocused (p5 focused), and keys then reach it.
     pointer: (kind, x, y) => { if (kind === "mousedown" && window.document.activeElement !== frame.current) frame.current?.focus(); post({ type: "pointer", kind, x, y }); }, isReadyFor: executable => ready.current && loaded.current === resolve(sceneStructureKey(executable)),
@@ -155,7 +159,7 @@ try{new p5(p=>{${script}
 const setup=p.setup,draw=p.draw;let lastCapture=0,forceRender=true,wasLooping=true;
 // Machines can arrive later (an injected module, new values), so this is asked each time.
 const hasMachine=()=>typeof rulegenMachines!=='undefined'&&Object.keys(rulegenMachines).length>0;
-let tracing=false,traceQueue=[],lastEmit=null;
+let tracing=false,traceQueue=[];
 const paramsNow=()=>typeof rulegenParams!=='undefined'?Object.assign({},rulegenParams):{};
 // Each transition keeps the runtime state of its own moment: several can happen within one frame (a state left at once), and each step must restore to its own state.
 // A selected step (pinned) is held exactly: no transition happens and none is recorded while it is shown.
@@ -165,13 +169,10 @@ let following=0,followDrawn=0,playedOn=null;
 // The running state when a step was first held, so Live goes back to it (holding a step puts that step's state into the sketch).
 let beforePinned=null;
 const snapshotNow=()=>{try{return typeof rulegenSnapshot==='function'?rulegenSnapshot():null;}catch(error){return null;}};
-if(typeof rulegenEmit==='function'&&typeof rulegenJumpState==='function'){
-  const emitBase=rulegenEmit;rulegenEmit=function(nodeId,transitionId){if(pinned&&!following)return false;lastEmit={nodeId,transitionId};try{return emitBase(nodeId,transitionId);}finally{lastEmit=null;}};
-  const jumpBase=rulegenJumpState;rulegenJumpState=function(nodeId,id){if(pinned&&!following)return false;
-    const from=rulegenState[nodeId]?rulegenState[nodeId].id:null,ok=jumpBase(nodeId,id);
-    if(ok&&tracing&&!replaying&&!following){const timed=rulegenMachines[nodeId].transitions.find(item=>item.from===from&&item.to===id&&item.trigger==='after');
-      traceQueue.push({nodeId,from,to:id,transitionId:lastEmit&&lastEmit.nodeId===nodeId?lastEmit.transitionId:(timed?timed.id:null),params:paramsNow(),runtime:snapshotNow()});}
-    return ok;};
+// Every transition the code takes is a state machine step: recorded (with its own moment's runtime) while tracing.
+if(typeof rulegenOnTransition!=='undefined'){
+  rulegenFrozen=()=>Boolean(pinned&&!following);
+  rulegenOnTransition=function(t){if(tracing&&!replaying&&!following)traceQueue.push({nodeId:t.nodeId,key:t.key,from:t.from,to:t.to,transitionId:t.transitionId,params:paramsNow(),runtime:snapshotNow()});};
 }
 // Steps keep the runtime state (not an image), so selecting one puts the running sketch back there.
 function flushTrace(){if(!traceQueue.length)return;let shared;
@@ -227,7 +228,7 @@ window.addEventListener('message',event=>{
     if(event.data.type==='influence'||event.data.type==='variant-shot'){const req=event.data.req;let answer=null;
       const ok=pinned&&pinnedRun&&typeof rulegenRunStart==='function'&&typeof rulegenCompareRuns==='function';
       try{if(ok&&event.data.type==='influence'){const base=drawVariant({},null,null,true);answer=(Array.isArray(event.data.variants)?event.data.variants:[]).slice(0,24).map(v=>{const variant=v&&typeof v==='object'?v:{};let effect;try{const target=event.data.target;effect=rulegenCompareRuns(base,drawVariant(variant,null,null,true),Number.isInteger(target)||(target&&typeof target==='object'&&typeof target.item==='string')?target:null);}catch(error){effect={moved:0,gone:false,steps:[]};}return Object.assign({id:String(variant.id)},effect);});}
-        else if(ok){drawVariant(event.data.variant&&typeof event.data.variant==='object'?event.data.variant:{},pinnedRun.budget,pinnedRun.show,false);const canvas=document.querySelector('canvas');answer=canvas?canvas.toDataURL('image/png'):null;}}
+        else if(ok){const whole=event.data.whole===true;drawVariant(event.data.variant&&typeof event.data.variant==='object'?event.data.variant:{},whole?null:pinnedRun.budget,whole?null:pinnedRun.show,false);const canvas=document.querySelector('canvas');answer=canvas?canvas.toDataURL('image/png'):null;}}
       finally{if(ok)showPinned();}
       parent.postMessage({channel:'rulegen',token:${JSON.stringify(token)},answer,req},'*');return;}
     if(event.data.type==='snapshot'){traceQueue.push({nodeId:null,from:null,to:null,transitionId:null,params:paramsNow()});flushTrace();return;}
@@ -252,8 +253,9 @@ window.addEventListener('message',event=>{
     else if(event.data.type==='scene' && typeof rulegenBase!=='undefined'){
       const before=Object.assign({},rulegenParams);
       Object.assign(rulegenBase,event.data.params||{});
-      const machines=event.data.machines||{};for(const id of Object.keys(machines)){if(rulegenMachines[id])Object.assign(rulegenMachines[id],machines[id]);else{rulegenMachines[id]=machines[id];rulegenState[id]={id:machines[id].initialState,elapsed:0};}}
-      for(const id of Object.keys(rulegenMachines))if(!machines[id]){delete rulegenMachines[id];delete rulegenState[id];}
+      const machines=event.data.machines||{};for(const id of Object.keys(machines)){if(rulegenMachines[id])Object.assign(rulegenMachines[id],machines[id]);else rulegenMachines[id]=machines[id];}
+      for(const id of Object.keys(rulegenMachines))if(!machines[id]){delete rulegenMachines[id];delete rulegenState[id];if(typeof rulegenOwners!=='undefined')delete rulegenOwners[id];}
+      for(const id of Object.keys(rulegenMachines))if(typeof rulegenShown==='function')rulegenShown(id);
       if(Array.isArray(event.data.instances)&&typeof rulegenInstances!=='undefined'){rulegenInstances.splice(0,rulegenInstances.length,...event.data.instances);rulegenSync();}
       rulegenApply();if(pinned){showPinned();return;}
       const changed=new Set(Object.keys(rulegenParams).filter(key=>rulegenParams[key]!==before[key]));
@@ -289,7 +291,7 @@ p.draw=()=>{budgetReset();try{
       const trace = event.data.trace;
       if (trace && typeof trace === "object" && trace.params && typeof trace.params === "object") {
         const text = (value: unknown) => typeof value === "string" ? value.slice(0, 80) : null;
-        current.current.onTrace?.({ nodeId: text(trace.nodeId), from: text(trace.from), to: text(trace.to), transitionId: text(trace.transitionId), params: trace.params,
+        current.current.onTrace?.({ nodeId: text(trace.nodeId), key: text(trace.key), from: text(trace.from), to: text(trace.to), transitionId: text(trace.transitionId), params: trace.params,
           runtime: trace.runtime && typeof trace.runtime === "object" && JSON.stringify(trace.runtime).length < 1_500_000 ? trace.runtime : null });
       }
       if (event.data.states && typeof event.data.states === "object") {

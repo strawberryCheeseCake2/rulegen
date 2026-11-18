@@ -54,195 +54,6 @@
         "additionalProperties": false
       }
     },
-    "values": {
-      "maxItems": 4,
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "nodeId": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "id": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 80
-          },
-          "label": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 80
-          },
-          "value": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "const": "number"
-                  },
-                  "value": {
-                    "type": "number"
-                  },
-                  "min": {
-                    "type": "number"
-                  },
-                  "max": {
-                    "type": "number"
-                  },
-                  "step": {
-                    "type": "number",
-                    "minimum": 1e-8
-                  },
-                  "unit": {
-                    "type": "string",
-                    "maxLength": 20
-                  }
-                },
-                "required": [
-                  "type",
-                  "value",
-                  "min",
-                  "max",
-                  "step",
-                  "unit"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "type": {
-                    "type": "string",
-                    "const": "toggle"
-                  },
-                  "value": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "type",
-                  "value"
-                ],
-                "additionalProperties": false
-              }
-            ]
-          }
-        },
-        "required": [
-          "nodeId",
-          "id",
-          "label",
-          "value"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "machine": {
-      "default": null,
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "nodeId": {
-              "type": "string",
-              "maxLength": 80
-            },
-            "states": {
-              "maxItems": 3,
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "maxLength": 60
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 100
-                  },
-                  "description": {
-                    "type": "string",
-                    "maxLength": 400
-                  },
-                  "like": {
-                    "type": "string",
-                    "maxLength": 60
-                  }
-                },
-                "required": [
-                  "id",
-                  "label",
-                  "description",
-                  "like"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "transitions": {
-              "maxItems": 4,
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "id": {
-                    "type": "string",
-                    "maxLength": 60
-                  },
-                  "from": {
-                    "type": "string",
-                    "maxLength": 60
-                  },
-                  "to": {
-                    "type": "string",
-                    "maxLength": 60
-                  },
-                  "label": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 100
-                  },
-                  "trigger": {
-                    "type": "string",
-                    "enum": [
-                      "after",
-                      "event"
-                    ]
-                  },
-                  "afterMs": {
-                    "type": "integer",
-                    "minimum": 100,
-                    "maximum": 60000
-                  }
-                },
-                "required": [
-                  "id",
-                  "from",
-                  "to",
-                  "label",
-                  "trigger",
-                  "afterMs"
-                ],
-                "additionalProperties": false
-              }
-            }
-          },
-          "required": [
-            "nodeId",
-            "states",
-            "transitions"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "overlays": {
       "maxItems": 8,
       "type": "array",
@@ -298,6 +109,7 @@
               "kind": {
                 "type": "string",
                 "enum": [
+                  "param",
                   "constraint",
                   "state",
                   "transition",
@@ -329,67 +141,6 @@
             "default": "",
             "type": "string",
             "maxLength": 200
-          },
-          "handle": {
-            "default": null,
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "key": {
-                    "type": "string",
-                    "maxLength": 1200
-                  },
-                  "gesture": {
-                    "type": "string",
-                    "enum": [
-                      "drag",
-                      "rotate",
-                      "slide",
-                      "move"
-                    ]
-                  },
-                  "x": {
-                    "type": "string",
-                    "maxLength": 400
-                  },
-                  "y": {
-                    "type": "string",
-                    "maxLength": 400
-                  },
-                  "pivotX": {
-                    "type": "string",
-                    "maxLength": 400
-                  },
-                  "pivotY": {
-                    "type": "string",
-                    "maxLength": 400
-                  },
-                  "value": {
-                    "type": "string",
-                    "maxLength": 600
-                  },
-                  "hint": {
-                    "type": "string",
-                    "maxLength": 80
-                  }
-                },
-                "required": [
-                  "key",
-                  "gesture",
-                  "x",
-                  "y",
-                  "pivotX",
-                  "pivotY",
-                  "value",
-                  "hint"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "null"
-              }
-            ]
           }
         },
         "required": [
@@ -404,8 +155,7 @@
           "color",
           "link",
           "when",
-          "each",
-          "handle"
+          "each"
         ],
         "additionalProperties": false
       }
@@ -430,9 +180,6 @@
             "type": "string",
             "maxLength": 300
           },
-          "many": {
-            "type": "boolean"
-          },
           "of": {
             "default": [],
             "maxItems": 3,
@@ -443,7 +190,7 @@
                 "kind": {
                   "type": "string",
                   "enum": [
-                    "transformation",
+                    "constraint",
                     "state",
                     "transition"
                   ]
@@ -470,7 +217,6 @@
           "op",
           "name",
           "explain",
-          "many",
           "of"
         ],
         "additionalProperties": false
@@ -486,7 +232,7 @@
           "kind": {
             "type": "string",
             "enum": [
-              "transformation",
+              "constraint",
               "state",
               "transition"
             ]
@@ -610,8 +356,6 @@
     "from",
     "to",
     "edits",
-    "values",
-    "machine",
     "overlays",
     "stages",
     "of",

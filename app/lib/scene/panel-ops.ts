@@ -1,10 +1,10 @@
 import type { SketchPanel } from "../sketch-panels";
-import type { NodeState, NodeTransition, Property, Scene, SceneNode, ScalarValue, SemanticTransformation, Value } from "./schema";
-import { MAX_NODE_PROPERTIES, MAX_TRANSFORMATIONS } from "./schema";
+import type { NodeState, NodeTransition, Param, Scene, SceneNode, ScalarValue, Constraint, Value } from "./schema";
+import { MAX_NODE_PARAMS, MAX_CONSTRAINTS } from "./schema";
 import { findAlgorithm, instantiate, sceneAlgorithmUsage } from "./algorithms";
 import { findNode, updateNode } from "./graph";
-import { conformMachine, setStateValue, stateProperties, stateTransformations } from "./machines";
-import * as layers from "./transformations";
+import { conformMachine, setStateConstraint, stateConstraints } from "./machines";
+import * as layers from "./constraints";
 import { relinkStamps } from "./live";
 import { defaultNumber, isAlgorithm, replaceAt, setScalarAt, valueAt } from "./values";
 
@@ -54,42 +54,38 @@ export function editingState(panel: SketchPanel, node: SceneNode | undefined): N
   const id = node && panel.editingStates[node.id];
   return node?.machine?.states.find(state => state.id === id);
 }
-/** Properties the inspector shows: the edited state's values when a state is selected. */
-export function inspectedProperties(panel: SketchPanel, node: SceneNode): Property[] {
-  return stateProperties(node, panel.editingStates[node.id]);
+/** The constraints the inspector shows: the selected state's, in its evaluation order; without one, all of the node's. */
+export function inspectedConstraints(panel: SketchPanel, node: SceneNode): Constraint[] {
+  return stateConstraints(node, panel.editingStates[node.id]);
 }
-/** The node's transformation stack as the inspector shows it (state values applied). */
-export function inspectedTransformations(panel: SketchPanel, node: SceneNode): SemanticTransformation[] {
-  return stateTransformations(node, panel.editingStates[node.id]);
-}
+/** The params of the constraints the inspector shows. */
+export const inspectedParams = (panel: SketchPanel, node: SceneNode): Param[] => inspectedConstraints(panel, node).flatMap(constraint => constraint.params);
 export function chooseState(panel: SketchPanel, nodeId: string, stateId: string | null): Patch {
   const editingStates = { ...panel.editingStates };
   if (stateId) editingStates[nodeId] = stateId; else delete editingStates[nodeId];
   return { editingStates, selectedNodeIds: [nodeId], stateJump: stateId ? { nodeId, stateId, revision: (panel.stateJump?.revision || 0) + 1 } : panel.stateJump };
 }
 
-/** Slider / color / select / toggle edit. Goes to the edited state when one is selected. */
-export function setPropertyScalar(panel: SketchPanel, nodeId: string, propertyId: string, path: string[], raw: ScalarValue["value"]): Patch {
+/** Slider / color / select / toggle edit of a param (a constraint is the same in every state that evaluates it). */
+export function setParamScalar(panel: SketchPanel, nodeId: string, paramId: string, path: string[], raw: ScalarValue["value"]): Patch {
   const node = findNode(panel.scene, nodeId);
-  const property = node && inspectedProperties(panel, node).find(item => item.id === propertyId);
-  if (!node || !property) return {};
-  const value = setScalarAt(property.value, path, raw);
-  const stateId = panel.editingStates[nodeId];
-  const next = stateId ? setStateValue(node, stateId, propertyId, value) : layers.updateProperty(node, propertyId, item => ({ ...item, value }));
-  return { scene: updateNode(panel.scene, nodeId, () => next) };
+  const param = node && layers.findParam(node, paramId);
+  if (!node || !param) return {};
+  const value = setScalarAt(param.value, path, raw);
+  return { scene: updateNode(panel.scene, nodeId, item => layers.updateParam(item, paramId, p => ({ ...p, value }))) };
 }
 
 export type SlotChoice = { type: "number" } | { type: "algorithm"; algorithmId: string };
 /** Swap a slot between a number and an algorithm (structural: applies to the base and every state). */
-export function swapSlot(panel: SketchPanel, nodeId: string, propertyId: string, path: string[], choice: SlotChoice): Patch {
+export function swapSlot(panel: SketchPanel, nodeId: string, paramId: string, path: string[], choice: SlotChoice): Patch {
   const node = findNode(panel.scene, nodeId);
-  const property = node && layers.findProperty(node, propertyId);
-  if (!node || !property) return {};
-  const current = valueAt(property.value, path);
+  const param = node && layers.findParam(node, paramId);
+  if (!node || !param) return {};
+  const current = valueAt(param.value, path);
   if (!current || (choice.type === "algorithm" && isAlgorithm(current) && current.algorithmId === choice.algorithmId) || (choice.type === "number" && current.type === "number")) return {};
   const replacement: Value = choice.type === "number" ? defaultNumber() : instantiate(panel.scene.algorithms, choice.algorithmId, path.length + 1);
-  const value = replaceAt(property.value, path, () => replacement);
-  return commitScene(panel, updateNode(panel.scene, nodeId, item => layers.updateProperty(item, propertyId, p => ({ ...p, value }))), [nodeId]);
+  const value = replaceAt(param.value, path, () => replacement);
+  return commitScene(panel, updateNode(panel.scene, nodeId, item => layers.updateParam(item, paramId, p => ({ ...p, value }))), [nodeId]);
 }
 
 export function editNode(panel: SketchPanel, nodeId: string, patch: Partial<Pick<SceneNode, "name" | "description" | "visible">>, history = false): Patch {
@@ -97,53 +93,58 @@ export function editNode(panel: SketchPanel, nodeId: string, patch: Partial<Pick
   const semantic = patch.description !== undefined;
   return history ? commitScene(panel, scene, semantic ? [nodeId] : []) : setScene(panel, scene, semantic ? [nodeId] : []);
 }
-export function editProperty(panel: SketchPanel, nodeId: string, propertyId: string, patch: Partial<Pick<Property, "label" | "description" | "effect">>): Patch {
-  return setScene(panel, updateNode(panel.scene, nodeId, node => layers.updateProperty(node, propertyId, p => ({ ...p, ...patch }))), [nodeId]);
+export function editParam(panel: SketchPanel, nodeId: string, paramId: string, patch: Partial<Pick<Param, "label" | "description" | "effect">>): Patch {
+  return setScene(panel, updateNode(panel.scene, nodeId, node => layers.updateParam(node, paramId, p => ({ ...p, ...patch }))), [nodeId]);
 }
-export function removeProperty(panel: SketchPanel, nodeId: string, propertyId: string): Patch {
-  return commitScene(panel, updateNode(panel.scene, nodeId, node => ({ ...layers.mapProperties(node, p => p.id === propertyId ? null : p),
-    machine: node.machine && { ...node.machine, states: node.machine.states.map(state => ({ ...state, values: state.values.filter(item => item.propertyId !== propertyId) })) } })), [nodeId]);
+export function removeParam(panel: SketchPanel, nodeId: string, paramId: string): Patch {
+  return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.mapParams(node, p => p.id === paramId ? null : p)), [nodeId]);
 }
-/** A property holding a library block, in `transformationId` (or the last one with room / a new one). */
-export function addAlgorithmProperty(panel: SketchPanel, nodeId: string, algorithmId: string, transformationId?: string | null): Patch {
+/** A param holding a library block, in `constraintId` (or the last one with room / a new one). */
+export function addAlgorithmParam(panel: SketchPanel, nodeId: string, algorithmId: string, constraintId?: string | null): Patch {
   const node = findNode(panel.scene, nodeId), algorithm = findAlgorithm(panel.scene.algorithms, algorithmId);
-  if (!node || !algorithm || !layers.canAddProperty(node, transformationId)) return {};
-  const property: Property = { id: algorithm.id.slice(0, 70), label: algorithm.name.slice(0, 80), effect: "spatial", description: algorithm.description.slice(0, 600), value: instantiate(panel.scene.algorithms, algorithmId) };
-  const next = layers.appendProperty(node, property, transformationId, algorithm.name).node;
+  if (!node || !algorithm || !layers.canAddParam(node, constraintId)) return {};
+  const param: Param = { id: algorithm.id.slice(0, 70), label: algorithm.name.slice(0, 80), effect: "spatial", description: algorithm.description.slice(0, 600), value: instantiate(panel.scene.algorithms, algorithmId) };
+  const next = layers.appendParam(node, param, constraintId, algorithm.name).node;
   return commitScene(panel, updateNode(panel.scene, nodeId, () => next), [nodeId]);
 }
 
-// ── Semantic transformation stack ─────────────────────────────────────────────
-export function addTransformation(panel: SketchPanel, nodeId: string, label = "New transformation"): Patch {
+// ── Constraints ───────────────────────────────────────────────────────────────
+/** A new constraint: into the selected state (at the end of its order), or, with none selected, into every state. */
+export function addConstraint(panel: SketchPanel, nodeId: string, property = "property"): Patch {
   const node = findNode(panel.scene, nodeId);
-  if (!node || !layers.canAddTransformation(node)) return {};
-  return commitScene(panel, updateNode(panel.scene, nodeId, item => layers.addTransformation(item, { label }).node), [nodeId]);
+  if (!node || !layers.canAddConstraint(node)) return {};
+  return commitScene(panel, updateNode(panel.scene, nodeId, item => layers.addConstraint(item, { property }, { stateId: panel.editingStates[nodeId] }).node), [nodeId]);
 }
-export function editTransformation(panel: SketchPanel, nodeId: string, transformationId: string, patch: Partial<Pick<SemanticTransformation, "label" | "description">>): Patch {
-  return setScene(panel, updateNode(panel.scene, nodeId, node => layers.updateTransformation(node, transformationId, item => ({ ...item, ...patch }))), [nodeId]);
+export function editConstraint(panel: SketchPanel, nodeId: string, constraintId: string, patch: Partial<Pick<Constraint, "property" | "description">>): Patch {
+  return setScene(panel, updateNode(panel.scene, nodeId, node => layers.updateConstraint(node, constraintId, item => ({ ...item, ...patch }))), [nodeId]);
 }
-export function removeTransformation(panel: SketchPanel, nodeId: string, transformationId: string): Patch {
-  return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.removeTransformation(node, transformationId)), [nodeId]);
+export function removeConstraint(panel: SketchPanel, nodeId: string, constraintId: string): Patch {
+  return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.removeConstraint(node, constraintId)), [nodeId]);
 }
-export function moveTransformation(panel: SketchPanel, nodeId: string, transformationId: string, offset: number): Patch {
-  return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.moveTransformation(node, transformationId, offset)), [nodeId]);
+/** Reorder: in the selected state's evaluation order (host data, live), else in the node's declaration order. */
+export function moveConstraint(panel: SketchPanel, nodeId: string, constraintId: string, offset: number): Patch {
+  return commitScene(panel, updateNode(panel.scene, nodeId, node => layers.moveConstraint(node, constraintId, offset, panel.editingStates[nodeId])));
+}
+/** Whether a state evaluates a constraint (host data, live: no new code). */
+export function setStateConstraintIncluded(panel: SketchPanel, nodeId: string, stateId: string, constraintId: string, included: boolean): Patch {
+  return commitScene(panel, updateNode(panel.scene, nodeId, node => setStateConstraint(node, stateId, constraintId, included)));
 }
 /**
- * Drag and drop in Layers: a transformation put before `beforeId` in `toNodeId` (none: at its end), in its own
- * node (a reorder) or another one (it leaves the first, its state values with it). {} when nothing changes; an error when there is no room.
+ * Drag and drop in Layers: a constraint put before `beforeId` in `toNodeId` (none: at its end), in its own
+ * node (a reorder) or another one (it leaves the first and joins every state of the other). {} when nothing changes; an error when there is no room.
  */
-export function relocateTransformation(panel: SketchPanel, fromNodeId: string, transformationId: string, toNodeId: string, beforeId: string | null): Patch {
-  const source = findNode(panel.scene, fromNodeId), target = findNode(panel.scene, toNodeId), moved = source && layers.findTransformation(source, transformationId);
-  if (!source || !target || !moved || beforeId === transformationId) return {};
+export function relocateConstraint(panel: SketchPanel, fromNodeId: string, constraintId: string, toNodeId: string, beforeId: string | null): Patch {
+  const source = findNode(panel.scene, fromNodeId), target = findNode(panel.scene, toNodeId), moved = source && layers.findConstraint(source, constraintId);
+  if (!source || !target || !moved || beforeId === constraintId) return {};
   if (source.id === target.id) {
-    const rest = source.transformations.filter(item => item.id !== transformationId), at = rest.findIndex(item => item.id === beforeId);
-    const transformations = [...rest]; transformations.splice(at < 0 ? rest.length : at, 0, moved);
-    if (transformations.every((item, i) => item.id === source.transformations[i].id)) return {};
-    return commitScene(panel, updateNode(panel.scene, source.id, node => ({ ...node, transformations })), [source.id]);
+    const rest = source.constraints.filter(item => item.id !== constraintId), at = rest.findIndex(item => item.id === beforeId);
+    const constraints = [...rest]; constraints.splice(at < 0 ? rest.length : at, 0, moved);
+    if (constraints.every((item, i) => item.id === source.constraints[i].id)) return {};
+    return commitScene(panel, updateNode(panel.scene, source.id, node => ({ ...node, constraints })), [source.id]);
   }
-  if (!layers.canTakeTransformation(target, moved)) return { error: `“${target.name}” has no room for “${moved.label || moved.id}” (at most ${MAX_TRANSFORMATIONS} transformations and ${MAX_NODE_PROPERTIES} properties a node).` };
-  const left = updateNode(panel.scene, source.id, node => layers.removeTransformation(node, transformationId));
-  return commitScene(panel, updateNode(left, target.id, node => layers.takeTransformation(node, moved, beforeId)), [source.id, target.id]);
+  if (!layers.canTakeConstraint(target, moved)) return { error: `“${target.name}” has no room for “${moved.property || moved.id}” (at most ${MAX_CONSTRAINTS} constraints and ${MAX_NODE_PARAMS} params a node).` };
+  const left = updateNode(panel.scene, source.id, node => layers.removeConstraint(node, constraintId));
+  return commitScene(panel, updateNode(left, target.id, node => layers.takeConstraint(node, moved, beforeId)), [source.id, target.id]);
 }
 
 /** Algorithm definitions are shared: editing one marks every node that uses it. */
@@ -155,9 +156,9 @@ export function editAlgorithm(panel: SketchPanel, algorithmId: string, patch: { 
 export function editMachineState(panel: SketchPanel, nodeId: string, stateId: string, patch: Partial<Pick<NodeState, "label" | "description">>): Patch {
   return setScene(panel, updateNode(panel.scene, nodeId, node => node.machine ? { ...node, machine: { ...node.machine, states: node.machine.states.map(state => state.id === stateId ? { ...state, ...patch } : state) } } : node), patch.description !== undefined ? [nodeId] : []);
 }
-/** Timing and labels are live in the host block; no regeneration needed. */
-export function editTransition(panel: SketchPanel, nodeId: string, transitionId: string, patch: Partial<Pick<NodeTransition, "label" | "trigger" | "afterMs">>): Patch {
-  return setScene(panel, updateNode(panel.scene, nodeId, node => node.machine ? { ...node, machine: { ...node.machine, transitions: node.machine.transitions.map(t => t.id === transitionId ? { ...t, ...patch } : t) } } : node));
+/** Labels and targets are live in the host block; a new event name is new code (the code dispatches it). */
+export function editTransition(panel: SketchPanel, nodeId: string, transitionId: string, patch: Partial<Pick<NodeTransition, "label" | "event" | "to">>): Patch {
+  return setScene(panel, updateNode(panel.scene, nodeId, node => node.machine ? { ...node, machine: { ...node.machine, transitions: node.machine.transitions.map(t => t.id === transitionId ? { ...t, ...patch } : t) } } : node), patch.event !== undefined ? [nodeId] : []);
 }
 export function removeMachine(panel: SketchPanel, nodeId: string): Patch {
   const editingStates = { ...panel.editingStates }; delete editingStates[nodeId];

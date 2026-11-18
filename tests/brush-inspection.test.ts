@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { sampleScene, withMockedAI } from "./fixtures/scene";
 import { brushSchema, brushesFor, brushNodeIds, brushRole, brushRoots, brushSource, brushTool, detachedBrush, frameIds, markBrushes, parseBrushTool, sharedIds } from "../app/lib/brushes";
-import { addStep, remapResult, resultInFrame, historyOverlays, layoutLabels, changedKeys, constraintRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema, targetedResultSchema } from "../app/lib/inspection";
+import { addStep, remapResult, resultInFrame, historyOverlays, layoutLabels, changedKeys, paramRows, emptyInspection, evaluate, fillLabel, filterValues, MAX_STEPS, placeOverlays, inspectResultSchema, targetedResultSchema } from "../app/lib/inspection";
 import { updateNode } from "../app/lib/scene/graph";
 import { transplantNodes } from "../app/lib/scene/transfer";
 import { sceneValues } from "../app/lib/scene/values";
@@ -69,8 +69,8 @@ test("the source frame holds a brush's master, every stamp is an instance; detac
 test("a targeted inspection is kept in shared ids and works on the master and on every instance", () => {
   const scene = sampleScene(), [brush] = makeBrushes(scene), marked = markBrushes(scene, [brush]);
   const result = inspectResultSchema.parse({ summary: "s", overlays: [{ id: "o", kind: "rect", x: "p(\"tree/@x\") + s(\"tree\", \"ball.x\")", y: "0", w: "item(\"r\")", h: "1", label: "r ${p(\"orb/radius\")} ${in('orb', 'idle')}", color: "#ff0000",
-    link: { kind: "constraint", nodeId: "orb", id: "radius" }, when: "elapsed(\"orb\") > 0", each: "tree:points", name: "n" }],
-    valueFixes: [{ key: "orb/radius", stateId: "", value: 3, reason: "r" }], recommendations: [{ kind: "value", nodeId: "orb", targetId: "radius", title: "t", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 4 }] }] });
+    link: { kind: "param", nodeId: "orb", id: "radius" }, when: "elapsed(\"orb\") > 0", each: "tree:points", name: "n" }],
+    parameters: [{ nodeId: "orb", constraintId: "pulse", id: "squash", label: "Squash", effect: "spatial", description: "d", form: "constant", value: { type: "number", value: 1, min: 0, max: 2, step: .1, unit: "" }, reason: "r", edits: [{ find: "a", replace: "b" }] }] });
   const first = transplantNodes(brushSource(brush, marked), "tree", sampleScene(), { x: .3, y: .3 });
   const second = transplantNodes(brushSource(brush, marked), "tree", first.scene, { x: .7, y: .7 });
   const frame = second.scene, roots = brushRoots(frame, brush, "sketch-b"), [tree, orb] = [second.ids.get("tree")!, second.ids.get("orb")!];
@@ -84,8 +84,7 @@ test("a targeted inspection is kept in shared ids and works on the master and on
   assert.deepEqual(shown.overlays.map(overlay => overlay.id), ["o", "o~2"]);
   assert.equal(shown.overlays[1].label, `r \${p("${orb}/radius")} \${in('${orb}', 'idle')}`);
   assert.equal(shown.overlays[1].each, `${tree}:points`); assert.equal(shown.overlays[1].when, `elapsed("${orb}") > 0`); assert.equal(shown.overlays[1].link.nodeId, orb);
-  assert.equal(shown.valueFixes[0].key, `${orb}/radius`, "fixes go to the selected instance");
-  assert.equal(shown.recommendations[0].nodeId, orb); assert.equal(shown.recommendations[0].changes[0].key, `${orb}/radius`);
+  assert.equal(shown.parameters[0].nodeId, orb, "suggestions go to the selected instance");
   assert.deepEqual(resultInFrame(result, [frameIds(marked, "tree")]), result, "the master reads it as is");
 });
 
@@ -98,7 +97,7 @@ test("inspection keeps the newest 20 steps and reports what changed between step
   const values = filterValues({ ...sceneValues(sampleScene()), "other/x": 1 }, ["orb"]);
   assert.ok(Object.keys(values).every(key => key.startsWith("orb/")));
   assert.ok("orb/@w" in values && "orb/radius" in values);
-  assert.deepEqual(constraintRows(sampleScene(), ["orb"]).map(row => [row.key, row.transformation, row.property]), [["orb/radius", "Pulse", "Radius"], ["orb/speed", "Pulse", "Speed"]]);
+  assert.deepEqual(paramRows(sampleScene(), ["orb"]).map(row => [row.key, row.constraint, row.param]), [["orb/radius", "size", "Radius"], ["orb/speed", "x", "Speed"]]);
 });
 
 test("overlay expressions read step values safely", () => {
@@ -110,7 +109,7 @@ test("overlay expressions read step values safely", () => {
   assert.equal(fillLabel("w=${p(\"orb/radius\") * 2}px", values), "w=48px");
   assert.equal(fillLabel("w=${p(\"orb/radius\") * 2}px h=${nope(1)}", values), "", "a part that cannot be read hides the label (no \"?\")");
   const placed = placeOverlays([
-    { id: "a", kind: "rect", x: "p(\"orb/@x\")", y: "10", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "r=${p(\"orb/radius\")}", color: "#ff0000", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
+    { id: "a", kind: "rect", x: "p(\"orb/@x\")", y: "10", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "r=${p(\"orb/radius\")}", color: "#ff0000", link: { kind: "param", nodeId: "orb", id: "radius" } },
     { id: "b", kind: "rect", x: "p(\"missing\")", y: "0", w: "1", h: "1", label: "", color: "#00ff00", link: { kind: "state", nodeId: "orb", id: "idle" } },
   ], values);
   assert.deepEqual(placed.map(item => [item.overlay.id, item.x, item.w, item.label]), [["a", 400, 24, "r=24"]]);
@@ -129,7 +128,7 @@ test("the toolbar has one Brush tool whose panel picks a brush and shows its too
   assert.doesNotMatch(html, /BRUSH GESTURE/, "a brush adds itself once per frame, then plays: no gesture setting");
   const located = renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...props, brushMaster: () => "Sketch A" } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   assert.match(located, /MASTER.*◆ Sketch A/, "the group says where its master is");
-  const result = { summary: "s", overlays: [], valueFixes: [], recommendations: [] };
+  const result = { summary: "s", overlays: [] };
   const withTool = { ...brush, targeted: [{ id: "t1", name: "별 크기", concern: "별 크기가 궁금해", marks: [], result }] };
   const selected = renderToStaticMarkup(createElement(ToolRail, new Proxy({ ...props, tool: brushTool("targeted", brush.id, "t1"), brushes: [withTool], onTargetedRemove: noop } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
   assert.match(selected, /title="Brush · Tree · 별 크기/, "the Brush tool shows the selected targeted tool");
@@ -137,7 +136,7 @@ test("the toolbar has one Brush tool whose panel picks a brush and shows its too
   assert.match(selected, /aria-label="Remove targeted inspection 별 크기"/);
 });
 
-test("the inspection panel steps through states, transitions and constraint values", () => {
+test("the inspection panel steps through states, transitions and param values", () => {
   const scene = sampleScene(), [brush] = makeBrushes(scene);
   let state = emptyInspection(brush.id);
   state = addStep(state, { at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { "orb/radius": 24, "orb/speed": 0 }, runtime: null });
@@ -148,40 +147,40 @@ test("the inspection panel steps through states, transitions and constraint valu
   assert.match(html, /Reset history/, "the recorded history can be reset");
   assert.match(html, />대기<\/button><span>→<\/span><button[^>]*>이동</);
   assert.match(html, /원 클릭/);
-  assert.match(html, /class="changed[^"]*"[^>]*><td><span class="inspection-node">Orb<\/span><span>Pulse · <b>Radius<\/b>/);
+  assert.match(html, /class="changed[^"]*"[^>]*><td><span class="inspection-node">Orb<\/span><span>size · <b>Radius<\/b>/);
   assert.match(html, /\+56/);
   assert.doesNotMatch(html, /YOUR CONCERN/, "the concern box belongs to targeted inspection");
   const annotation = renderToStaticMarkup(createElement(InspectionPanel, { ...(handlers as object), brush, kind: "inspect-annotate", scene, nodeIds: ["tree", "orb"], state: { ...state, marks: [[{ x: .1, y: .1 }]] }, busy: false, running: true } as never));
   assert.match(annotation, /Inspection annotation<\/b>1 stroke attached/);
   assert.match(annotation, /Create targeted inspection/);
-  const result = inspectResultSchema.parse({ summary: "원이 커집니다", valueFixes: [{ key: "orb/radius", stateId: "moving", value: 50, reason: "줄입니다" }], recommendations: [], overlays: [{ id: "r", kind: "rect" as const, x: "10", y: "10", w: "p(\"orb/radius\")", h: "5", label: "r=${p(\"orb/radius\")}", color: "#ff0000", link: { kind: "constraint" as const, nodeId: "orb", id: "radius" } }] });
+  const result = inspectResultSchema.parse({ summary: "원이 커집니다", overlays: [{ id: "r", kind: "rect" as const, x: "10", y: "10", w: "p(\"orb/radius\")", h: "5", label: "r=${p(\"orb/radius\")}", color: "#ff0000", link: { kind: "param" as const, nodeId: "orb", id: "radius" } }] });
   const tool = { id: "t1", name: "원 크기", concern: "원 크기가 궁금해", marks: [], result };
-  const targeted = renderToStaticMarkup(createElement(InspectionPanel, { ...(handlers as object), brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state, busy: false, running: true } as never));
-  assert.match(targeted, /TARGETED INSPECTION/); assert.match(targeted, /원이 커집니다/); assert.match(targeted, /Inspect again/); assert.match(targeted, /Apply/);
+  const targeted = renderToStaticMarkup(createElement(InspectionPanel, { ...(handlers as object), brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state, busy: false, running: true, onExplore: noop } as never));
+  assert.match(targeted, /TARGETED INSPECTION/); assert.match(targeted, /원이 커집니다/); assert.match(targeted, /Inspect again/);
+  assert.doesNotMatch(targeted, /VALUE FIX|RECOMMENDATIONS/, "no fixes are proposed: the state wanted is drawn in the Execution frame");
+  assert.match(targeted, /Execution · draw the state you want/);
   const overlay = renderToStaticMarkup(createElement(InspectionOverlay, { state: { ...state, cursor: 1 }, marks: [], result, liveValues: {}, clickable: true, zoom: 1, onFocus: noop }));
   assert.doesNotMatch(overlay, /<img/, "steps restore the running result, not an image"); assert.match(overlay, /width="80"/); assert.match(overlay, /r=80/);
 });
 
-test("targeted inspection asks AI with the brush's constraints and steps, and drops links outside the brush", async () => {
+test("targeted inspection asks AI with the brush's params and steps, and drops links outside the brush", async () => {
   const scene = sampleScene();
   const output = { summary: "원 크기가 이동 상태에서 커집니다.",
-    overlays: [{ id: "size", kind: "rect", x: "p(\"orb/@x\")", y: "p(\"orb/@y\")", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "w=${p(\"orb/radius\")}", color: "#e0457b", link: { kind: "constraint", nodeId: "orb", id: "radius" } },
+    overlays: [{ id: "size", kind: "rect", x: "p(\"orb/@x\")", y: "p(\"orb/@y\")", w: "p(\"orb/radius\")", h: "p(\"orb/radius\")", label: "w=${p(\"orb/radius\")}", color: "#e0457b", link: { kind: "param", nodeId: "orb", id: "radius" } },
       { id: "bogus", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "state", nodeId: "orb", id: "nope" } }],
     valueFixes: [{ key: "orb/radius", stateId: "moving", value: 50, reason: "줄입니다" }, { key: "orb/nope", stateId: "", value: 1, reason: "" }],
     recommendations: [{ kind: "transition", nodeId: "orb", targetId: "settle", targetIds: ["pulse"], title: "더 천천히", detail: "정착을 늦춥니다", changes: [] }, { kind: "state", nodeId: "orb", targetId: "ghost", targetIds: [], title: "x", detail: "", changes: [] },
-      { kind: "transformation", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth", "ink-wash", "pulse", "nope"], title: "둘 다", detail: "", changes: [] },
-      { kind: "add-transformation", nodeId: "orb", targetId: "", targetIds: [], title: "새로 추가", detail: "속도에 따라 꼬리를 그리는 새 transformation", changes: [] },
-      { kind: "add-transformation", nodeId: "elsewhere", targetId: "", targetIds: [], title: "브러시 밖", detail: "", changes: [] }] };
+      { kind: "constraint", nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth", "ink-wash", "pulse", "nope"], title: "둘 다", detail: "", changes: [] },
+      { kind: "add-constraint", nodeId: "orb", targetId: "", targetIds: [], title: "새로 추가", detail: "속도에 따라 꼬리를 그리는 새 constraint", changes: [] },
+      { kind: "add-constraint", nodeId: "elsewhere", targetId: "", targetIds: [], title: "브러시 밖", detail: "", changes: [] }] };
   const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 1, marks: [[{ x: .4, y: .2 }, { x: .5, y: .3 }]],
-    constraints: constraintRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+    params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
     steps: [{ id: 1, nodeId: "orb", from: "idle", to: "moving", transitionId: "press", values: { "orb/radius": 80 }, runtime: { states: { orb: { id: "moving", elapsed: 0 } }, stores: { tree: { ball: { x: 10 } } } } }] };
   await withMockedAI(() => output, async calls => {
-    const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기가 궁금해", inspection }), new AbortController().signal));
+    const raw = await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기가 궁금해", inspection }), new AbortController().signal) as Record<string, unknown>;
+    const result = inspectResultSchema.parse(raw);
     assert.deepEqual(result.overlays.map(item => item.id), ["size"]);
-    assert.deepEqual(result.valueFixes.map(item => item.key), ["orb/radius"]);
-    assert.deepEqual(result.recommendations.map(item => item.targetId), ["settle", "ink-wash", ""]);
-    assert.deepEqual(result.recommendations.map(item => item.targetIds), [[], ["branching-growth"], []], "only other transformations of the same node are kept");
-    assert.deepEqual(result.recommendations.map(item => item.kind), ["transition", "transformation", "add-transformation"], "a new transformation may be proposed, on a node of the brush");
+    assert.ok(!("recommendations" in raw) && !("valueFixes" in raw), "the inspection proposes no fixes");
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(context.concern, "원 크기가 궁금해");
     assert.deepEqual(context.brushNodes.map((node: { id: string }) => node.id), ["tree", "orb"]);
@@ -207,7 +206,7 @@ test("targeted overlays are rules over the history: each step recomputes them fr
   const step = (id: number, x: number, state: string, radius: number) => ({ id, at: id * 100, nodeId: "orb", from: null, to: state, transitionId: null, values: { "orb/radius": radius },
     runtime: { seed: 1, states: { orb: { id: state, elapsed: 0 } }, stores: { tree: { ball: { x, y: 50 }, dots: [{ x: 1 }, { x: 2 }, { x: x }] } } } });
   const steps = [step(1, 10, "idle", 20), step(2, 30, "moving", 20), step(3, 60, "moving", 35)];
-  const result = inspectResultSchema.parse({ summary: "s", valueFixes: [], recommendations: [], overlays: [
+  const result = inspectResultSchema.parse({ summary: "s", overlays: [
     { id: "ball", kind: "ellipse", x: "s(\"tree\", \"ball.x\")", y: "s(\"tree\", \"ball.y\")", w: "p(\"orb/radius\")", h: "2", label: "dx=${s(\"tree\", \"ball.x\") - 10} d=${delta(\"orb/radius\")}", color: "#ff0000", link: { kind: "state", nodeId: "orb", id: "moving" }, when: "", each: "" },
     { id: "moving", kind: "label", x: "0", y: "0", w: "0", h: "0", label: "moving", color: "#00ff00", link: { kind: "state", nodeId: "orb", id: "moving" }, when: "in(\"orb\", \"moving\") && len(\"tree\", \"dots\") == 3", each: "" },
     { id: "dots", kind: "rect", x: "item(\"x\")", y: "i * 10", w: "1", h: "1", label: "", color: "#0000ff", link: { kind: "state", nodeId: "orb", id: "moving" }, when: "", each: "tree:dots" },
@@ -235,7 +234,7 @@ test("overlays can sit on drawn items: a point list reads as its box, the input 
   const steps = [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { "bush/spacing": 40 }, runtime: { states: {}, stores: { bush: { polygons } }, history: [gesture] } }];
   assert.deepEqual(pointsBox(polygons[0]), { "@x": 100, "@y": 300, "@w": 60, "@h": 40, "@cx": 130, "@cy": 320, "@n": 40 });
   // One rectangle around each drawn bush, wherever it is (not at a fixed spot).
-  const overlay = { id: "each-bush", kind: "rect" as const, name: "", x: "item(\"@x\")", y: "item(\"@y\")", w: "item(\"@w\")", h: "item(\"@h\")", label: "", color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "spacing" }, when: "", each: "bush:polygons" };
+  const overlay = { id: "each-bush", kind: "rect" as const, name: "", x: "item(\"@x\")", y: "item(\"@y\")", w: "item(\"@w\")", h: "item(\"@h\")", label: "", color: "#2563eb", link: { kind: "param" as const, nodeId: "bush", id: "spacing" }, when: "", each: "bush:polygons" };
   assert.deepEqual(placeOverlays([overlay], stepContext(steps, 0)).map(item => [item.x, item.y, item.w, item.h]), [[100, 300, 60, 40], [140, 300, 60, 40], [180, 300, 60, 40]]);
   const gap = evaluate("s(\"bush\", \"polygons.1.@cx\") - s(\"bush\", \"polygons.0.@cx\")", stepContext(steps, 0));
   assert.equal(gap, 40, "the gap between two items");
@@ -246,7 +245,7 @@ test("overlays can sit on drawn items: a point list reads as its box, the input 
   assert.deepEqual((sent.stores.bush as { polygons: unknown[] }).polygons[0], { "@x": 100, "@y": 300, "@w": 60, "@h": 40, "@cx": 130, "@cy": 320, "@n": 40, "@points": "…" });
   assert.ok(INPUT_ROOT in sent.stores, "the input history goes too");
   assert.ok(JSON.stringify(sent).length < 1200);
-  assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:`, handle: null }], valueFixes: [], recommendations: [] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
+  assert.equal(remapResult({ summary: "s", overlays: [{ ...overlay, each: `${INPUT_ROOT}:`, handle: null }] }, new Map([["bush", "bush-2"]])).overlays[0].each, `${INPUT_ROOT}:`, "the input root is not a node id");
 });
 
 test("per-item values stay readable: records keep their fields for AI, and an each label that is the same for every item is shown once", async () => {
@@ -260,7 +259,7 @@ test("per-item values stay readable: records keep their fields for AI, and an ea
   assert.match(String(sent.at(-1)), /^…\(8 items; all in box @x=100 @y=300 @w=420 @h=0 @cx=310 @cy=300\)$/, "how many, and where they all are");
   // A label reading the item says that item's value; one that does not is the same everywhere: shown once.
   assert.ok(labelReadsItem("잎 끝 ${item(\"tips\")}개")); assert.ok(labelReadsItem("#${i + 1}")); assert.ok(!labelReadsItem("${p(\"bush/slow\")}→${p(\"bush/fast\")}px/s"));
-  const overlay = (label: string) => ({ id: "o", kind: "label" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "0", h: "0", label, color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" });
+  const overlay = (label: string) => ({ id: "o", kind: "label" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "0", h: "0", label, color: "#2563eb", link: { kind: "param" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" });
   assert.deepEqual(placeOverlays([overlay("잎 끝 ${item(\"tips\")}개")], stepContext(steps, 0)).slice(0, 3).map(item => item.label), ["잎 끝 12개", "잎 끝 11개", "잎 끝 10개"]);
   const shared = placeOverlays([overlay("${p(\"bush/slow\")}→${p(\"bush/fast\")}px/s")], stepContext(steps, 0));
   assert.equal(shared.length, 8, "the overlay is still placed on every item");
@@ -272,7 +271,7 @@ test("every recorded step keeps a badge on the canvas: steps whose overlay sits 
   // The first item stays put (it is the oldest), so steps 0–2 draw it at the same spot; step 3 moved it.
   const at = (x: number) => ({ states: {}, stores: { bush: { items: [{ x, y: 50 }, { x: 300, y: 50 }] } } });
   const steps = [at(10), at(10), at(10), at(90)].map((runtime, i) => ({ id: i + 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime }));
-  const overlay = { id: "o", kind: "rect" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "20", h: "20", label: "", color: "#2563eb", link: { kind: "constraint" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" };
+  const overlay = { id: "o", kind: "rect" as const, name: "", x: "item(\"x\")", y: "item(\"y\")", w: "20", h: "20", label: "", color: "#2563eb", link: { kind: "param" as const, nodeId: "bush", id: "tips" }, when: "", each: "bush:items" };
   const spot = (item: { x: number; y: number }) => ({ x: item.x, y: item.y });
   const view = (index: number) => stepBadges([overlay], steps as never, index, spot).map(({ steps, shown, next, current }) => ({ steps, shown, next, current }));
   assert.deepEqual(view(1), [{ steps: [0, 1, 2], shown: 1, next: 2, current: true }, { steps: [3], shown: 3, next: 3, current: false }], "the shared badge goes to the next step at that spot");
@@ -285,7 +284,7 @@ test("Autocomplete: on request, AI reads the inspection annotation and suggests 
   const { concernCompletion } = await import("../app/lib/inspection");
   const scene = sampleScene(), [brush] = makeBrushes(scene);
   const marks = [[{ x: .4, y: .2 }, { x: .5, y: .3 }]];
-  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks, constraints: [], steps: [], markStyles: [{ color: "#e0457b", width: 12, opacity: .6 }] };
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks, params: [], steps: [], markStyles: [{ color: "#e0457b", width: 12, opacity: .6 }] };
   const output = { suggestions: ["가지 끝이 왜 겹치는지 궁금해", "가지 끝 간격이 단계마다 어떻게 바뀌는지 알고 싶어", "가지 끝 간격이 단계마다 어떻게 바뀌는지 알고 싶어"] };
   await withMockedAI(() => output, async calls => {
     const result = await runAI(requestSchema.parse({ intent: "concern", scene, image: "data:image/png;base64,AAAA", instruction: "가지 끝 간격이", inspection }), new AbortController().signal) as { suggestions: string[] };
@@ -293,7 +292,7 @@ test("Autocomplete: on request, AI reads the inspection annotation and suggests 
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(context.typed, "가지 끝 간격이"); assert.deepEqual(context.annotationMarks, marks); assert.equal(context.annotationMarkStyles[0].color, "#e0457b");
     assert.deepEqual(context.brushNodes.map((node: { name: string }) => node.name), scene.nodes.map(node => node.name));
-    assert.ok(context.brushNodes[0].transformations[0].properties[0].label, "named in the user's terms");
+    assert.ok(context.brushNodes[0].constraints[0].params[0].label, "named in the user's terms");
     assert.doesNotMatch(JSON.stringify(context), /"value":/, "no values or code: only what the marked things are");
     assert.match(calls[0].instructions, /reusable tool for one concern/);
     assert.match(calls[0].instructions, /not debugging code/, "suggestions say what the user wants to change in the drawing");
@@ -334,22 +333,6 @@ test("overlay labels never overlap: each takes the first free spot beside its sh
   assert.ok(labels.every(label => label.x >= 0 && label.y - label.height * .8 >= 0));
 });
 
-test("each recommendation names what it changes; its chip highlights that transformation, constraint or state", () => {
-  const scene = sampleScene(), [brush] = makeBrushes(scene), noop = () => {};
-  const result = inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [
-    { kind: "transformation", nodeId: "tree", targetId: "ink-wash", title: "번짐 줄이기", detail: "d", changes: [] },
-    { kind: "value", nodeId: "orb", targetId: "", title: "반지름 줄이기", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 10 }] },
-    { kind: "state", nodeId: "orb", targetId: "moving", title: "이동 다듬기", detail: "d", changes: [] }] });
-  const tool = { id: "t1", name: "c", concern: "c", marks: [], result };
-  const render = (focus: unknown) => renderToStaticMarkup(createElement(InspectionPanel, new Proxy({ brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"],
-    state: { ...emptyInspection(brush.id), focus }, busy: false, running: true } as Record<string, unknown>, { get: (target, key) => key in target ? target[key as string] : noop }) as never));
-  const html = render(null);
-  assert.match(html, /class="inspection-target "[^>]*><svg[\s\S]*?<span>Tree<\/span><b>Ink wash<\/b>/, "the transformation and its node");
-  assert.match(html, /<span>Orb<\/span><b>[^<]*Radius<\/b>/, "the constraint a value recommendation changes");
-  assert.match(html, /<span>Orb<\/span><b>이동<\/b>/, "the state");
-  assert.match(render({ kind: "transformation", nodeId: "tree", id: "ink-wash" }), /class="inspection-target focused" aria-pressed="true"/);
-});
-
 test("master and instances read apart; editing an instance explains detach; any frame with the brush can be inspected", async () => {
   const { BrushRoleBanner, BrushRoleBadge, DetachDialog } = await import("../app/components/brush-role");
   const [brush] = makeBrushes(), handlers = { onMaster: noop, onDetach: noop, onAdopt: noop, onCancel: noop };
@@ -381,7 +364,7 @@ test("inspection has its own pane beside Code / State Machine, and the graph hig
   let state = emptyInspection("b");
   state = addStep(state, { at: 0, nodeId: orb.id, from: first.id, to: second.id, transitionId: transition.id, values: {}, runtime: null });
   state = addStep(state, { at: 1, nodeId: "tree", from: null, to: null, transitionId: null, values: {}, runtime: { states: { [orb.id]: { id: first.id, elapsed: 0 } }, stores: {} } });
-  const result = inspectResultSchema.parse({ summary: "s", overlays: [{ id: "o", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "transition", nodeId: orb.id, id: transition.id }, when: `in("${orb.id}", "${second.id}")`, each: "", name: "" }], valueFixes: [], recommendations: [] });
+  const result = inspectResultSchema.parse({ summary: "s", overlays: [{ id: "o", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000", link: { kind: "transition", nodeId: orb.id, id: transition.id }, when: `in("${orb.id}", "${second.id}")`, each: "", name: "" }] });
   assert.deepEqual(machineInspection({ ...state, cursor: 0 }, result, orb.id), { state: second.id, from: first.id, transition: transition.id, states: [second.id], transitions: [transition.id] });
   assert.equal(machineInspection(state, null, orb.id).state, first.id, "another node's step: the state this node was in then (from the runtime)");
   const graph = renderToStaticMarkup(createElement(MachineGraph, { machine: orb.machine!, selectedId: null, target: null, runtimeId: "", busy: false, annotating: false, strokes: [], onState: noop, onTransition: noop, onBackground: noop, onStroke: noop, summary: () => "",
@@ -403,67 +386,37 @@ test("the inspection annotation eraser removes the marks it passes over, and the
   assert.match(html, /Rub over the marks on the frame to erase them/);
 });
 
-test("a transformation recommendation that changes several transformations shows one chip per transformation", () => {
-  const scene = sampleScene(), [brush] = makeBrushes(scene);
-  const recommendation = { kind: "transformation" as const, nodeId: "tree", targetId: "ink-wash", targetIds: ["branching-growth"], title: "둘 다 바꾸기", detail: "d", changes: [] };
-  const tool = { id: "t1", name: "c", concern: "c", marks: [], result: inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [recommendation] }) };
-  const html = renderToStaticMarkup(createElement(InspectionPanel, { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: { ...emptyInspection(brush.id), focus: { kind: "transformation", nodeId: "tree", id: "branching-growth" } }, busy: false, running: true,
-    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
-  const chips = [...html.matchAll(/<button class="inspection-target ?(focused)?" aria-pressed="(true|false)"[^>]*>.*?<b>([^<]*)<\/b><\/button>/g)].map(match => [match[3], match[2]]);
-  const labels = Object.fromEntries(scene.nodes[0].transformations.map(item => [item.id, item.label]));
-  assert.deepEqual(chips, [[labels["ink-wash"], "false"], [labels["branching-growth"], "true"]], "each chip highlights just its own transformation");
-});
-
-test("a recommendation can add a new transformation instead of forcing an unrelated one to change", () => {
-  const scene = sampleScene(), [brush] = makeBrushes(scene);
-  const recommendation = { kind: "add-transformation" as const, nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [] };
-  const tool = { id: "t1", name: "c", concern: "c", marks: [], result: inspectResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [recommendation] }) };
-  const html = renderToStaticMarkup(createElement(InspectionPanel, { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true,
-    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop } as never));
-  assert.match(html, /<em>New Transformation<\/em>꼬리 추가/);
-  assert.match(html, /<span>Orb<\/span><b>\+ New transformation<\/b>/);
-  assert.match(html, />Fork &amp; add with AI<\/button>/);
-});
-
-test("an applied new-transformation recommendation reads as the transformation it added, and the overlays are rebuilt for it", async () => {
-  const { currentRecommendation, targetedResultSchema } = await import("../app/lib/inspection");
+test("a fix drawn in the Execution frame is applied to a fork listed in the panel, and the fork's overlays are rebuilt for what it added", async () => {
   const { targetedToolSchema } = await import("../app/lib/brushes");
-  const scene = sampleScene(), [brush] = makeBrushes(scene), orb = scene.nodes.find(node => node.id === "orb")!, added = orb.transformations[0];
-  const listed = { kind: "add-transformation" as const, nodeId: "orb", targetId: "", targetIds: [], title: "꼬리 추가", detail: "속도에 따라 꼬리를 그립니다", changes: [], addedId: added.id };
-  // Stored tools from before keep parsing; addedId survives storage and the id translation between frames.
-  assert.equal(targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: [], result: { summary: "s", overlays: [], valueFixes: [], recommendations: [{ ...listed, addedId: undefined }] } }).result.recommendations[0].addedId, undefined);
-  const stored = targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [listed] });
-  assert.equal(remapResult(stored, new Map([["orb", "orb-2"]])).recommendations[0].addedId, added.id);
-  assert.deepEqual(currentRecommendation(stored.recommendations[0], scene), { ...listed, kind: "transformation", targetId: added.id, targetIds: [] });
-  const undone = { ...scene, nodes: scene.nodes.map(node => node.id === "orb" ? { ...node, transformations: node.transformations.slice(1) } : node) };
-  assert.equal(currentRecommendation(stored.recommendations[0], undone).kind, "add-transformation", "undone: it is a new transformation again");
-  const tool = { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: stored };
-  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, recommendationKey: (item: { kind: string; title: string }) => `${item.kind}:${item.title}`,
-    applied: { past: [{ id: "a", title: "꼬리 추가", key: "add-transformation:꼬리 추가" }], future: [], undoClean: true, redoClean: false },
-    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
-  const html = renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene } as never));
-  assert.match(html, /<em>Transformation · added<\/em>꼬리 추가/);
-  assert.match(html, new RegExp(`<span>Orb</span><b>${added.label}</b>`), "its chip is the added transformation");
-  assert.match(html, />Fork &amp; apply with AI<\/button>/); assert.match(html, /✓ Applied · added as the transformation above/, "still marked as applied");
-  assert.match(renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene: undone } as never)), /<em>New Transformation<\/em>꼬리 추가/);
-  // Applying makes a fork of the brush: the recommendation lists the forks made from it, each a link to go there.
-  const forked = renderToStaticMarkup(createElement(InspectionPanel, { ...props, scene, forksOf: () => [{ id: "fork-1", name: "Sketch · fork: 꼬리 추가" }], onOpenFork: noop } as never));
-  assert.match(forked, /class="inspection-fork-link"[^>]*>⑂ Applied in fork · Sketch · fork: 꼬리 추가/);
-  const fork = brushSchema.parse({ ...brush, id: "fork-1", parentId: brush.id, fork: { brushId: brush.id, frameId: "sketch-a", key: "add-transformation:꼬리 추가", title: "꼬리 추가" } });
-  assert.equal(fork.fork?.brushId, brush.id, "a fork knows the brush it was forked from (kept with the project)");
+  const scene = sampleScene(), [brush] = makeBrushes(scene), orb = scene.nodes.find(node => node.id === "orb")!, added = orb.constraints[0];
+  // Stored tools from before (with recommendations and value fixes) keep parsing, without them.
+  const old = targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: [], result: { summary: "s", overlays: [], valueFixes: [{ key: "orb/radius", stateId: "", value: 1, reason: "" }], recommendations: [{ kind: "value", nodeId: "orb", targetId: "", title: "t", detail: "", changes: [] }] }, timing: { ms: 3, previews: true } });
+  assert.deepEqual(Object.keys(old.result).sort(), ["overlays", "parameters", "records", "summary"]); assert.deepEqual(old.timing, { ms: 3 });
+  const tool = { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: targetedResultSchema.parse({ summary: "s", overlays: [] }) };
+  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, scene,
+    applied: { past: [{ id: "a", title: "꼬리 추가", key: "add-constraint:꼬리 추가" }], future: [], undoClean: true, redoClean: false },
+    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onTool: noop, onExplore: noop };
+  const html = renderToStaticMarkup(createElement(InspectionPanel, props as never));
+  assert.match(html, /APPLIED/); assert.match(html, /Undo apply/, "applied changes can be undone as a whole");
+  // The forks this tool's fixes were applied to, each a link to go there.
+  const forked = renderToStaticMarkup(createElement(InspectionPanel, { ...props, forks: [{ id: "fork-1", name: "Sketch · fork: 꼬리 추가", title: "꼬리 추가" }], onOpenFork: noop } as never));
+  assert.match(forked, /FIXED IN FORKS/); assert.match(forked, /class="inspection-fork-link"[^>]*>⑂ 꼬리 추가<small>Sketch · fork: 꼬리 추가<\/small>/);
+  const fork = brushSchema.parse({ ...brush, id: "fork-1", parentId: brush.id, fork: { brushId: brush.id, frameId: "sketch-a", key: "add-constraint:꼬리 추가", title: "꼬리 추가", toolId: "t1" } });
+  assert.equal(fork.fork?.brushId, brush.id, "a fork knows the brush it was forked from (kept with the project)"); assert.equal(fork.fork?.toolId, "t1", "and the targeted tool its fix was drawn with");
+  assert.equal(brushSchema.parse({ ...fork, fork: { ...fork.fork, toolId: undefined } }).fork?.toolId, "", "forks made before have none");
   // Rebuilding the overlays: AI gets what was applied and the overlays so far.
-  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints: [], steps: [],
-    update: { title: "꼬리 추가", detail: "d", nodeId: "orb", transformationId: added.id, summary: "전", overlays: [{ id: "size", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "constraint", nodeId: "orb", id: "radius" } }] } };
-  await withMockedAI(() => ({ summary: "후", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], params: [], steps: [],
+    update: { title: "꼬리 추가", detail: "d", nodeId: "orb", constraintId: added.id, summary: "전", overlays: [{ id: "size", kind: "rect", x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "param", nodeId: "orb", id: "radius" } }] } };
+  await withMockedAI(() => ({ summary: "후", overlays: [] }), async calls => {
     await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "꼬리가 궁금해", inspection }), new AbortController().signal);
     const context = JSON.parse(calls[0].input[0].content[0].text);
-    assert.deepEqual(context.appliedRecommendation, { kind: "add-transformation", title: "꼬리 추가", detail: "d", nodeId: "orb", addedTransformationId: added.id });
+    assert.deepEqual(context.appliedFix, { kind: "add-constraint", title: "꼬리 추가", detail: "d", nodeId: "orb", addedConstraintId: added.id });
     assert.equal(context.previousSummary, "전"); assert.deepEqual(context.previousOverlays.map((item: { id: string }) => item.id), ["size"]);
-    assert.match(calls[0].instructions, /After a recommendation was applied/);
+    assert.match(calls[0].instructions, /After a fix was applied/);
   });
-  await withMockedAI(() => ({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+  await withMockedAI(() => ({ summary: "s", overlays: [] }), async calls => {
     await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "c", inspection: { ...inspection, update: null } }), new AbortController().signal);
-    assert.equal(JSON.parse(calls[0].input[0].content[0].text).appliedRecommendation, undefined, "a plain inspection has no update");
+    assert.equal(JSON.parse(calls[0].input[0].content[0].text).appliedFix, undefined, "a plain inspection has no update");
   });
 });
 
@@ -480,8 +433,8 @@ test("inspection annotation marks keep their own color, width and opacity; the p
   for (let i = 0; i < MAX_MARKS + 5; i++) many = addMark(many, [{ x: i / 200, y: .5 }], i % 2 ? red : DEFAULT_MARK_STYLE);
   assert.equal(MAX_MARKS, 128); assert.equal(many.marks.length, 128, "an annotation keeps 128 strokes, the oldest go first"); assert.equal(many.marks[0][0].x, 5 / 200);
   const { targetedToolSchema } = await import("../app/lib/brushes");
-  assert.equal(targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: many.marks, markStyles: many.markStyles, result: { summary: "s", overlays: [], valueFixes: [], recommendations: [] } }).marks.length, 128);
-  assert.equal(requestSchema.parse({ intent: "inspect", inspection: { brushName: "b", nodeIds: ["orb"], constraints: [], steps: [], cursor: null, marks: many.marks, markStyles: many.markStyles } }).inspection!.marks.length, 128);
+  assert.equal(targetedToolSchema.parse({ id: "t", name: "c", concern: "c", marks: many.marks, markStyles: many.markStyles, result: { summary: "s", overlays: [] } }).marks.length, 128);
+  assert.equal(requestSchema.parse({ intent: "inspect", inspection: { brushName: "b", nodeIds: ["orb"], params: [], steps: [], cursor: null, marks: many.marks, markStyles: many.markStyles } }).inspection!.marks.length, 128);
   // A thick mark is erased from further away, and the styles stay with the marks that are left.
   const erased = eraseStyledMarks(state, [{ x: 450, y: 322 }]);
   assert.deepEqual(erased.markStyles, [DEFAULT_MARK_STYLE]);
@@ -497,44 +450,32 @@ test("inspection annotation marks keep their own color, width and opacity; the p
   assert.match(renderToStaticMarkup(createElement(ToolRail, new Proxy(props, { get: (target, key) => key in target ? target[key as string] : noop }) as never)), /class="brush-group-body"><div class="brush-group-tools">/, "the group panel's tools sit in a scrolling body");
 });
 
-test("Update overlays: an applied recommendation's item rebuilds the overlays for it, and Undo apply brings the previous ones back", async () => {
+test("overlays rebuilt for an applied fix go back with Undo apply and come back with Redo", async () => {
   const { overlayPart, overlaysAfterApplied, overlaysUpdatedFor, targetedResultSchema } = await import("../app/lib/inspection");
-  const scene = sampleScene(), [brush] = makeBrushes(scene), noop = () => {};
-  const overlay = (id: string) => ({ id, kind: "rect" as const, name: id, x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "constraint" as const, nodeId: "orb", id: "radius" } });
-  const listed = { kind: "value" as const, nodeId: "orb", targetId: "", targetIds: [], title: "원 줄이기", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 12 }] };
-  const old = targetedResultSchema.parse({ summary: "전", overlays: [overlay("old")], valueFixes: [], recommendations: [listed] });
-  const fresh = { ...old, summary: "후", overlays: targetedResultSchema.parse({ summary: "s", overlays: [overlay("new")], valueFixes: [], recommendations: [] }).overlays };
+  const scene = sampleScene();
+  const overlay = (id: string) => ({ id, kind: "rect" as const, name: id, x: "0", y: "0", w: "1", h: "1", label: "", color: "#e0457b", link: { kind: "param" as const, nodeId: "orb", id: "radius" } });
+  const fix = { kind: "value" as const, nodeId: "orb", targetId: "", targetIds: [], title: "원 줄이기", detail: "d", changes: [{ key: "orb/radius", stateId: "", value: 12 }] };
+  const old = targetedResultSchema.parse({ summary: "전", overlays: [overlay("old")] });
+  const fresh = { ...old, summary: "후", overlays: targetedResultSchema.parse({ summary: "s", overlays: [overlay("new")] }).overlays };
   const updated = { id: "t1", name: "c", concern: "c", marks: [], markStyles: [], result: fresh, overlayUpdates: [{ appliedIds: ["rec", "rec-records"], before: overlayPart(old), after: overlayPart(fresh) }] };
   assert.ok(overlaysUpdatedFor(updated, "rec")); assert.ok(overlaysUpdatedFor(updated, "rec-records"));
-  // Undoing the recommendation (or the item records the update applied) brings back the overlays before it; redoing the last brings the update back.
+  // Undoing the fix (or the item records the update applied) brings back the overlays before it; redoing the last brings the update back.
   const undone = overlaysAfterApplied(updated, "rec-records", "undo");
-  assert.deepEqual(undone.result.overlays.map(item => item.id), ["old"]); assert.equal(undone.result.summary, "전"); assert.deepEqual(undone.result.recommendations, [listed], "the list stays");
+  assert.deepEqual(undone.result.overlays.map(item => item.id), ["old"]); assert.equal(undone.result.summary, "전");
   assert.equal(overlaysAfterApplied(undone, "rec", "undo"), undone, "already back");
-  assert.equal(overlaysAfterApplied(undone, "rec", "redo"), undone, "the recommendation alone: its records are not back yet");
+  assert.equal(overlaysAfterApplied(undone, "rec", "redo"), undone, "the fix alone: its records are not back yet");
   assert.deepEqual(overlaysAfterApplied(undone, "rec-records", "redo").result.overlays.map(item => item.id), ["new"]);
   assert.deepEqual(overlaysAfterApplied(updated, "rec", "undo").result.overlays.map(item => item.id), ["old"]);
   const inspectedSince = { ...updated, result: { ...fresh, summary: "Inspect again" } };
   assert.equal(overlaysAfterApplied(inspectedSince, "rec", "undo"), inspectedSince, "an Inspect again since is kept");
   assert.equal(overlaysAfterApplied(updated, "other", "undo"), updated);
 
-  // The button is in the item of an applied recommendation.
-  const tool = { ...updated, result: old, overlayUpdates: [] };
-  const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true, recommendationKey: (item: { kind: string; title: string }) => `${item.kind}:${item.title}`,
-    onUpdateOverlays: noop, overlaysUpdated: () => false, applied: { past: [], future: [], undoClean: false, redoClean: false },
-    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
-  assert.doesNotMatch(renderToStaticMarkup(createElement(InspectionPanel, props as never)), /Update overlays/, "not applied yet");
-  const applied = { ...props, applied: { past: [{ id: "rec", title: "원 줄이기", key: "value:원 줄이기" }], future: [], undoClean: true, redoClean: false } };
-  const html = renderToStaticMarkup(createElement(InspectionPanel, applied as never));
-  assert.match(html, /class="inspection-recommendation applied[^"]*">(?:(?!class="inspection-recommendation ).)*class="inspection-overlay-update">.*?Update overlays<\/button>/s, "inside the recommendation's item");
-  const after = renderToStaticMarkup(createElement(InspectionPanel, { ...applied, overlaysUpdated: (id: string) => id === "rec" } as never));
-  assert.match(after, /✓ Updated the overlay to match this change · Undo apply reverts it too/); assert.match(after, /Update overlays again/);
-
   // AI gets what was applied: its kind, target and value changes.
-  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], constraints: [], steps: [],
-    update: { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: listed.changes, summary: "전", overlays: [overlay("old")] } };
-  await withMockedAI(() => ({ summary: "후", overlays: [], valueFixes: [], recommendations: [] }), async calls => {
+  const inspection = { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: null, marks: [], params: [], steps: [],
+    update: { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: fix.changes, summary: "전", overlays: [overlay("old")] } };
+  await withMockedAI(() => ({ summary: "후", overlays: [] }), async calls => {
     await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "원 크기", inspection }), new AbortController().signal);
-    assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).appliedRecommendation, { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: listed.changes });
+    assert.deepEqual(JSON.parse(calls[0].input[0].content[0].text).appliedFix, { kind: "value", title: "원 줄이기", detail: "d", nodeId: "orb", changes: fix.changes });
   });
   const { readFileSync } = await import("node:fs");
   const home = readFileSync("app/routes/home.tsx", "utf8");
@@ -598,18 +539,13 @@ test("a fork is a brush of its own in the Brush panel, marked with where it came
   assert.doesNotMatch(html, /SUB BRUSHES/, "not a sub brush of the original");
 });
 
-test("the inspection panel turns recommendation previews on and off, shows how long the last inspection took, and shows a preview where one was asked", () => {
+test("the inspection panel shows how long the last inspection took, and has no recommendation previews any more", () => {
   const scene = sampleScene(), [brush] = makeBrushes(scene);
-  const base = { kind: "transformation" as const, nodeId: "tree", targetId: "branching-growth", targetIds: [], title: "가지 기울이기", detail: "d", changes: [] };
-  const result = targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [{ ...base, preview: null }, { ...base, title: "이전 것" }] });
-  const tool = { id: "t1", name: "기울기", concern: "c", marks: [], markStyles: [], result, overlayUpdates: [], timing: { ms: 34210, previews: true } };
+  const tool = { id: "t1", name: "기울기", concern: "c", marks: [], markStyles: [], result: targetedResultSchema.parse({ summary: "s", overlays: [] }), overlayUpdates: [], timing: { ms: 34210 } };
   const props = { brush: { ...brush, targeted: [tool] }, kind: "targeted", targeted: tool, scene, nodeIds: ["tree", "orb"], state: emptyInspection(brush.id), busy: false, running: true,
-    previews: true, onPreviews: noop, renderPreview: (listed: { title: string }) => createElement("i", { className: "marker" }, listed.title),
-    onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onApplyChanges: noop, onApplyRecommendation: noop, onTool: noop };
+    deferExecution: false, onDeferExecution: noop, onCursor: noop, onClear: noop, onFocus: noop, onConcern: noop, onClearMarks: noop, onInspect: noop, onTool: noop };
   const html = renderToStaticMarkup(createElement(InspectionPanel, props as never));
-  assert.match(html, /class="inspection-preview-switch"[^>]*><input type="checkbox" checked=""/);
-  assert.match(html, /Last inspection 34\.2s · recommendation preview on/);
-  assert.match(html, /<i class="marker">가지 기울이기<\/i>/, "asked with previews: shown");
-  assert.doesNotMatch(html, /<i class="marker">이전 것<\/i>/, "made with previews off: none");
+  assert.match(html, /Last inspection 34\.2s/); assert.doesNotMatch(html, /recommendation/i);
+  assert.match(html, /Generate Execution exploration later/);
   assert.equal(brushSchema.parse({ ...brush, targeted: [tool] }).targeted[0].timing?.ms, 34210, "the time is kept with the tool");
 });

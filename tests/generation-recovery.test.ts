@@ -18,16 +18,16 @@ const context = recoveryContextSchema.parse({ project, owner: "sketch-owner", an
 
 test("every AI output restores to its own sketch and leaves other sketches intact", () => {
   const renamed = updateNode(scene, "tree", node => ({ ...node, name: "Grown tree" }));
-  const withMachine = updateNode(scene, "tree", node => ({ ...node, machine: { initialState: "a", states: [{ id: "a", label: "A", description: "", values: [] }], transitions: [] } }));
+  const withMachine = updateNode(scene, "tree", node => ({ ...node, machine: { initialState: "a", states: [{ id: "a", label: "A", description: "", constraintIds: [] }], transitions: [] } }));
   const outputs: Record<string, unknown> = {
     extract: scene, compose: renamed, transform: renamed, "state-machine": withMachine, code,
     "compose-prompt": { prompt: "new prompt" },
-    "tag-revise": { tagId: "a", index: 0, transformation: { label: "Fading", effect: "stylistic", how: "", pen: null, properties: [] }, note: "" },
+    "tag-revise": { tagId: "a", index: 0, constraint: { label: "Fading", effect: "stylistic", how: "", pen: null, params: [] }, note: "" },
     "machine-refine": { scene: withMachine, composePrompt: "- refined prompt" },
     clarification: { clarification: "가지를 키워줘" },
     revision: { summary: "가지를 키웁니다", scene: renamed },
     concern: { suggestions: ["잎 끝 개수가 궁금해"] },
-    handles: { handles: [{ propertyId: "ink", handle: { code: "rulegenHandle(function (h) { return {}; });", prepared: "rulegenHandle(function (h) { __rulegenGuard(); return {}; });", paths: [[]], hint: "먹색 고르기" } }] },
+    handles: { handles: [{ paramId: "ink", handle: { code: "rulegenHandle(function (h) { return {}; });", prepared: "rulegenHandle(function (h) { __rulegenGuard(); return {}; });", paths: [[]], hint: "먹색 고르기" } }] },
   };
   for (const intent of requestSchema.shape.intent.options) {
     const input = requestSchema.parse({ intent, scene, targetNodeId: "tree", previous: code.code, instruction: "new prompt" });
@@ -45,7 +45,7 @@ test("every AI output restores to its own sketch and leaves other sketches intac
     if (intent === "compose-prompt") assert.equal(panel.composePrompt, "new prompt");
     if (intent === "machine-refine") { assert.equal(panel.scene.nodes[0].machine?.initialState, "a"); assert.equal(panel.composePrompt, "- refined prompt"); }
     if (intent === "clarification") { assert.equal(restored.revisionInstruction, "가지를 키워줘"); assert.deepEqual(restored.annotations, annotations); }
-    if (intent === "handles") { assert.equal(panel.scene.nodes[0].transformations[1].properties[0].handle?.hint, "먹색 고르기"); assert.deepEqual(panel.selectedNodeIds, ["tree"]); }
+    if (intent === "handles") { assert.equal(panel.scene.nodes[0].constraints[1].params[0].handle?.hint, "먹색 고르기"); assert.deepEqual(panel.selectedNodeIds, ["tree"]); }
     if (intent === "revision") { assert.equal(restored.proposal?.scene.nodes[0].name, "Grown tree"); assert.equal(panel.scene.nodes[0].name, "Tree", "proposals are not applied"); }
   }
 });
@@ -58,7 +58,7 @@ test("a restored generation brings the board back as it was: frame positions and
 });
 
 test("a confirmed revision restores the whole proposed scene along with its code", () => {
-  const proposed = updateNode(scene, "orb", node => ({ ...node, transformations: [...node.transformations, { id: "glow-layer", label: "Glow", description: "", properties: [{ id: "glow", label: "Glow", effect: "stylistic" as const, description: "", value: num(3, 0, 10) }] }] }));
+  const proposed = updateNode(scene, "orb", node => ({ ...node, constraints: [...node.constraints, { id: "glow-layer", property: "Glow", description: "", params: [{ id: "glow", label: "Glow", effect: "stylistic" as const, description: "", value: num(3, 0, 10) }] }] }));
   const input = requestSchema.parse({ intent: "code", scene: proposed, revisionSummary: "Glow 추가" });
   const restored = recoverGeneration(input, code, { ...context, proposal: { summary: "Glow 추가", scene: proposed } });
   assert.deepEqual(restored.project.sketchPanels[context.owner].scene, proposed);

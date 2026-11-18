@@ -3,15 +3,15 @@ import type { GeneratedCode } from "./schema";
 import { findNode } from "./scene/graph";
 import { readsPerItem } from "./item-values";
 import { programModules, sceneInstances, syncScene } from "./scene/machines";
-import { effectSchema, idSchema, MAX_NODE_PROPERTIES, MAX_PROPERTIES, scalarValueSchema, type Scene, type SceneNode } from "./scene/schema";
-import { nodeProperties } from "./scene/transformations";
+import { effectSchema, idSchema, MAX_NODE_PARAMS, MAX_PARAMS, scalarValueSchema, type Scene, type SceneNode } from "./scene/schema";
+import { nodeParams } from "./scene/constraints";
 import { bindingKey, sceneBindings } from "./scene/values";
 
 // Hidden parameters: a targeted inspection may find that its concern depends on a
-// number (or color, toggle, option) the code hard-codes, not a property the user
-// can change. It suggests exposing it: a new property on the semantic transformation
-// it belongs to, plus small edits to the node's module so it reads the property
-// (`m.v("<node>/<property>")`) instead of the constant. Accepting adds both, so the
+// number (or color, toggle, option) the code hard-codes, not a param the user
+// can change. It suggests exposing it: a new param on the constraint
+// it belongs to, plus small edits to the node's module so it reads the param
+// (`m.v("<node>/<param>")`) instead of the constant. Accepting adds both, so the
 // value can be adjusted at once; nothing is regenerated.
 // A quantity set by several constants together (a curve's control offsets) is
 // suggested as a scale instead: the module multiplies them by the new value, 1 now.
@@ -21,12 +21,12 @@ export const MAX_PARAMETER_SUGGESTIONS = 4;
 const editSchema = z.object({
   /** An exact snippet of the module source, found exactly once. */
   find: z.string().min(1).max(1500),
-  /** The same snippet reading the new property with m.v("<key>") where the constant was. */
+  /** The same snippet reading the new param with m.v("<key>") where the constant was. */
   // Long enough for a loop that records each part of an item: a cut-off edit is not valid code and is dropped.
   replace: z.string().min(1).max(4000),
 });
 export const parameterSuggestionSchema = z.object({
-  nodeId: z.string().max(80), transformationId: z.string().max(80),
+  nodeId: z.string().max(80), constraintId: z.string().max(80),
   id: idSchema, label: z.string().min(1).max(80), effect: effectSchema, description: z.string().max(600),
   /** "constant": the value replaces one constant. "scale": it multiplies several constants (a number, 1 now). */
   form: z.enum(["constant", "scale"]).default("constant"),
@@ -39,8 +39,8 @@ export const parameterSuggestionSchema = z.object({
 /** A suggestion as given (older ones have no `form`). */
 export type ParameterSuggestion = z.input<typeof parameterSuggestionSchema>;
 
-/** The value key the module reads for a property of this node (the code's node id). */
-export const exposedKey = (node: SceneNode, propertyId: string) => bindingKey([node.codeId ?? node.id, propertyId]);
+/** The value key the module reads for a param of this node (the code's node id). */
+export const exposedKey = (node: SceneNode, paramId: string) => bindingKey([node.codeId ?? node.id, paramId]);
 /** The value key a suggestion has in a frame (its node id there): overlays read it with p("…") before and after it is accepted. */
 export const suggestionKey = (item: Pick<ParameterSuggestion, "nodeId" | "id">) => bindingKey([item.nodeId, item.id]);
 /**
@@ -69,10 +69,10 @@ export function applyParameterEdits(module: string, edits: ParameterSuggestion["
 export function parameterProblem(scene: Scene, code: string, item: ParameterSuggestion, parses: (module: string) => boolean = () => true): string | null {
   const node = findNode(scene, item.nodeId);
   if (!node) return "Could not find the node";
-  const transformation = node.transformations.find(entry => entry.id === item.transformationId);
-  if (!transformation) return "Could not find the semantic transformation";
-  if (nodeProperties(node).some(property => property.id === item.id)) return "A property with the same id already exists";
-  if (transformation.properties.length >= MAX_PROPERTIES || nodeProperties(node).length >= MAX_NODE_PROPERTIES) return "No more properties can be added";
+  const constraint = node.constraints.find(entry => entry.id === item.constraintId);
+  if (!constraint) return "Could not find the constraint";
+  if (nodeParams(node).some(param => param.id === item.id)) return "A param with the same id already exists";
+  if (constraint.params.length >= MAX_PARAMS || nodeParams(node).length >= MAX_NODE_PARAMS) return "No more params can be added";
   const value = item.value;
   if (value.type === "number" && !(value.min <= value.value && value.value <= value.max && value.min < value.max)) return "The value is out of range";
   if (value.type === "select" && !value.options.includes(value.value)) return "The value is not one of the options";
@@ -90,7 +90,7 @@ export function parameterProblem(scene: Scene, code: string, item: ParameterSugg
 }
 
 /**
- * Expose a hidden parameter: the property goes on the transformation of every
+ * Expose a hidden parameter: the param goes on the constraint of every
  * stamp in the frame drawn by the same code (same code id), the module reads it,
  * and the program stays live (no regeneration).
  */
@@ -100,22 +100,22 @@ export function exposeParameter(scene: Scene, generated: GeneratedCode, item: Pa
   const node = findNode(scene, item.nodeId)!, codeId = node.codeId ?? node.id, moduleKey = moduleKeyOf(scene, node.id)!;
   // Every stamp the module runs (its instances) reads the value through its own copy of the node.
   const ids = new Set(sceneInstances(scene).filter(instance => instance.module === moduleKey).map(instance => instance.map[codeId]).filter(Boolean));
-  const property = { id: item.id, label: item.label, effect: item.effect, description: item.description, value: item.value };
+  const param = { id: item.id, label: item.label, effect: item.effect, description: item.description, value: item.value };
   const sharing = scene.nodes.filter(entry => ids.has(entry.id));
-  const missing = sharing.filter(entry => !entry.transformations.some(transformation => transformation.id === item.transformationId) || nodeProperties(entry).some(existing => existing.id === item.id));
-  if (missing.length) return { error: `${missing.map(entry => entry.name).join(", ")}, which share the same code, lack that transformation or already have the same id` };
-  const next = { ...scene, nodes: scene.nodes.map(entry => !ids.has(entry.id) ? entry : { ...entry, transformations: entry.transformations.map(transformation =>
-    transformation.id === item.transformationId ? { ...transformation, properties: [...transformation.properties, property] } : transformation) }) };
+  const missing = sharing.filter(entry => !entry.constraints.some(constraint => constraint.id === item.constraintId) || nodeParams(entry).some(existing => existing.id === item.id));
+  if (missing.length) return { error: `${missing.map(entry => entry.name).join(", ")}, which share the same code, lack that constraint or already have the same id` };
+  const next = { ...scene, nodes: scene.nodes.map(entry => !ids.has(entry.id) ? entry : { ...entry, constraints: entry.constraints.map(constraint =>
+    constraint.id === item.constraintId ? { ...constraint, params: [...constraint.params, param] } : constraint) }) };
   const module = programModules(generated.code).get(moduleKey)!;
   const edited = applyParameterEdits(module, item.edits) as { module: string };
   // The host block gets the new value too, so the program runs as it is.
   return { scene: next, generated: { ...generated, code: syncScene(generated.code.replace(module, () => edited.module), next), sceneBindings: sceneBindings(next) } };
 }
 
-/** Whether a suggestion was taken (its property is on the node), turned down, or still open. */
+/** Whether a suggestion was taken (its param is on the node), turned down, or still open. */
 export function parameterStatus(item: ParameterSuggestion & { rejected?: boolean }, scene: Scene): "accepted" | "rejected" | "pending" {
   const node = findNode(scene, item.nodeId);
-  if (node?.transformations.some(entry => entry.id === item.transformationId && entry.properties.some(property => property.id === item.id))) return "accepted";
+  if (node?.constraints.some(entry => entry.id === item.constraintId && entry.params.some(param => param.id === item.id))) return "accepted";
   return item.rejected ? "rejected" : "pending";
 }
 

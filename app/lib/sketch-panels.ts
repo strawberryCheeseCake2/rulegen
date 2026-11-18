@@ -16,8 +16,11 @@ export const sketchPanelSchema = z.object({
   machinePlaying: z.boolean().default(true),
   /** The sketch this frame's scene was extracted or composed from (for code context and staleness). */
   sourceFrameId: z.string().max(80).nullable().default(null),
-  /** For a minimal example frame: the frame, node and transformation it shows on its own (drawn as a line to that frame). */
-  exampleOf: z.object({ frameId: z.string().max(80), nodeId: z.string().max(80), transformationId: z.string().max(80) }).nullable().default(null),
+  /**
+   * For a decomposed part (minimal example) frame: the frame it was decomposed from (drawn as a line to it) and what it shows:
+   * one constraint of the node (no scope), the node's own constraints together ("constraints"), or the node whole ("node").
+   */
+  exampleOf: z.object({ frameId: z.string().max(80), nodeId: z.string().max(80), constraintId: z.string().max(80), scope: z.enum(["constraints", "node"]).optional() }).nullable().default(null),
   analysisRevision: z.number().default(-1), generated: generatedSchema.nullable().default(null),
   codeDraft: z.string().max(MAX_CODE_LENGTH).optional(),
   composePrompt: z.string().max(2000).default(""),
@@ -56,19 +59,19 @@ export type SketchPanel = SavedSketchPanel & {
   machineDraft: MachineDraft;
   /** Inspection per brush (recorded steps, annotation draft, focus). */
   inspections: Record<string, InspectionState>;
-  /** An open AI regeneration of a transformation/property (or a new one): the user's text and the annotation drawn on the frame. */
+  /** An open AI regeneration of a constraint/param (or a new one): the user's text and the annotation drawn on the frame. */
   transformDraft: TransformDraft | null;
   /** The runtime the frame's result starts from (a fork keeps the brush marks it was made with; not saved). */
   seed: { id: string; runtime: unknown } | null;
-  /** Inspection recommendations applied in this frame, undoable and redoable as a whole (scene, code and prompt together). */
+  /** Fixes and inspection suggestions applied in this frame, undoable and redoable as a whole (scene, code and prompt together). */
   applied: { past: AppliedEntry[]; future: AppliedEntry[] };
 };
-/** What a recommendation changes in a frame: kept before and after it was applied. */
+/** What an applied change touches in a frame: kept before and after it was applied. */
 export type AppliedSnapshot = Pick<SketchPanel, "scene" | "generated" | "codeDraft" | "executable" | "preparedCode" | "composePrompt" | "dirtyNodeIds">;
 export type AppliedEntry = { id: string; title: string; key: string; before: AppliedSnapshot; after: AppliedSnapshot };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
-/** What a regeneration targets: a property, a transformation, or (neither) a new stacked transformation. */
-export type TransformTarget = { transformationId?: string; propertyId?: string };
+/** What a regeneration targets: a param, a constraint, or (neither) a new stacked constraint. */
+export type TransformTarget = { constraintId?: string; paramId?: string };
 export type TransformDraft = { nodeId: string; target: TransformTarget; instruction: string; annotating: boolean; marks: { x: number; y: number }[][] };
 export const emptyMachineDraft = (nodeId = ""): MachineDraft => ({ nodeId, open: false, instruction: "", annotating: false, strokes: [] });
 export function clearedResultAnnotations(): Partial<SketchPanel> {

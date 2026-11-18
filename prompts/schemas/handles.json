@@ -8,7 +8,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "propertyId": {
+          "paramId": {
             "type": "string",
             "minLength": 1,
             "maxLength": 80
@@ -36,7 +36,7 @@
           }
         },
         "required": [
-          "propertyId",
+          "paramId",
           "paths",
           "hint",
           "code"

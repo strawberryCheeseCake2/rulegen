@@ -45,11 +45,6 @@ test("m.runtime is allowed in code with a literal name, and edits that only add 
   const prompt = readFileSync("prompts/inspect.md", "utf8");
   assert.match(prompt, /HANDLES CHANGE THE RUNTIME EXECUTION STATE OF THE MOMENT, not the brush's values/);
   assert.match(prompt, /"@store:<root>:@runtime\.<name>\.\$\{item\(\\"id\\"\)\}\.value"/);
-  assert.match(readFileSync("prompts/explore.md", "utf8"), /m\.runtime\("<name>", <the item's id>, <the expression as it is>\)/);
-});
-
-test("the values mode of an exploration frame keeps edits that only keep an item's state (m.runtime), not checkpoints", () => {
-  const server = readFileSync("app/server/intents.server.ts", "utf8");
-  assert.match(server, /const keepsState = \(edit: \{ replace: string \}\) => edit\.replace\.includes\("m\.runtime\("\) && !edit\.replace\.includes\("m\.trace\("\);/);
-  assert.match(server, /\(previewing \|\| \(traceOnly\(edit\) && \(execution \|\| keepsState\(edit\)\)\)\)/);
+  assert.match(prompt, /m\.runtime\("<name>", <the item's id>, <the expression as it is>\)/);
+  assert.match(readFileSync("app/server/intents.server.ts", "utf8"), /let edits = output\.edits\.filter\(edit => nodes\.has\(edit\.nodeId\) && traceOnly\(edit\)\);/, "an Execution frame keeps only edits that add checkpoints and wrappers");
 });

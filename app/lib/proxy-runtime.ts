@@ -3,8 +3,8 @@ import { CELL_HEADER, SECTION_HEADER, type Box, type HandleSpec } from "./scene/
 
 /** One widget of a proxy frame as the runtime gets it. */
 export type ProxyCell = { id: string; label: string; hint: string; effect: string; box: Box; specs: Record<string, HandleSpec>; code: string };
-/** One transformation's section: its name, drawn around its widgets. */
-export type ProxySection = { id: string; label: string; box: Box; /** Its number among the node's transformations with widgets (stable when others are hidden). */ number: number };
+/** One constraint's section: its name, drawn around its widgets. */
+export type ProxySection = { id: string; label: string; box: Box; /** Its number among the node's constraints with widgets (stable when others are hidden). */ number: number };
 /** Each section's colors (fill, outline, ink), by number: the frame's header chips use the same. */
 export const PROXY_TINTS = [["#e9f1fb", "#8fb0d8", "#2d5b8e"], ["#f4ecfa", "#bb9bd3", "#6b3f8f"], ["#fbf1e4", "#dcb57e", "#8a5a1c"], ["#e7f5ec", "#8fc5a3", "#2f6e48"], ["#fbebee", "#dba0ab", "#8e3346"], ["#eeeef6", "#a5a5c9", "#45457a"]];
 export const proxyTint = (number: number) => PROXY_TINTS[(Math.max(1, number) - 1) % PROXY_TINTS.length];
@@ -74,7 +74,7 @@ new p5(p=>{
     call(cell,'draw');
     g.restore();p.pop();
   }
-  // Each transformation's widgets sit in its own tinted section, named and numbered.
+  // Each constraint's widgets sit in its own tinted section, named and numbered.
   const tints=${JSON.stringify(PROXY_TINTS)};
   function drawSection(section){
     const b=section.box,[fill,line,ink]=tints[(Math.max(1,section.number)-1)%tints.length];

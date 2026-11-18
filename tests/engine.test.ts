@@ -54,7 +54,7 @@ test("a local top binding does not permit browser globals or unsafe member acces
     assert.throws(() => prepareCode(`p.setup=()=>{p.createCanvas(900,600);${extra}}`), /Unsupported/);
   }
   assert.throws(() => prepareCode("function local(){const top=28;return top;}p.setup=()=>{p.createCanvas(900,600);top.postMessage('x','*');}"), /Unsupported API in the code: top/);
-  // A .top property of an ordinary object (a rect, a box) is data.
+  // A .top param of an ordinary object (a rect, a box) is data.
   assert.doesNotThrow(() => prepareCode("p.setup=()=>{p.createCanvas(900,600);const rect={top:3};p.rect(0,rect.top,1,rect?.top);};"));
 });
 test("remote image URLs are rejected", () => { assert.equal(requestSchema.safeParse({ intent: "extract", image: "https://example.com/private" }).success, false); });

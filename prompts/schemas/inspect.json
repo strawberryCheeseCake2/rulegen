@@ -62,6 +62,7 @@
               "kind": {
                 "type": "string",
                 "enum": [
+                  "param",
                   "constraint",
                   "state",
                   "transition",
@@ -174,140 +175,6 @@
         "additionalProperties": false
       }
     },
-    "valueFixes": {
-      "maxItems": 12,
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "key": {
-            "type": "string",
-            "maxLength": 1200
-          },
-          "stateId": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "value": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "string",
-                "maxLength": 200
-              },
-              {
-                "type": "boolean"
-              }
-            ]
-          },
-          "reason": {
-            "type": "string",
-            "maxLength": 400
-          }
-        },
-        "required": [
-          "key",
-          "stateId",
-          "value",
-          "reason"
-        ],
-        "additionalProperties": false
-      }
-    },
-    "recommendations": {
-      "maxItems": 6,
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "value",
-              "transformation",
-              "add-transformation",
-              "state",
-              "transition"
-            ]
-          },
-          "nodeId": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "targetId": {
-            "type": "string",
-            "maxLength": 80
-          },
-          "targetIds": {
-            "default": [],
-            "maxItems": 6,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "maxLength": 80
-            }
-          },
-          "title": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 160
-          },
-          "detail": {
-            "type": "string",
-            "maxLength": 800
-          },
-          "changes": {
-            "maxItems": 12,
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "key": {
-                  "type": "string",
-                  "maxLength": 1200
-                },
-                "stateId": {
-                  "type": "string",
-                  "maxLength": 80
-                },
-                "value": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "string",
-                      "maxLength": 200
-                    },
-                    {
-                      "type": "boolean"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "key",
-                "stateId",
-                "value"
-              ],
-              "additionalProperties": false
-            }
-          }
-        },
-        "required": [
-          "kind",
-          "nodeId",
-          "targetId",
-          "targetIds",
-          "title",
-          "detail",
-          "changes"
-        ],
-        "additionalProperties": false
-      }
-    },
     "parameters": {
       "default": [],
       "maxItems": 4,
@@ -319,7 +186,7 @@
             "type": "string",
             "maxLength": 80
           },
-          "transformationId": {
+          "constraintId": {
             "type": "string",
             "maxLength": 80
           },
@@ -488,7 +355,7 @@
         },
         "required": [
           "nodeId",
-          "transformationId",
+          "constraintId",
           "id",
           "label",
           "effect",
@@ -636,8 +503,6 @@
   "required": [
     "summary",
     "overlays",
-    "valueFixes",
-    "recommendations",
     "parameters",
     "records",
     "fields"

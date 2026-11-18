@@ -22,6 +22,40 @@ function retryDelay(n: number, retryAfter: string | null) {
   if (Number.isFinite(header) && header > 0) return Math.min(header * 1000, 20_000);
   return Number(process.env.RULEGEN_AI_RETRY_BASE_MS ?? 2000) * 2 ** (n - 1);
 }
+/** No data from OpenAI for this long is a stalled connection (it is retried); a call is never longer than `AI_LIMIT_MS`. */
+const idleMs = () => Number(process.env.RULEGEN_AI_IDLE_MS ?? 90_000), AI_LIMIT_MS = 600_000;
+/** A connection that stalled or dropped (not one the user canceled): retried like an overloaded server. */
+class StalledError extends Error {}
+/**
+ * The response body: streamed, the final response of the stream (as the API returns it without streaming), with the
+ * connection given up when nothing comes for `idleMs`; not streamed (an error, a test), as it is.
+ */
+async function readBody(response: Response, stall: AbortController) {
+  if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) return response.text();
+  const reader = response.body.getReader(), decoder = new TextDecoder();
+  let buffer = "", final = "", timer: ReturnType<typeof setTimeout> | undefined;
+  // Given up: the read waiting is ended too (whether or not the connection heeds the abort).
+  stall.signal.addEventListener("abort", () => { reader.cancel(stall.signal.reason).catch(() => {}); }, { once: true });
+  const watch = () => { clearTimeout(timer); timer = setTimeout(() => stall.abort(new StalledError(`OpenAI sent nothing for ${Math.round(idleMs() / 1000)}s`)), idleMs()); };
+  try {
+    for (watch(); ;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      watch(); buffer += decoder.decode(value, { stream: true });
+      for (let at = buffer.indexOf("\n\n"); at >= 0; at = buffer.indexOf("\n\n")) {
+        const data = buffer.slice(0, at).split("\n").filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n");
+        buffer = buffer.slice(at + 2);
+        if (!data || data === "[DONE]") continue;
+        const event = JSON.parse(data);
+        if (event.type === "error") throw new StalledError(`OpenAI stream error${event.code ? ` · ${event.code}` : ""}: ${event.message ?? ""}`);
+        if (["response.completed", "response.incomplete", "response.failed"].includes(event.type)) final = JSON.stringify(event.response);
+      }
+    }
+  } catch (error) { throw stall.signal.aborted ? stall.signal.reason : error; } finally { clearTimeout(timer); }
+  if (stall.signal.aborted) throw stall.signal.reason;
+  if (!final) throw new StalledError("The OpenAI stream ended without a response");
+  return final;
+}
 const wait = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
   if (signal.aborted) { reject(signal.reason); return; }
   const timer = setTimeout(() => { signal.removeEventListener("abort", stop); resolve(); }, ms);
@@ -54,7 +88,7 @@ export async function runAI(input: z.infer<typeof requestSchema>, signal: AbortS
 
 function userContent(input: AIInput) {
   const intent = intents[input.intent as keyof typeof intents];
-  // Properties' direct manipulation widgets are UI: their code never goes to the model with the scene.
+  // Params' direct manipulation widgets are UI: their code never goes to the model with the scene.
   const content: object[] = [{ type: "input_text", text: JSON.stringify(intent.context(input), (key, value) => key === "handle" && value && typeof value === "object" && "prepared" in value ? undefined : value) }];
   if (input.intent === "clarification" && input.resultImage) content.push({ type: "input_text", text: "Clean generated result before annotation:" }, { type: "input_image", image_url: input.resultImage, detail: "high" }, { type: "input_text", text: "Same result with the user's coral annotation sketch:" });
   if (input.image) content.push({ type: "input_image", image_url: input.image, detail: "high" });
@@ -78,7 +112,7 @@ async function runGeneration(input: AIInput, signal: AbortSignal, log: AIGenerat
   } catch (error) {
     if (error instanceof z.ZodError || error instanceof SyntaxError) throw new Error("Could not parse the model response. Please generate again.", { cause: error });
     if (signal.aborted) throw new Error("The request was canceled.", { cause: error });
-    if (error instanceof Error && /timeout|abort|fetch failed/i.test(error.message)) throw new Error("The connection to OpenAI timed out. Check your network and try again.", { cause: error });
+    if (error instanceof StalledError || (error instanceof Error && /timeout|abort|fetch failed/i.test(error.message))) throw new Error("OpenAI stopped responding, and automatic retries kept failing. Please try again in a moment.", { cause: error });
     throw error;
   } finally { inFlight--; }
 }
@@ -89,19 +123,31 @@ const providerCode = (body: string) => { try { return String(JSON.parse(body)?.e
 async function respond(input: AIInput, messages: Message[], signal: AbortSignal, log: AIGenerationLog, attempt: number) {
   const intent = intents[input.intent as keyof typeof intents];
   const model = configuration().model;
-  const payload = { model, store: false, instructions: instructionsFor(input), input: messages, max_output_tokens: intent.maxTokens(input),
+  const payload = { model, store: false, stream: true, instructions: instructionsFor(input), input: messages, max_output_tokens: intent.maxTokens(input),
     ...(/^gpt-[56]/.test(model) ? { reasoning: { effort: intent.effort || "low" } } : {}),
     text: { format: { type: "json_schema", name: `rulegen_${input.intent}`, strict: true, schema: outputSchema(input.intent as keyof typeof intents, input) } } };
   await log.prompt(payload, attempt);
   let response: Response, rawBody: string;
-  // Transient provider failures (overload, 5xx, rate limit) are retried with backoff.
+  // Transient provider failures (overload, 5xx, rate limit, a stalled or dropped connection) are retried with backoff.
   for (let retry = 0; ; retry++) {
-    response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST", headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(180_000)]),
-      body: JSON.stringify(payload),
-    });
-    rawBody = await response.text();
+    const stall = new AbortController(), waiting = setTimeout(() => stall.abort(new StalledError(`OpenAI did not answer for ${Math.round(idleMs() / 1000)}s`)), idleMs());
+    try {
+      response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST", headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" },
+        signal: AbortSignal.any([signal, stall.signal, AbortSignal.timeout(AI_LIMIT_MS)]),
+        body: JSON.stringify(payload),
+      });
+      clearTimeout(waiting);
+      rawBody = await readBody(response, stall);
+    } catch (caught) {
+      clearTimeout(waiting);
+      const error = stall.signal.aborted ? stall.signal.reason : caught;
+      const stalled = !signal.aborted && (error instanceof StalledError || (error instanceof Error && /fetch failed|terminated|ECONNRESET|socket/i.test(error.message)));
+      if (!stalled || retry >= RETRIES) throw error;
+      await log.retried(attempt, retry + 1, 0, error instanceof Error ? error.message : String(error));
+      await wait(retryDelay(retry + 1, null), signal);
+      continue;
+    }
     if (response.ok || retry >= RETRIES || !isTransient(response.status, providerCode(rawBody))) break;
     await log.retried(attempt, retry + 1, response.status, rawBody);
     await wait(retryDelay(retry + 1, response.headers.get("retry-after")), signal);
@@ -115,6 +161,7 @@ async function respond(input: AIInput, messages: Message[], signal: AbortSignal,
     throw new OpenAIError(message[response.status] || `OpenAI server error (${response.status})${code ? ` · ${code}` : ""}. It still failed after automatic retries. Please try again in a moment.`, response.status, code);
   }
   const body = JSON.parse(rawBody);
+  if (body.status === "failed") throw new Error(`The generation failed at OpenAI${body.error?.message ? `: ${body.error.message}` : ""}. Please try again.`);
   if (body.status === "incomplete") throw new Error("The generation response was incomplete. Please try again with a simpler scene.");
   const text: string = body.output?.flatMap((item: { content?: { type: string; text?: string }[] }) => item.content || []).filter((item: { type: string }) => item.type === "output_text").map((item: { text: string }) => item.text).join("");
   if (!text) throw new Error("The model returned no result. Try a different image or description.");

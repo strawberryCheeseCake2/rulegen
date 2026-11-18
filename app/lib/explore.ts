@@ -1,68 +1,53 @@
 import { z } from "zod";
 import { applyParameterEdits, moduleKeyOf } from "./hidden-parameters";
-import { overlaySchema, targetedResultSchema, type InspectionStep, type InspectResult, type Recommendation, type Scalar } from "./inspection";
+import { overlaySchema, targetedResultSchema, type InspectionStep, type InspectResult, type Scalar } from "./inspection";
 export { PATH_ROOT } from "./inspection";
-import { findNode } from "./scene/graph";
-import { addHostMachines, addHostParams, programModules, sceneInstances } from "./scene/machines";
-import { applyMachineChange, machineChangeSchema, type MachineChange } from "./machine-change";
+import { nodeMachine, programModules, withBlockParams } from "./scene/machines";
+import { constraintName } from "./scene/constraints";
 import { SKETCH_SHAPES } from "./sketch-gestures";
-import { idSchema, numberValueSchema, toggleValueSchema, type Scene } from "./scene/schema";
-import { bindingKey } from "./scene/values";
-import type { PictureEdit } from "./preview-objects";
+import type { Scene } from "./scene/schema";
+import { alignKitSchema, behaviorFallbacks, emptyIdeal, readsBehavior, type AlignKit, type AlignTool, type IdealMode, type IdealState, type TagWidget } from "./alignment";
 
-// Exploration frames: from a targeted inspection's cause or one of its
-// recommendations, a new frame on the board shows the same brush marks (the step
-// the inspection holds) and lets the user try one thing there, nothing else changes:
-// - "execution": a direct manipulation handle, designed as a metaphor for the
-//   process the concern is about, runs the brush's execution forward and back:
-//   its code's own run (checkpoints AI puts in the algorithm, m.trace, and every
-//   drawing call, in order), how much of the recorded input has been executed, or
-//   which recorded step;
-// - "parameters": the recommendation's key values as handles on overlays, dragged to
-//   see what they do. A recommendation not applied yet runs as a preview: AI edits the
-//   brush's module for it (in this frame only), reading its key values.
+// Execution frames: from a targeted inspection, a new frame on the board shows the
+// same brush marks (the step the inspection holds) and runs the brush's execution
+// forward and back with a direct manipulation handle designed as a metaphor for the
+// process the concern is about: its code's own run (checkpoints AI puts in the
+// algorithm, m.trace, and every drawing call, in order), how much of the recorded input
+// has been executed, or which recorded step. Nothing else changes. At the moment the
+// concern is about, the user draws the state they want there (see alignment.ts).
 
-export const EXPLORE_MODES = ["execution", "parameters"] as const;
+export const EXPLORE_MODES = ["execution"] as const;
 export type ExploreMode = (typeof EXPLORE_MODES)[number];
-/** The value an execution handle changes: how far execution has gone (0..1 along the axis). */
+/** How far execution has gone (steps done on a run, else 0..1 along the axis): overlays read it with p("@execution"). */
 export const EXEC_KEY = "@execution";
 export const MAX_EXPLORE_FRAMES = 16;
 
-// Room for a recommendation's preview, which may rewrite a whole rule (an output cut at a limit loses everything after it).
 const editSchema = z.object({ nodeId: z.string().max(80), find: z.string().min(1).max(3000), replace: z.string().min(1).max(12000) });
-/** A value a preview reads that the scene does not have (the recommendation's new quantity), with its range. */
-export const previewValueSchema = z.object({ nodeId: z.string().max(80), id: idSchema, label: z.string().min(1).max(80), value: z.union([numberValueSchema, toggleValueSchema]) });
-export type PreviewValue = z.infer<typeof previewValueSchema>;
-/** What part of the brush an execution (or one operation of it) belongs to: a semantic transformation, a state or a transition of a node. */
-export const executionPartSchema = z.object({ kind: z.enum(["transformation", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
+/** What part of the brush an execution (or one operation of it) belongs to: a constraint, a state or a transition of a node. */
+export const executionPartSchema = z.object({ kind: z.enum(["constraint", "state", "transition"]), nodeId: z.string().max(80), id: z.string().max(80) });
 export type ExecutionPart = z.infer<typeof executionPartSchema>;
 export const exploreResultSchema = z.object({
-  /** What the frame lets the user see and how the handle maps onto it (English). */
+  /** What the frame lets the user see and what to watch as the steps go (English). */
   summary: z.string().min(1).max(1200),
   /**
    * What execution means here: one run of the brush's code, its internal operations and drawing calls in order ("run"),
    * the recorded input executed so far ("input"), or the recorded steps ("steps").
    */
   axis: z.enum(["run", "input", "steps"]),
-  /** Where along the axis the process happens (0..1): the execution handle moves within it. */
+  /** Where along the axis the process happens (0..1): execution moves within it. */
   from: z.number().min(0).max(1), to: z.number().min(0).max(1),
-  /** Exact edits of the brush's module, in this frame only: checkpoints (m.trace) and inner terms (m.term) of its execution, and a recommendation not applied yet. */
+  /** Exact edits of the brush's module, in this frame only: checkpoints (m.trace) and inner terms (m.term) of its execution. */
   edits: z.array(editSchema).max(10),
-  /** The values the edits read that do not exist yet. */
-  values: z.array(previewValueSchema).max(4),
-  /** A recommendation's preview that makes the brush react to something it meets: the states and transitions it brings to the machine. */
-  machine: machineChangeSchema.nullable().default(null),
-  overlays: z.array(overlaySchema).max(8),
+  /** What explains each step on the picture (no handles: execution goes by the buttons, the keys and pressing a part). */
+  overlays: z.array(overlaySchema.omit({ handle: true })).max(8),
   /**
    * Execution on a run: the kinds of internal operation its steps are (a checkpoint's `data.op`), each named and
    * explained (the principle of that operation), so each step reads as one of them. `[]` otherwise.
    */
   stages: z.array(z.object({ op: z.number().int().min(1).max(9), name: z.string().min(1).max(40), explain: z.string().max(300),
-    /** One gesture of this operation's handle may run several steps (one continuous motion through many items); otherwise one gesture is one step. */
-    many: z.boolean(),
-    /** The semantic transformations, states or transitions of the brush this operation is part of. */
+    /** The constraints, states or transitions of the brush this operation is part of. */
     of: z.array(executionPartSchema).max(3).default([]) })).max(6),
-  /** Execution: the semantic transformations, states or transitions of the brush the execution shown runs (all of it). */
+  /** Execution: the constraints, states or transitions of the brush the execution shown runs (all of it). */
   of: z.array(executionPartSchema).max(4).default([]),
   /**
    * Operations performed by drawing a mark instead of (or as well as) dragging a handle: the mark (`shape`), where it
@@ -78,18 +63,20 @@ export const exploreResultSchema = z.object({
 });
 export type ExploreResult = z.infer<typeof exploreResultSchema>;
 
-export type ExploreSource = { kind: "cause" } | { kind: "recommendation"; index: number; title: string; key: string; applied: boolean };
 /** What the frame started from: the step the inspection held (its runtime has the brush marks) and every recorded step. */
-export type ExploreBase = { runtime: unknown; values: Record<string, Scalar>; steps: Pick<InspectionStep, "runtime" | "values">[];
-  /** Values the frame is drawn with over the recorded ones (a value recommendation not applied yet). */
-  params: Record<string, Scalar> };
+export type ExploreBase = { runtime: unknown; values: Record<string, Scalar>; steps: Pick<InspectionStep, "runtime" | "values">[] };
 export type ExploreFrame = {
-  id: `explore-${string}`; targetFrameId: string; brushId: string; toolId: string; mode: ExploreMode; source: ExploreSource; name: string;
+  id: `explore-${string}`; targetFrameId: string; brushId: string; toolId: string; mode: ExploreMode; name: string;
   /** The brush's nodes in the target frame (their values are what handles change). */
   nodeIds: string[];
   base: ExploreBase;
-  /** The prepared program it runs ("" while a preview is prepared). */
+  /** The prepared program it runs ("" while it is prepared). */
   executable: string;
+  /**
+   * The brush's modules as they were when AI wrote its checkpoints (by module key): its own copy, run when the
+   * frame's code changed since (the targeted inspection made with it records on the items while it is made).
+   */
+  modules?: Record<string, string>;
   /**
    * "queued": made with its targeted tool, waiting for its turn (the AI requests go one after another);
    * "idle": placed only (Execution frames made later): AI makes it when its Generate is pressed.
@@ -100,19 +87,28 @@ export type ExploreFrame = {
   progress: number;
   /** Values dragged in this frame. */
   values: Record<string, Scalar>;
-  /** What the user showed on its picture at one moment of execution, for a new recommendation (Execution only). */
+  /** The state the user draws at one moment of execution, and the tools AI made for it. */
   edit?: ExploreEdit;
-  /** What AI was asked with (asked again on retry): the concern, the inspection as shown in the target frame, the recommendation. */
-  request: { concern: string; inspection: InspectResult; recommendation: (Recommendation & { applied: boolean }) | null };
+  /** What AI was asked with (asked again on retry): the concern and the inspection as shown in the target frame. */
+  request: { concern: string; inspection: InspectResult };
 };
 /** What an Execution frame shows at one moment: what it is about, how far execution is, the step just executed and the next, the kind of operation now. */
 export type ExecutionMoment = { summary: string; axis: "run" | "input" | "steps"; done: number | null; count: number | null; progress: number; last: string; next: string; stage: { name: string; explain: string } | null };
 /**
- * Annotation and crops moved, scaled or rotated on an Execution frame's picture, made at one moment (`at`: the step's
- * key, how far execution was, and that moment; they are drawn only there), and the recommendation asked for from them.
+ * The state the user draws on an Execution frame's picture at one moment (`at`: the step's key, how far execution
+ * was, and that moment; it is drawn only there): objects made with the tools (`ideal`), notes (`marks`, normalized)
+ * and a note in words; `image` is the picture parts are lifted from (as drawn when the first was lifted).
+ * The tools AI made for the concern (`kit`, at the moment `kitAt`), the preset loaded last, and fixing the brush to
+ * what was drawn: under way, what AI said it changed, the fork it was applied to, or why it could not be.
+ * The widgets AI made on drawn objects' tags (by object), the one open, the object one is being made for, and why one could not be.
  */
-export type ExploreEdit = PictureEdit & { at: { key: string; progress: number; moment: ExecutionMoment } | null; making: boolean; reply: string; error: string };
-export const emptyExploreEdit = (): ExploreEdit => ({ mode: "run", marks: [], manipulations: [], image: "", note: "", at: null, making: false, reply: "", error: "" });
+export type ExploreEdit = { mode: IdealMode; ideal: IdealState; marks: { x: number; y: number }[][]; note: string; image: string;
+  at: { key: string; progress: number; moment: ExecutionMoment } | null;
+  kit: AlignKit | null; kitAt: string; preset: string; kitting: boolean; kitError: string;
+  making: boolean; reply: string; forkId: string; error: string;
+  widgets: Record<string, TagWidget>; widgetOn: string; widgeting: string; widgetError: string };
+export const emptyExploreEdit = (kit: AlignKit | null = null): ExploreEdit => ({ mode: "run", ideal: emptyIdeal(), marks: [], note: "", image: "", at: null,
+  kit, kitAt: "", preset: "", kitting: false, kitError: "", making: false, reply: "", forkId: "", error: "", widgets: {}, widgetOn: "", widgeting: "", widgetError: "" });
 const scalar = z.union([z.number(), z.string().max(2000), z.boolean()]);
 /**
  * An exploration frame as saved with the project: what AI made in it and where it is, without the program it runs
@@ -121,25 +117,31 @@ const scalar = z.union([z.number(), z.string().max(2000), z.boolean()]);
  */
 export const savedExploreFrameSchema = z.object({
   id: z.string().regex(/^explore-/).max(80), targetFrameId: z.string().max(80), brushId: z.string().max(80), toolId: z.string().max(80), mode: z.enum(EXPLORE_MODES),
-  source: z.union([z.object({ kind: z.literal("cause") }), z.object({ kind: z.literal("recommendation"), index: z.number().int().min(0), title: z.string().max(200), key: z.string().max(400), applied: z.boolean() })]),
+  /** Frames saved before were also made for recommendations: only the cause's (the Execution frame) is read. */
+  source: z.object({ kind: z.literal("cause") }).optional(),
   name: z.string().max(200), nodeIds: z.array(z.string().max(80)).max(40),
-  base: z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar), steps: z.array(z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar) })).max(20), params: z.record(z.string().max(1200), scalar) }),
+  base: z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar), steps: z.array(z.object({ runtime: z.unknown(), values: z.record(z.string().max(1200), scalar) })).max(20) }),
   status: z.enum(["idle", "ready", "error"]), error: z.string().max(2000), result: exploreResultSchema.nullable(), progress: z.number().min(0).max(1), values: z.record(z.string().max(1200), scalar),
-  request: z.object({ concern: z.string().max(4000), inspection: targetedResultSchema, recommendation: targetedResultSchema.shape.recommendations.element.extend({ applied: z.boolean() }).nullable() }),
+  request: z.object({ concern: z.string().max(4000), inspection: targetedResultSchema }),
+  /** The tools AI made for drawing the state wanted (what was drawn is not kept). */
+  kit: alignKitSchema.nullable().default(null),
+  modules: z.record(z.string().max(80), z.string().max(400000)).default({}),
 });
 /** What of an exploration frame is saved (see savedExploreFrameSchema); the recorded steps only when it moves through them. */
 export function savedExplore(frame: ExploreFrame): z.input<typeof savedExploreFrameSchema> {
   const made = frame.status === "ready" || (frame.status === "error" && frame.result);
-  return { id: frame.id, targetFrameId: frame.targetFrameId, brushId: frame.brushId, toolId: frame.toolId, mode: frame.mode, source: frame.source, name: frame.name, nodeIds: frame.nodeIds,
+  return { id: frame.id, targetFrameId: frame.targetFrameId, brushId: frame.brushId, toolId: frame.toolId, mode: frame.mode, name: frame.name, nodeIds: frame.nodeIds,
     base: { ...frame.base, steps: frame.result?.axis === "steps" ? frame.base.steps : [] }, status: made ? "ready" : frame.status === "error" ? "error" : "idle", error: made ? "" : frame.error,
-    result: made ? frame.result : null, progress: frame.progress, values: frame.values, request: frame.request };
+    result: made ? frame.result : null, progress: frame.progress, values: frame.values, request: frame.request, kit: frame.edit?.kit ?? null, modules: made ? frame.modules ?? {} : {} };
 }
 /** A saved exploration frame on the board again: its program is prepared again (empty until then). */
-export const restoredExplore = (saved: z.infer<typeof savedExploreFrameSchema>): ExploreFrame => ({ ...saved, id: saved.id as ExploreFrame["id"], executable: "" });
+export function restoredExplore(saved: z.infer<typeof savedExploreFrameSchema>): ExploreFrame {
+  const { kit, source: _source, ...frame } = saved;
+  return { ...frame, id: saved.id as ExploreFrame["id"], executable: "", ...(kit ? { edit: emptyExploreEdit(kit) } : {}) };
+}
 export const isExploreFrame = (id: string): id is `explore-${string}` => id.startsWith("explore-");
-export const sameExplore = (frame: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode" | "source">, other: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode" | "source">) =>
-  frame.targetFrameId === other.targetFrameId && frame.toolId === other.toolId && frame.mode === other.mode
-  && (frame.source.kind === "cause" ? other.source.kind === "cause" : other.source.kind === "recommendation" && other.source.key === frame.source.key);
+export const sameExplore = (frame: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode">, other: Pick<ExploreFrame, "targetFrameId" | "toolId" | "mode">) =>
+  frame.targetFrameId === other.targetFrameId && frame.toolId === other.toolId && frame.mode === other.mode;
 
 type Gesture = { id?: number; rev?: number; points: { x: number; y: number; t?: number }[]; done?: boolean };
 const historyOf = (runtime: unknown): Gesture[] => {
@@ -172,12 +174,62 @@ export function executedRuntime(runtime: unknown, progress: number) {
 }
 
 /**
- * The steps of a run, executed one at a time: its checkpoints (one per internal operation of the code,
- * m.trace), or its drawing calls when the code has none.
+ * The steps of a run, executed one at a time: its state machine steps (each FSM state visit, each constraint the
+ * visited state computes, in order, and each transition), or its drawing calls when the code evaluates no FSM.
  */
 export function runSteps<T extends { kind: string }>(run: { events: T[] }) {
   const checkpoints = run.events.filter(event => event.kind === "trace");
   return checkpoints.length ? checkpoints : run.events;
+}
+
+/** One FSM step of a run, as the runtime records it (see rulegenFsmEvent). */
+export type FsmStep = { fsm: "state" | "constraint" | "transition"; nodeId: string; node: string; key: string; state: string;
+  constraint?: string; property?: string; value?: unknown; reads?: Record<string, unknown>; inputs?: unknown; to?: string; event?: string; transition?: string };
+export function fsmOf(data: unknown): FsmStep | null {
+  const item = data && typeof data === "object" ? data as Partial<FsmStep> : null;
+  return item && (item.fsm === "state" || item.fsm === "constraint" || item.fsm === "transition") && typeof item.nodeId === "string" && typeof item.state === "string" ? item as FsmStep : null;
+}
+/** Which operation a step is: the same state of the same node, the same constraint, the same transition (numbered by `ops`). */
+const opKey = (data: unknown) => { const step = fsmOf(data); return step ? [step.fsm, step.nodeId, step.state, step.constraint ?? step.transition ?? ""].join("|") : ""; };
+/** Each operation of a run numbered (1 …) in the order it first runs. */
+function runOps(run: { events: { kind: string; data?: unknown }[] }) {
+  const ops = new Map<string, number>();
+  for (const event of runSteps(run)) { const key = opKey(event.data); if (key && !ops.has(key)) ops.set(key, ops.size + 1); }
+  return (data: unknown) => ops.get(opKey(data)) ?? opOf(data);
+}
+/**
+ * The state machine steps of a run: each one starts where an owner enters or evaluates a state, or takes a transition,
+ * and holds the constraint steps that follow it (`steps`: indices among the run's steps, its own first).
+ */
+export function fsmVisits(run: { events: { kind: string; data?: unknown }[] }) {
+  const visits: { start: number; head: FsmStep; steps: number[] }[] = [];
+  runSteps(run).forEach((event, index) => {
+    const step = fsmOf(event.data); if (!step) return;
+    const open = visits.at(-1);
+    if (step.fsm === "constraint" && open && open.head.fsm === "state" && open.head.nodeId === step.nodeId && open.head.key === step.key) open.steps.push(index);
+    else visits.push({ start: index, head: step, steps: [index] });
+  });
+  return visits;
+}
+/** The state machine step a run's step belongs to (by its index among the run's steps); -1 when it has none. */
+export function visitOf(visits: ReturnType<typeof fsmVisits>, step: number) { let found = -1; visits.forEach((visit, i) => { if (visit.start <= step) found = i; }); return found; }
+/** A part of the brush, with what the scene calls it and says about it. */
+export type FsmName = { name: string; explain: string; of: ExecutionPart[] };
+/** What a step does in the brush's own words: the owner and its state, the constraint's property and description, or the transition. */
+export function fsmName(scene: Scene, data: unknown): FsmName | null {
+  const step = fsmOf(data), node = step && scene.nodes.find(item => item.id === step.nodeId);
+  if (!step || !node) return null;
+  const owner = `${node.name}${step.key ? ` #${step.key}` : ""}`, machine = nodeMachine(node), state = machine.states.find(item => item.id === step.state);
+  const stateName = state?.label ?? step.state;
+  if (step.fsm === "constraint") {
+    const constraint = node.constraints.find(item => item.id === step.constraint);
+    return { name: `${owner} · ${stateName} · ${constraint ? constraintName(constraint) : step.property ?? step.constraint}`, explain: constraint?.description ?? "", of: [{ kind: "constraint", nodeId: node.id, id: step.constraint ?? "" }] };
+  }
+  if (step.fsm === "transition") {
+    const transition = machine.transitions.find(item => item.id === step.transition), to = machine.states.find(item => item.id === step.to)?.label ?? step.to;
+    return { name: `${owner} · ${stateName} → ${to}`, explain: transition ? `${transition.label} (event “${transition.event}”)` : `event “${step.event}”`, of: [{ kind: "transition", nodeId: node.id, id: step.transition ?? "" }] };
+  }
+  return { name: `${owner} · ${stateName}`, explain: state?.description ?? "", of: [{ kind: "state", nodeId: node.id, id: step.state }] };
 }
 /** How many steps are done at a progress (0..1) of `count` steps. */
 export const stepsDone = (progress: number, count: number) => Math.round(Math.max(0, Math.min(1, progress)) * count);
@@ -218,7 +270,12 @@ export type StepTest = { name: string; pass: boolean; shape: unknown; yes?: stri
 const opOf = (data: unknown) => { const op = data && typeof data === "object" ? Number((data as { op?: unknown }).op) : NaN; return Number.isInteger(op) ? op : 0; };
 export function runStores(run: { total: number; events: RunEvent[] }, done: number) {
   // An event with no place on the canvas is at its middle (so something there can still be grabbed).
-  const place = (event: RunEvent) => ({ ...event, trace: event.kind === "trace" ? 1 : 0, op: opOf(event.data),
+  const op = runOps(run);
+  // `is`: what a state machine step is, as numbers overlays can gate on: `is.state`, `is.constraint`, `is.transition`
+  // (1 for that kind) and `is.<id>` (1 for the state, constraint, property, transition or event of that id).
+  const is = (data: unknown) => { const step = fsmOf(data); if (!step) return {};
+    return Object.fromEntries([step.fsm, step.fsm === "constraint" ? step.constraint : step.fsm === "transition" ? step.transition : step.state, step.property, step.event].filter((id): id is string => Boolean(id)).map(id => [id, 1])); };
+  const place = (event: RunEvent) => ({ ...event, trace: event.kind === "trace" ? 1 : 0, op: op(event.data), is: is(event.data),
     cx: Number.isFinite(event.x) ? event.x! + (event.w ?? 0) / 2 : 450, cy: Number.isFinite(event.y) ? event.y! + (event.h ?? 0) / 2 : 300 });
   const list = runSteps(run), budget = stepBudget(done, list), total = list.length;
   // `trace`: 1 for a checkpoint, 0 for a drawing call (expressions read numbers, not names).
@@ -227,33 +284,11 @@ export function runStores(run: { total: number; events: RunEvent[] }, done: numb
   const at = (step: number) => steps[step] ? { ...steps[step], none: 0, done, total } : { none: 1, step, done, total };
   return { [RUN_ROOT]: events, [STEPS_ROOT]: steps, [NEXT_ROOT]: at(done), [LAST_ROOT]: at(done - 1), path: steps.map(step => ({ x: step.cx, y: step.cy })) };
 }
-/** Each operation of the run (by `op`, as AI named it): how many of its steps there are and how many are done. */
+/** Each operation of the run (a state of a node, one constraint, one transition): how many of its steps there are and how many are done. */
 export function stageCounts(run: { events: RunEvent[] }, done: number) {
-  const counts = new Map<number, { count: number; done: number; first: number }>();
-  runSteps(run).forEach((event, step) => { const op = opOf(event.data), entry = counts.get(op) ?? { count: 0, done: 0, first: step }; entry.count++; if (step < done) entry.done++; counts.set(op, entry); });
+  const counts = new Map<number, { count: number; done: number; first: number }>(), opAt = runOps(run);
+  runSteps(run).forEach((event, step) => { const op = opAt(event.data), entry = counts.get(op) ?? { count: 0, done: 0, first: step }; entry.count++; if (step < done) entry.done++; counts.set(op, entry); });
   return counts;
-}
-/**
- * The steps one operation's handle may execute or take back in one drag: the run of consecutive steps of the
- * same operation as the next step (`done` steps executed), as [first, last] in steps done. A drag never runs on
- * into another operation (the same operation later, e.g. for the next stroke, is a run of its own).
- */
-export function stepBlock(run: { events: RunEvent[] }, done: number): [number, number] {
-  const ops = runSteps(run).map(event => opOf(event.data));
-  if (done >= ops.length) return [ops.length, ops.length];
-  const op = ops[done];
-  let first = done, last = done + 1;
-  while (first > 0 && ops[first - 1] === op) first--;
-  while (last < ops.length && ops[last] === op) last++;
-  return [first, last];
-}
-/**
- * What one drag of an operation's handle may reach, `done` steps executed when it starts: one step forward or
- * back (or, for an operation that is one continuous motion, `many`, anywhere in its run), never past its run.
- */
-export function gestureRange(run: { events: RunEvent[] }, done: number, many: boolean): [number, number] {
-  const [first, last] = stepBlock(run, done);
-  return many ? [first, last] : [Math.max(first, done - 1), Math.min(last, done + 1)];
 }
 /**
  * The moments of the run that draw at a point of the canvas (canvas pixels), in order: for every step that makes a
@@ -279,43 +314,22 @@ export function jumpTarget<T extends { done: number }>(moments: T[], done: numbe
   return moments.find(moment => moment.done > done) ?? moments[0] ?? null;
 }
 /**
- * The KEY steps of a long run (the ones execution stops at; everything between them runs at once): the first round
- * of its operations in full (one item through every operation, up to half the stops), then the rest in even chunks
- * that end where an operation's run of steps ends, and always the end. Given as steps done (0 … count), with `keep`
- * (e.g. a step jumped to) among them. A run short enough keeps every step.
+ * The KEY steps of a run (the ones execution stops at when it goes by state machine steps): where each state machine
+ * step starts (an owner enters or evaluates a state, or takes a transition), so one step forward runs a whole visit with
+ * its constraints in order, and always the end. Given as steps done (0 … count), with `keep` (e.g. a step jumped to)
+ * among them. A run of more state machine steps than `limit` keeps an even spread of them (the first ones in full).
  */
 export function keySteps(run: { events: RunEvent[] }, limit = KEY_STEPS, keep: number[] = []) {
-  const ops = runSteps(run).map(event => opOf(event.data)), count = ops.length, stops = new Set<number>([0, count]);
+  const count = runSteps(run).length, stops = new Set<number>([0, count]);
   for (const done of keep) if (done >= 0 && done <= count) stops.add(done);
-  if (count <= limit) return Array.from({ length: count + 1 }, (_, i) => i);
-  // The first round: until the first operation comes round again after another one (or one step, for a run of one operation).
-  let round = 1;
-  while (round < count && !(ops[round] === ops[0] && ops.slice(1, round).some(op => op !== ops[0]))) round++;
-  if (round >= count || ops.every(op => op === ops[0])) round = 1;
-  for (let done = 1; done <= Math.min(round, Math.floor(limit / 2)); done++) stops.add(done);
-  // Then chunks spread evenly over the rest, each ending where a round of the operations ends (the first operation comes
-  // again), or, for a run without rounds, where a run of one operation ends.
-  const ends: number[] = [];
-  for (let step = round; step < count; step++) {
-    const end = step === count - 1 || (round > 1 ? ops[step + 1] === ops[0] && ops[step] !== ops[0] : ops[step + 1] !== ops[step]);
-    if (end) ends.push(step + 1);
-  }
-  const room = Math.max(1, limit - stops.size), pool = ends.length > 1 ? ends : Array.from({ length: count - round }, (_, i) => round + i + 1);
-  for (let k = 1; k <= Math.min(room, pool.length); k++) stops.add(pool[Math.min(pool.length - 1, Math.round(k * pool.length / Math.min(room, pool.length)) - 1)]);
+  const starts = fsmVisits(run).map(visit => visit.start).filter(start => start > 0);
+  // No FSM steps (code that evaluates none): every step is a stop.
+  if (!starts.length && !fsmVisits(run).length) return count <= limit ? Array.from({ length: count + 1 }, (_, i) => i) : [...stops, ...Array.from({ length: limit - 1 }, (_, k) => Math.round((k + 1) * count / limit))].filter((v, i, all) => all.indexOf(v) === i).sort((a, b) => a - b);
+  const room = Math.max(1, limit - stops.size), first = Math.min(starts.length, Math.floor(room / 2));
+  starts.slice(0, first).forEach(start => stops.add(start));
+  const rest = starts.slice(first), spread = Math.min(rest.length, room - first);
+  for (let k = 1; k <= spread; k++) stops.add(rest[Math.min(rest.length - 1, Math.round(k * rest.length / spread) - 1)]);
   return [...stops].sort((a, b) => a - b);
-}
-/**
- * The steps where one mark changes, as steps done once each is executed: the steps whose checkpoint or drawing calls
- * belong to its item (m.focus), or, for a mark without one, the step of its own drawing call (`index`).
- */
-export function markSteps(run: { events: (RunEvent & { item?: string })[] }, mark: { item: string | null; index: number }) {
-  const starts = runSteps(run).map(event => event.index), out: number[] = [];
-  const mine = (event: RunEvent & { item?: string }) => mark.item !== null ? event.item === mark.item : event.index === mark.index;
-  for (let k = 0; k < starts.length; k++) {
-    const end = k + 1 < starts.length ? starts[k + 1] : Infinity;
-    if (run.events.some(event => event.index >= starts[k] && event.index < end && mine(event))) out.push(k + 1);
-  }
-  return out;
 }
 type Point = { x: number; y: number };
 const isPoint = (value: unknown): value is Point => Boolean(value) && typeof value === "object" && Number.isFinite((value as Point).x) && Number.isFinite((value as Point).y);
@@ -385,21 +399,26 @@ export const KEY_STEPS = 24;
 /** The key step before or after `done` (or `done` itself at an end). */
 export const keyStep = (keys: number[], done: number, way: 1 | -1) => way > 0 ? keys.find(stop => stop > done) ?? keys.at(-1) ?? done : [...keys].reverse().find(stop => stop < done) ?? 0;
 
-/** The operation of a step (0: not named). */
-export const stepOp = (run: { events: RunEvent[] }, step: number) => opOf(runSteps(run)[step]?.data);
+/** The operation of a step (0: none). */
+export const stepOp = (run: { events: RunEvent[] }, step: number) => runOps(run)(runSteps(run)[step]?.data);
 
 /**
- * An edit that only adds checkpoints and names inner terms, decisions (m.test) and kept runtime state (m.runtime): without its m.trace(…) calls, and with each
+ * An edit that only names inner terms, decisions (m.test) and kept runtime state (m.runtime) of the steps (it adds no
+ * m.trace checkpoint: the steps are the state machine steps the runtime records): without m.trace(…) calls, and with each
  * m.term("<name>", expression) back to its expression, it is the code it replaces (a one-statement body may get
- * braces to hold a checkpoint; a term may get parentheses around its expression).
+ * braces to hold a checkpoint; a term may get parentheses around its expression). Wrappers the code already has
+ * (e.g. m.runtime from an inspection's records) are read the same way on both sides, and none of them goes.
  */
 export function traceOnly(edit: { find: string; replace: string }) {
   const squash = (text: string) => text.replace(/[\s{}]+/g, ""), bare = (text: string) => squash(text).replace(/[()]/g, "");
-  const terms = withoutTerms(withoutTraces(edit.replace)), tests = terms === null ? null : withoutTests(terms), plain = tests === null ? null : withoutRuntime(tests);
-  const wraps = ["m.term(", "m.test(", "m.runtime("].some(call => edit.replace.includes(call));
-  if (!(edit.replace.includes("m.trace(") || wraps) || plain === null) return false;
+  const unwrap = (code: string) => { const terms = withoutTerms(withoutTraces(code)), tests = terms === null ? null : withoutTests(terms); return tests === null ? null : withoutRuntime(tests); };
+  const calls = ["m.trace(", "m.term(", "m.test(", "m.runtime("], count = (text: string, call: string) => text.split(call).length - 1;
+  const plain = unwrap(edit.replace), was = unwrap(edit.find), wraps = calls.slice(1).some(call => count(edit.replace, call) > count(edit.find, call));
+  // Checkpoints are not added any more: the runtime records the state machine steps itself.
+  if (count(edit.replace, "m.trace(") > count(edit.find, "m.trace(")) return false;
+  if (!wraps || plain === null || was === null || calls.some(call => count(edit.replace, call) < count(edit.find, call))) return false;
   // Parentheses only matter where a term or a test was unwrapped (its expression may have had them or not).
-  return squash(plain) === squash(edit.find) || (wraps && bare(plain) === bare(edit.find) && squash(plain).length >= squash(edit.find).length);
+  return squash(plain) === squash(was) || (wraps || was !== edit.find) && bare(plain) === bare(was) && squash(plain).length >= squash(was).length;
 }
 /** The arguments of a call between `open` (its "(") and `close` (its ")"), split at the commas outside brackets and strings. */
 function callArgs(code: string, open: number, close: number) {
@@ -505,32 +524,47 @@ function guardStart(text: string) {
   return head ? head.index : -1;
 }
 
-/** The value keys the program has for a preview value: one per stamp the module draws (its node there). */
-export function previewKeys(scene: Scene, value: Pick<PreviewValue, "nodeId" | "id">) {
-  const node = findNode(scene, value.nodeId), module = moduleKeyOf(scene, value.nodeId);
-  if (!node || !module) return [];
-  const codeId = node.codeId ?? node.id;
-  return sceneInstances(scene).filter(instance => instance.module === module).map(instance => instance.map[codeId]).filter(Boolean).map(id => bindingKey([id, value.id]));
-}
-/** The key a preview value is read with in overlays and handles (the node in this frame). */
-export const previewKey = (value: Pick<PreviewValue, "nodeId" | "id">) => bindingKey([value.nodeId, value.id]);
-
-/** The program with a preview's edits in the brush's modules and its new values in the host block, or why it cannot be made. */
-export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreResult, "edits" | "values"> & { machine?: MachineChange | null }): { code: string } | { error: string } {
-  let next = code;
-  const modules = new Map<string, string>();
+/**
+ * The program with an Execution frame's edits (its checkpoints) in the brush's modules, or why it cannot be made.
+ * `base`: the modules the edits were written for (by key), used instead of the program's own.
+ */
+export function exploreProgram(code: string, scene: Scene, result: Pick<ExploreResult, "edits">, base: Record<string, string> = {}, tolerant = false): { code: string; skipped?: number } | { error: string } {
+  let next = code, skipped = 0;
+  const modules = new Map<string, string>(), current = programModules(code);
   for (const edit of result.edits) {
     const key = moduleKeyOf(scene, edit.nodeId);
-    if (!key) return { error: "Could not find the node's code module" };
-    const module = modules.get(key) ?? programModules(next).get(key);
-    if (!module) return { error: "Could not find the node's code module" };
+    if (!key || !current.has(key)) { if (tolerant) { skipped++; continue; } return { error: "Could not find the node's code module" }; }
+    const module = modules.get(key) ?? base[key] ?? current.get(key)!;
     const edited = applyParameterEdits(module, [edit]);
-    if ("error" in edited) return edited;
+    // `tolerant`: a checkpoint whose code is no longer there (the module was changed first) is left out.
+    if ("error" in edited) { if (tolerant) { skipped++; continue; } return edited; }
     modules.set(key, edited.module);
   }
-  for (const [key, module] of modules) { const old = programModules(next).get(key)!; next = next.replace(old, () => module); }
-  // The states and transitions it emits are in the program's machines (the rest of the host block as it was).
-  if (result.machine) { const changed = applyMachineChange(scene, result.machine); if (changed !== scene) next = addHostMachines(next, changed); }
-  const params = Object.fromEntries(result.values.flatMap(value => previewKeys(scene, value).map(key => [key, value.value.value])));
-  return { code: addHostParams(next, params) };
+  for (const [key, module] of modules) next = next.replace(current.get(key)!, () => module);
+  return { code: next, skipped };
+}
+
+/**
+ * The program with the kit's behavior tools in it (in an Execution frame only): each tool's patch applied to its node's
+ * module, and its values in the scene block at their fallbacks (the brush as it is until something is drawn), so the
+ * frame's values set them. A tool whose patch does not apply, or does not read its values, is left out (`failed`).
+ */
+export function behaviorProgram(code: string, scene: Scene, tools: AlignTool[]): { code: string; failed: string[]; reasons: Record<string, string> } {
+  const failed: string[] = [], kept: AlignTool[] = [], reasons: Record<string, string> = {}, original = programModules(code);
+  let next = code;
+  for (const tool of tools.filter(item => item.kind === "behavior")) {
+    const key = tool.patch ? moduleKeyOf(scene, tool.patch.nodeId) : null, module = key ? programModules(next).get(key) : undefined;
+    const edited = module && tool.patch!.edits.length && readsBehavior(tool) ? applyParameterEdits(module, tool.patch!.edits) : null;
+    if (!module || !edited || "error" in edited) {
+      failed.push(tool.id);
+      // It would go into the code as it was: another behavior already changed the same code.
+      const alone = key && original.get(key) && tool.patch ? applyParameterEdits(original.get(key)!, tool.patch.edits) : null, before = kept.filter(other => other.patch?.nodeId && key === moduleKeyOf(scene, other.patch.nodeId));
+      reasons[tool.id] = alone && !("error" in alone) && before.length ? `it changes the same code as ${before.map(other => `“${other.name}”`).join(", ")}` : "its code is not in this frame's program";
+      continue;
+    }
+    next = next.replace(module, () => edited.module); kept.push(tool);
+  }
+  if (!kept.length) return { code, failed, reasons };
+  const withValues = withBlockParams(next, behaviorFallbacks(kept));
+  return withValues ? { code: withValues, failed, reasons } : { code, failed: tools.filter(item => item.kind === "behavior").map(item => item.id), reasons };
 }

@@ -1,5 +1,5 @@
 import { MAX_VALUE_DEPTH, type Algorithm, type AlgorithmCall, type Scene, type Value } from "./schema";
-import { nodeProperties } from "./transformations";
+import { nodeParams } from "./constraints";
 import { isAlgorithm } from "./values";
 
 export const findAlgorithm = (library: Algorithm[], id: string) => library.find(algorithm => algorithm.id === id);
@@ -31,10 +31,10 @@ export function algorithmClosure(library: Algorithm[], ids: string[]): Algorithm
 }
 
 export function sceneAlgorithmUsage(scene: Scene) {
-  const usage = new Map<string, { nodeId: string; propertyId: string }[]>();
-  for (const node of scene.nodes) for (const property of nodeProperties(node)) {
-    const refs = new Set([property.value, ...(node.machine?.states.flatMap(state => state.values.filter(item => item.propertyId === property.id).map(item => item.value)) || [])].flatMap(algorithmRefs));
-    for (const id of refs) usage.set(id, [...(usage.get(id) || []), { nodeId: node.id, propertyId: property.id }]);
+  const usage = new Map<string, { nodeId: string; paramId: string }[]>();
+  for (const node of scene.nodes) for (const param of nodeParams(node)) {
+    const refs = new Set(algorithmRefs(param.value));
+    for (const id of refs) usage.set(id, [...(usage.get(id) || []), { nodeId: node.id, paramId: param.id }]);
   }
   return usage;
 }

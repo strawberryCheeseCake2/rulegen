@@ -4,14 +4,12 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { editRuntime, moveValue, parseMove, runtimeTarget, targetPoint } from "../app/lib/runtime-edits";
 import { handleGrips, handleProblem, INPUT_ROOT, moveDrag, remapResult, startDrag, stepContext, type InspectionStep, type InspectResult, type Overlay } from "../app/lib/inspection";
-import { ExploreFrameView } from "../app/components/explore-frame";
-import type { ExploreFrame } from "../app/lib/explore";
 import { targetedResultSchema } from "../app/lib/inspection";
 
 const line = (n: number, y = 100) => Array.from({ length: n }, (_, i) => ({ x: 100 + i * 10, y, t: i * 16 }));
 const runtime = () => ({ seed: 1, states: {}, stores: { trail: { hearts: [{ id: "a", x: 1, y: 2 }], pos: { x: 50, y: 60 }, speed: 3 } }, history: [{ id: 1, rev: 4, points: line(5, 40), done: true }, { id: 2, rev: 9, points: line(21), done: true }] });
 const overlay = (handle: Partial<Overlay["handle"] & object>, extra: Partial<Overlay> = {}): InspectResult["overlays"][number] => ({ id: "o", kind: "rect", name: "", x: "0", y: "0", w: "1", h: "1", label: "", color: "#000000",
-  link: { kind: "constraint", nodeId: "trail", id: "x" }, when: "", each: "", ...extra,
+  link: { kind: "param", nodeId: "trail", id: "x" }, when: "", each: "", ...extra,
   handle: { key: "", gesture: "move", x: "", y: "", pivotX: "", pivotY: "", value: "", hint: "끌어 옮기기", ...handle } });
 
 test("runtime keys name an input point (by index or by fraction of the stroke), a whole gesture, or a store value", () => {
@@ -75,17 +73,7 @@ test("the step is looked at with its moved state: move grips sit on their point 
 });
 
 test("a store key follows the brush's shared ids like the other keys of a stored inspection", () => {
-  const result = remapResult({ summary: "", overlays: [overlay({ key: "@store:trail:pos" })], valueFixes: [], recommendations: [], parameters: [], records: null }, new Map([["trail", "brush-root"]]));
+  const result = remapResult({ summary: "", overlays: [overlay({ key: "@store:trail:pos" })], parameters: [], records: null }, new Map([["trail", "brush-root"]]));
   assert.equal(result.overlays[0].handle!.key, "@store:brush-root:pos");
 });
 
-test("an exploration frame is drawn from its moved input and lists it as a moved path, not as a raw key", () => {
-  const frame: ExploreFrame = { id: "explore-1", targetFrameId: "sketch-a", brushId: "b", toolId: "t", mode: "parameters", source: { kind: "cause" }, name: "n", nodeIds: ["trail"],
-    base: { runtime: runtime(), values: {}, steps: [], params: {} }, executable: "", status: "ready", error: "", progress: 0, values: { "@input:-1:10": moveValue(12, -3) },
-    result: { summary: "", axis: "run", from: 0, to: 1, edits: [], values: [], machine: null, overlays: [overlay({ key: "@input:-1:10" })], stages: [], sketches: [], of: [] },
-    request: { concern: "c", inspection: targetedResultSchema.parse({ summary: "s", overlays: [], valueFixes: [], recommendations: [] }), recommendation: null } };
-  const html = renderToStaticMarkup(createElement(ExploreFrameView, { frame, zoom: 1, specs: {}, labelOf: key => key, expand: key => [key], onProgress: () => {}, onValue: () => {}, onRetry: () => {}, onActivate: () => {} }));
-  assert.match(html, /Moved input path <b>12, -3px<\/b>/);
-  assert.match(html, /gesture-move/);
-  assert.match(html, /cx="212"/, "the grip on the moved point");
-});

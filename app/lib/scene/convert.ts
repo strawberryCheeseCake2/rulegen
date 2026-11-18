@@ -1,10 +1,11 @@
-import type { AIAlgorithm, AIArgValue, AIMachine, AINode, AITransformation, AIValue } from "./ai-schema";
-import type { Algorithm, NodeMachine, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
+import type { AIAlgorithm, AIArgValue, AIConstraint, AIMachine, AINode, AIValue } from "./ai-schema";
+import type { Algorithm, Constraint, NodeMachine, Scene, SceneNode, Value } from "./schema";
 import { importAlgorithms, instantiate, normalizeCall } from "./algorithms";
 import { clampNesting, clampRegion, fitCollections } from "./graph";
 import { MAX_NESTING_DEPTH } from "./schema";
 import { conformMachine } from "./machines";
 import { validateScene } from "./validate";
+import { keptDrags, keptInputs } from "./constraints";
 
 // Model output → stored scene. References are expanded with defaults, ids that
 // collide with different existing definitions are renamed, then everything is validated.
@@ -33,30 +34,40 @@ export function mergeAIAlgorithms(library: Algorithm[], incoming: AIAlgorithm[])
   return { library: expanded, ids };
 }
 
-export function convertTransformation(transformation: AITransformation, library: Algorithm[], ids: Ids): SemanticTransformation {
-  return { ...transformation, properties: transformation.properties.map(property => ({ ...property, value: normalizeCall(library, aiValue(property.value, ids)) })) };
+export function convertConstraint(constraint: AIConstraint, library: Algorithm[], ids: Ids): Constraint {
+  const converted = { ...constraint, params: constraint.params.map(param => ({ ...param, value: normalizeCall(library, aiValue(param.value, ids)) })) };
+  return { ...converted, inputs: keptInputs(converted), drags: keptDrags(converted) };
 }
-/** A node's stack, with transformation ids unique per node and property ids unique across it. */
-export function convertTransformations(transformations: AITransformation[], library: Algorithm[], ids: Ids): SemanticTransformation[] {
-  const seenLayers = new Set<string>(), seenProperties = new Set<string>();
+/**
+ * A node's constraints, with constraint ids unique per node and param ids unique across it. `renames` gets each
+ * constraint id the model gave and the id it got (the states follow it).
+ */
+export function convertConstraints(constraints: AIConstraint[], library: Algorithm[], ids: Ids, renames: Map<string, string> = new Map()): Constraint[] {
+  const seenConstraints = new Set<string>(), seenParams = new Set<string>();
   const unique = (seen: Set<string>, id: string) => { let next = id, suffix = 2; while (seen.has(next)) next = `${id.slice(0, 70)}-${suffix++}`; seen.add(next); return next; };
-  return transformations.map(transformation => {
-    const converted = convertTransformation(transformation, library, ids);
-    return { ...converted, id: unique(seenLayers, converted.id), properties: converted.properties.map(property => ({ ...property, id: unique(seenProperties, property.id) })) };
+  return constraints.map(constraint => {
+    const converted = convertConstraint(constraint, library, ids), paramRenames = new Map<string, string>();
+    const params = converted.params.map(param => { const id = unique(seenParams, param.id); if (!paramRenames.has(param.id)) paramRenames.set(param.id, id); return { ...param, id }; });
+    const id = unique(seenConstraints, converted.id); if (!renames.has(constraint.id)) renames.set(constraint.id, id);
+    // The pointer inputs and drags follow their params' new ids.
+    return { ...converted, id, params, inputs: keptInputs({ ...converted, params }, paramRenames), drags: keptDrags({ ...converted, params }, paramRenames) };
   });
 }
-export function convertMachine(machine: AIMachine, library: Algorithm[], ids: Ids): NodeMachine {
-  return { ...machine, states: machine.states.map(state => ({ ...state, values: state.values.map(item => ({ propertyId: item.propertyId, value: normalizeCall(library, aiValue(item.value, ids)) })) })) };
+/** The machine with its states' constraint ids following the constraints' ids (unknown ones are dropped by conformMachine). */
+export function convertMachine(machine: AIMachine, renames: ReadonlyMap<string, string> = new Map()): NodeMachine {
+  return { ...machine, states: machine.states.map(state => ({ ...state, constraintIds: state.constraintIds.map(id => renames.get(id) ?? id) })) };
 }
 
 export function convertNodes(nodes: AINode[], library: Algorithm[], ids: Ids): SceneNode[] {
   const kinds = new Map(nodes.map(node => [node.id, node.kind]));
-  return nodes.map(node => conformMachine({
-    id: node.id, kind: node.kind, name: node.name, description: node.description, primitive: node.primitive, visible: true,
-    parentId: node.parentId && node.parentId !== node.id && kinds.get(node.parentId) === "collection" ? node.parentId : null,
-    region: clampRegion(node.region), transformations: convertTransformations(node.transformations, library, ids),
-    machine: node.machine ? convertMachine(node.machine, library, ids) : null,
-  }));
+  return nodes.map(node => {
+    const renames = new Map<string, string>(), constraints = convertConstraints(node.constraints, library, ids, renames);
+    return conformMachine({
+      id: node.id, kind: node.kind, name: node.name, description: node.description, primitive: node.primitive, visible: true,
+      parentId: node.parentId && node.parentId !== node.id && kinds.get(node.parentId) === "collection" ? node.parentId : null,
+      region: clampRegion(node.region), constraints, machine: node.machine ? convertMachine(node.machine, renames) : null,
+    });
+  });
 }
 
 /** A complete scene from an extraction, composition or revision response. */
@@ -75,4 +86,21 @@ function breakCycles(nodes: SceneNode[]): SceneNode[] {
     while (parent) { if (seen.has(parent)) return { ...node, parentId: null }; seen.add(parent); parent = byId.get(parent)?.parentId ?? null; }
     return node;
   });
+}
+
+/**
+ * A node with an AI-made FSM: the new constraints it brought are added (ids made unique against the node's constraints
+ * and params) and its states follow their ids.
+ */
+export function withMachine(node: SceneNode, output: { constraints: AIConstraint[]; machine: AIMachine }, library: Algorithm[], ids: Ids): SceneNode {
+  const renames = new Map<string, string>(), takenConstraints = new Set(node.constraints.map(item => item.id)), takenParams = new Set(node.constraints.flatMap(item => item.params.map(param => param.id)));
+  const unique = (taken: Set<string>, id: string) => { let next = id, suffix = 2; while (taken.has(next)) next = `${id.slice(0, 70)}-${suffix++}`; taken.add(next); return next; };
+  const added = convertConstraints(output.constraints, library, ids).map((constraint, i) => {
+    const paramRenames = new Map<string, string>();
+    const params = constraint.params.map(param => { const id = unique(takenParams, param.id); paramRenames.set(param.id, id); return { ...param, id }; });
+    const id = unique(takenConstraints, constraint.id); renames.set(output.constraints[i].id, id);
+    return { ...constraint, id, params, inputs: keptInputs({ ...constraint, params }, paramRenames), drags: keptDrags({ ...constraint, params }, paramRenames) };
+  });
+  // Unknown constraint ids stay, so validateMachine rejects them (the model is asked again) instead of a state silently losing one.
+  return { ...node, constraints: [...node.constraints, ...added], machine: convertMachine(output.machine, renames) };
 }

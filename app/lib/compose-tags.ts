@@ -4,43 +4,43 @@ import { findNode } from "./scene/graph";
 import type { Scene } from "./scene/schema";
 
 // Compose prompt tags: the objects and collections the AI read in the sketch, each on the marks it is drawn
-// with, and what goes into it (its transformations and their properties). The AI names the marks (stroke ids);
+// with, and what goes into it (its constraints and their params). The AI names the marks (stroke ids);
 // where a tag sits is taken from those marks, never from coordinates the AI writes.
 
 export const MAX_COMPOSE_TAGS = 16;
 const effectSchema = z.enum(["spatial", "stylistic", "temporal"]);
-const aiPropertySchema = z.object({ label: z.string().max(60), value: z.string().max(60), how: z.string().max(160) });
-const aiTransformationSchema = z.object({ label: z.string().max(60), effect: effectSchema, how: z.string().max(200),
+const aiParamSchema = z.object({ label: z.string().max(60), value: z.string().max(60), how: z.string().max(160) });
+const aiConstraintSchema = z.object({ label: z.string().max(60), effect: effectSchema, how: z.string().max(200),
   /** The pen whose marks carry it ("" when none does). */
-  penId: z.string().max(80), properties: z.array(aiPropertySchema).max(6) });
+  penId: z.string().max(80), params: z.array(aiParamSchema).max(6) });
 export const aiComposeTagSchema = z.object({ id: z.string().max(40), kind: z.enum(["collection", "object"]), label: z.string().max(60),
   /** The collection it belongs to ("" at the top). */
   parentId: z.string().max(40),
   /** The marks it is drawn with (compositionStrokes ids). */
   strokeIds: z.array(z.string().max(80)).max(64), summary: z.string().max(200),
   /** A collection's members: what repeats and about how many ("" for an object). */
-  members: z.string().max(120), transformations: z.array(aiTransformationSchema).max(6) });
+  members: z.string().max(120), constraints: z.array(aiConstraintSchema).max(6) });
 export const aiCompositionPromptSchema = z.object({ prompt: z.string().trim().min(1).max(2000), tags: z.array(aiComposeTagSchema).max(MAX_COMPOSE_TAGS) });
 
 const unit = z.number().min(0).max(1);
-/** The pen a tag's transformation is carried by, and where its pen was made (to find that transformation's minimal examples). */
+/** The pen a tag's constraint is carried by, and where its pen was made (to find that constraint's minimal examples). */
 const tagPenSchema = z.object({ name: z.string().max(100), color: z.string().max(20),
   /** The frame and node the pen was made from. */
   frameId: z.string().max(80).default(""), nodeId: z.string().max(80).default(""),
-  /** A transformation pen's transformation (label); an algorithm pen's algorithm (id). */
-  transformation: z.string().max(100).default(""), algorithmId: z.string().max(80).default("") });
+  /** A constraint pen's constraint (label); an algorithm pen's algorithm (id). */
+  constraint: z.string().max(100).default(""), algorithmId: z.string().max(80).default("") });
 export type ComposeTagPen = z.infer<typeof tagPenSchema>;
-export const composeTagSchema = aiComposeTagSchema.omit({ transformations: true }).extend({
+export const composeTagSchema = aiComposeTagSchema.omit({ constraints: true }).extend({
   /** Where its marks are (normalized to the canvas). */
   box: z.object({ x: unit, y: unit, w: unit, h: unit }),
-  transformations: z.array(aiTransformationSchema.omit({ penId: true }).extend({ pen: tagPenSchema.nullable() })).max(6) });
+  constraints: z.array(aiConstraintSchema.omit({ penId: true }).extend({ pen: tagPenSchema.nullable() })).max(6) });
 export type ComposeTag = z.infer<typeof composeTagSchema>;
 export type AIComposeTag = z.infer<typeof aiComposeTagSchema>;
 
 type Stroke = { id: string; tool: string; points: { x: number; y: number }[] };
-type Pen = { id: string; name: string; color: string; sourceSketchId?: string; source?: { nodeId: string }; transformation?: { label: string } | null; algorithm?: { call: { algorithmId: string } } | null };
+type Pen = { id: string; name: string; color: string; sourceSketchId?: string; source?: { nodeId: string }; constraint?: { label: string } | null; algorithm?: { call: { algorithmId: string } } | null };
 const tagPen = (pen: Pen): ComposeTagPen => ({ name: pen.name, color: pen.color, frameId: pen.sourceSketchId ?? "", nodeId: pen.source?.nodeId ?? "",
-  transformation: pen.transformation?.label ?? "", algorithmId: pen.algorithm?.call.algorithmId ?? "" });
+  constraint: pen.constraint?.label ?? "", algorithmId: pen.algorithm?.call.algorithmId ?? "" });
 const PAD = .012;
 const union = (boxes: ComposeTag["box"][]) => {
   const x = Math.min(...boxes.map(b => b.x)), y = Math.min(...boxes.map(b => b.y));
@@ -52,33 +52,33 @@ function boxOf(points: { x: number; y: number }[]) {
   return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
 }
 
-type AITransformation = z.infer<typeof aiTransformationSchema>;
-export type ComposeTagTransformation = ComposeTag["transformations"][number];
-/** A transformation as the app keeps it: its pen (by id) resolved to the pen and where it was made. */
-export function settleTransformation({ penId, ...rest }: AITransformation, pens: Pen[]): ComposeTagTransformation {
+type AIConstraint = z.infer<typeof aiConstraintSchema>;
+export type ComposeTagConstraint = ComposeTag["constraints"][number];
+/** A constraint as the app keeps it: its pen (by id) resolved to the pen and where it was made. */
+export function settleConstraint({ penId, ...rest }: AIConstraint, pens: Pen[]): ComposeTagConstraint {
   const pen = pens.find(item => item.id === penId);
   return { ...rest, pen: pen ? tagPen(pen) : null };
 }
 /** The tags as the AI reads them: no boxes, each pen named by its id among `pens` (found by name and color; "" when it is not there). */
 export const tagsForAI = (tags: ComposeTag[], pens: Pen[]) => tags.map(({ box: _box, ...tag }) => ({ ...tag, ...held(tags, tag),
-  transformations: tag.transformations.map(({ pen, ...item }) => ({ ...item, penId: (pen && pens.find(entry => entry.name === pen.name && entry.color.toLowerCase() === pen.color.toLowerCase())?.id) || "" })) }));
+  constraints: tag.constraints.map(({ pen, ...item }) => ({ ...item, penId: (pen && pens.find(entry => entry.name === pen.name && entry.color.toLowerCase() === pen.color.toLowerCase())?.id) || "" })) }));
 /** The tags for Compose: no boxes, pens by name and color only, each collection with what it holds. */
 export const tagsForCompose = (tags: ComposeTag[]) => tags.map(({ box: _box, ...tag }) => ({ ...tag, ...held(tags, tag),
-  transformations: tag.transformations.map(item => ({ ...item, pen: item.pen && { name: item.pen.name, color: item.pen.color } })) }));
+  constraints: tag.constraints.map(item => ({ ...item, pen: item.pen && { name: item.pen.name, color: item.pen.color } })) }));
 /** What a collection holds, said outright beside `parentId` (it is what the collection repeats, whatever its words still say after the user moved tags). */
 const held = (tags: ComposeTag[], tag: Pick<ComposeTag, "id" | "kind">) => tag.kind !== "collection" ? {}
   : { holds: tags.filter(item => item.parentId === tag.id).map(item => ({ id: item.id, kind: item.kind, label: item.label })) };
 
-/** tag-revise: one transformation of a tag changed as the user asked. */
-export const aiTagRevisionSchema = z.object({ transformation: aiTransformationSchema,
+/** tag-revise: one constraint of a tag changed as the user asked. */
+export const aiTagRevisionSchema = z.object({ constraint: aiConstraintSchema,
   /** One short sentence on what changed. */
   note: z.string().max(200) });
 export const tagTargetSchema = z.object({ tagId: z.string().max(40), index: z.number().int().min(0).max(5) });
-export const tagRevisionSchema = tagTargetSchema.extend({ transformation: composeTagSchema.shape.transformations.element, note: z.string().max(200) });
+export const tagRevisionSchema = tagTargetSchema.extend({ constraint: composeTagSchema.shape.constraints.element, note: z.string().max(200) });
 export type TagRevision = z.infer<typeof tagRevisionSchema>;
-/** The tags with a revised transformation in its place (unchanged when that tag or transformation is gone). */
-export const reviseTag = (tags: ComposeTag[], revision: TagRevision) => tags.map(tag => tag.id === revision.tagId && tag.transformations[revision.index]
-  ? { ...tag, transformations: tag.transformations.map((item, i) => i === revision.index ? revision.transformation : item) } : tag);
+/** The tags with a revised constraint in its place (unchanged when that tag or constraint is gone). */
+export const reviseTag = (tags: ComposeTag[], revision: TagRevision) => tags.map(tag => tag.id === revision.tagId && tag.constraints[revision.index]
+  ? { ...tag, constraints: tag.constraints.map((item, i) => i === revision.index ? revision.constraint : item) } : tag);
 
 /**
  * The tags as the app keeps them: only marks that are drawn (not erasers), a tag with none dropped, ids unique,
@@ -94,7 +94,7 @@ export function settleComposeTags(tags: AIComposeTag[], strokes: Stroke[], pens:
     seen.add(id);
     kept.push({ ...tag, id, strokeIds: marks, box: boxOf(marks.flatMap(stroke => drawn.get(stroke)!)),
       members: tag.kind === "collection" ? tag.members : "",
-      transformations: tag.transformations.map(item => settleTransformation(item, pens)) });
+      constraints: tag.constraints.map(item => settleConstraint(item, pens)) });
   }
   return fitBoxes(fixParents(kept), drawn);
 }
@@ -128,20 +128,20 @@ export function placedPen(pen: ComposeTagPen | null, pens: Pen[]): ComposeTagPen
   const found = pens.find(item => item.name === pen.name && item.color.toLowerCase() === pen.color.toLowerCase());
   return found ? { ...tagPen(found), name: pen.name, color: pen.color } : pen;
 }
-type ExampleFrames = Record<string, { scene: Scene; exampleOf: { frameId: string; nodeId: string; transformationId: string } | null } | undefined>;
+type ExampleFrames = Record<string, { scene: Scene; exampleOf: { frameId: string; nodeId: string; constraintId: string } | null } | undefined>;
 /**
- * The minimal example frames (made with Decompose) of the transformation a tag's pen carries: the pen's own frame
- * when it was made from an example, else the examples of the transformation it was taken from (a transformation pen:
- * the one with its label; an algorithm pen: the ones whose properties use its algorithm) in the pen's frame.
+ * The minimal example frames (made with Decompose) of the constraint a tag's pen carries: the pen's own frame
+ * when it was made from an example, else the examples of the constraint it was taken from (a constraint pen:
+ * the one with its label; an algorithm pen: the ones whose params use its algorithm) in the pen's frame.
  */
 export function penExamples(pen: ComposeTagPen | null, frames: ExampleFrames): string[] {
   const own = pen?.frameId ? frames[pen.frameId] : undefined;
   if (!pen || !own) return [];
   if (own.exampleOf) return [pen.frameId];
   const node = findNode(own.scene, pen.nodeId); if (!node) return [];
-  const ids = node.transformations.filter(item => pen.transformation ? item.label === pen.transformation
-    : Boolean(pen.algorithmId) && item.properties.some(property => algorithmRefs(property.value).includes(pen.algorithmId))).map(item => item.id);
-  return Object.entries(frames).filter(([, frame]) => frame?.exampleOf && frame.exampleOf.frameId === pen.frameId && frame.exampleOf.nodeId === node.id && ids.includes(frame.exampleOf.transformationId)).map(([id]) => id);
+  const ids = node.constraints.filter(item => pen.constraint ? item.property === pen.constraint
+    : Boolean(pen.algorithmId) && item.params.some(param => algorithmRefs(param.value).includes(pen.algorithmId))).map(item => item.id);
+  return Object.entries(frames).filter(([, frame]) => frame?.exampleOf && frame.exampleOf.frameId === pen.frameId && frame.exampleOf.nodeId === node.id && ids.includes(frame.exampleOf.constraintId)).map(([id]) => id);
 }
 
 /** The tags as a containment tree, depth first: each collection followed by what it contains (`depth`: how deep it is nested). */
@@ -189,32 +189,32 @@ export function addTag(tags: ComposeTag[], kind: ComposeTag["kind"], parentId: s
   const parent = tags.find(item => item.id === parentId && item.kind === "collection");
   let n = tags.length + 1; while (tags.some(item => item.id === `t${n}`)) n++;
   const box = parent ? { x: parent.box.x + parent.box.w * .1, y: parent.box.y + parent.box.h * .1, w: parent.box.w * .8, h: parent.box.h * .8 } : { x: .35, y: .35, w: .3, h: .3 };
-  const tag: ComposeTag = { id: `t${n}`, kind, label: kind === "collection" ? "New collection" : "New object", parentId: parent?.id ?? "", strokeIds: [], summary: "", members: "", transformations: [], box };
+  const tag: ComposeTag = { id: `t${n}`, kind, label: kind === "collection" ? "New collection" : "New object", parentId: parent?.id ?? "", strokeIds: [], summary: "", members: "", constraints: [], box };
   return { tags: [...tags, tag], id: tag.id };
 }
-export const MAX_TAG_TRANSFORMATIONS = 6, MAX_TAG_PROPERTIES = 6;
-export const emptyTransformation = (): ComposeTagTransformation => ({ label: "New transformation", effect: "spatial", how: "", pen: null, properties: [] });
-/** Where a dragged transformation comes from: its tag and its place in that tag's list. */
-export type TagTransformationAt = { tagId: string; index: number };
-/** The drag data type of a transformation, so tag chips and the tag tree can tell it from a dragged tag. */
-export const TAG_TRANSFORMATION_DRAG = "application/x-rulegen-tag-transformation";
+export const MAX_TAG_CONSTRAINTS = 6, MAX_TAG_PARAMS = 6;
+export const emptyConstraint = (): ComposeTagConstraint => ({ label: "New constraint", effect: "spatial", how: "", pen: null, params: [] });
+/** Where a dragged constraint comes from: its tag and its place in that tag's list. */
+export type TagConstraintAt = { tagId: string; index: number };
+/** The drag data type of a constraint, so tag chips and the tag tree can tell it from a dragged tag. */
+export const TAG_CONSTRAINT_DRAG = "application/x-rulegen-tag-constraint";
 /**
- * The tags with one transformation moved to another tag or another place in its own: before the transformation at
+ * The tags with one constraint moved to another tag or another place in its own: before the constraint at
  * `before` in the target tag (none: at its end). Null when nothing would change or the target holds no more.
  */
-export function moveTransformation(tags: ComposeTag[], from: TagTransformationAt, to: string, before?: number): ComposeTag[] | null {
-  const source = tags.find(tag => tag.id === from.tagId), target = tags.find(tag => tag.id === to), moved = source?.transformations[from.index];
+export function moveConstraint(tags: ComposeTag[], from: TagConstraintAt, to: string, before?: number): ComposeTag[] | null {
+  const source = tags.find(tag => tag.id === from.tagId), target = tags.find(tag => tag.id === to), moved = source?.constraints[from.index];
   if (!source || !target || !moved) return null;
-  if (target.id !== source.id && target.transformations.length >= MAX_TAG_TRANSFORMATIONS) return null;
-  const rest = (tag: ComposeTag) => tag.id === source.id ? tag.transformations.filter((_, at) => at !== from.index) : tag.transformations;
+  if (target.id !== source.id && target.constraints.length >= MAX_TAG_CONSTRAINTS) return null;
+  const rest = (tag: ComposeTag) => tag.id === source.id ? tag.constraints.filter((_, at) => at !== from.index) : tag.constraints;
   // Within one tag, the places after the moved one shift up once it is taken out.
   const length = rest(target).length, at = before === undefined ? length : Math.max(0, Math.min(length, target.id === source.id && before > from.index ? before - 1 : before));
   if (target.id === source.id && at === from.index) return null;
-  return tags.map(tag => tag.id === target.id ? { ...tag, transformations: [...rest(tag).slice(0, at), moved, ...rest(tag).slice(at)] }
-    : tag.id === source.id ? { ...tag, transformations: rest(tag) } : tag);
+  return tags.map(tag => tag.id === target.id ? { ...tag, constraints: [...rest(tag).slice(0, at), moved, ...rest(tag).slice(at)] }
+    : tag.id === source.id ? { ...tag, constraints: rest(tag) } : tag);
 }
-/** The transformation a drag carries, or null when it carries something else. */
-export function draggedTransformation(data: DataTransfer): TagTransformationAt | null {
-  try { const at = JSON.parse(data.getData(TAG_TRANSFORMATION_DRAG)); return typeof at?.tagId === "string" && Number.isInteger(at?.index) ? at : null; }
+/** The constraint a drag carries, or null when it carries something else. */
+export function draggedConstraint(data: DataTransfer): TagConstraintAt | null {
+  try { const at = JSON.parse(data.getData(TAG_CONSTRAINT_DRAG)); return typeof at?.tagId === "string" && Number.isInteger(at?.index) ? at : null; }
   catch { return null; }
 }

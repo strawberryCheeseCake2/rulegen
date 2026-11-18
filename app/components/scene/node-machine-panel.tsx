@@ -25,7 +25,7 @@ type Props = {
 
 /**
  * The state machine of the selected collection/object. Clicking a state jumps
- * the preview there and opens its properties; states and transitions can be
+ * the preview there and opens its params; states and transitions can be
  * attached to a refinement, written as text and/or drawn on the graph.
  */
 export function NodeMachinePanel(props: Props) {
@@ -43,7 +43,7 @@ export function NodeMachinePanel(props: Props) {
   </div>;
   const machine = node.machine, runtimeId = props.runtimeStateId || machine.initialState;
   const current = machine.states.find(item => item.id === runtimeId);
-  const summary = (stateId: string) => { const count = machine.states.find(state => state.id === stateId)?.values.length || 0; return `${count} propert${count === 1 ? "y" : "ies"} changed`; };
+  const summary = (stateId: string) => { const count = machine.states.find(state => state.id === stateId)?.constraintIds.length || 0; return `${count} constraint${count === 1 ? "" : "s"}`; };
   const draft = props.draft.nodeId === node.id ? props.draft : emptyMachineDraft(node.id);
   const patch = (next: Partial<MachineDraft>) => props.onDraft({ ...draft, ...next, nodeId: node.id });
   const target = props.target;
@@ -97,7 +97,7 @@ export function NodeMachinePanel(props: Props) {
           <button type="button" onClick={() => patch({ open: false })}>Cancel</button>
           <button type="submit" className="primary" disabled={!canSend}><Icon name="spark" size={13} />{sending || busy ? "Refining…" : refineLabel}</button></div>
       </form>}
-      <div className="machine-events">{machine.transitions.filter(transition => transition.from === runtimeId && transition.trigger === "event").map(transition => <button key={transition.id} disabled={busy || !props.hasCode} onClick={() => props.onEvent(transition.id)}><Icon name="play" size={12} />{transition.label}<Icon name="arrow" size={12} /></button>)}</div>
+      <div className="machine-events">{machine.transitions.filter(transition => transition.from === runtimeId).map(transition => <button key={transition.id} disabled={busy || !props.hasCode} onClick={() => props.onEvent(transition.id)}><Icon name="play" size={12} />{transition.label}<Icon name="arrow" size={12} /></button>)}</div>
     </div>
   </div>;
 }

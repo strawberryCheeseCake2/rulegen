@@ -70,17 +70,17 @@ test("a targeted inspection lists a field only when the concern is about it; the
   const { withMockedAI } = await import("./fixtures/scene");
   const { runAI } = await import("../app/server/ai.server");
   const { requestSchema } = await import("../app/lib/schema");
-  const { constraintRows, inspectResultSchema } = await import("../app/lib/inspection");
+  const { paramRows, inspectResultSchema } = await import("../app/lib/inspection");
   const { hookField, declaresField, fieldHookProblem } = await import("../app/lib/fields");
   const scene = sampleScene(), code = connectScene({ title: "Tree", explanation: "", code: sceneProgram }, scene).code;
-  const wrap = { find: "p.stroke(m.v(\"tree/ink\"));", replace: "const flow = m.field(\"flow\", (x, y) => 0); m.store.heading = flow(0, 0); p.stroke(m.v(\"tree/ink\"));" };
+  const wrap = { find: "p.stroke(tree.color);", replace: "const flow = m.field(\"flow\", (x, y) => 0); m.store.heading = flow(0, 0); p.stroke(tree.color);" };
   const hook = { id: "flow", nodeId: "tree", name: "Flow direction", reason: "The lines bunch where the flow converges.", edits: [wrap] };
-  const output = { summary: "s", overlays: [], valueFixes: [], recommendations: [], parameters: [], records: null,
+  const output = { summary: "s", overlays: [], parameters: [], records: null,
     fields: [hook, { ...hook, id: "wind", edits: [{ ...wrap, replace: wrap.replace.replace("m.field(\"flow\"", "noField(\"wind\"") }] }] };
   await withMockedAI(() => output, async calls => {
     const result = inspectResultSchema.parse(await runAI(requestSchema.parse({ intent: "inspect", scene, image: "data:image/png;base64,AAAA", instruction: "Why do the lines bunch up here?", previous: code,
       inspection: { brushName: "Tree", nodeIds: ["tree", "orb"], cursor: 0, marks: [],
-        constraints: constraintRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+        params: paramRows(scene, ["tree", "orb"]).map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
         steps: [{ id: 1, nodeId: null, from: null, to: null, transitionId: null, values: {}, runtime: null }] } }), new AbortController().signal));
     assert.deepEqual(result.fields.map(item => item.id), ["flow"], "only a field the edits really declare");
     assert.match(result.summary, /1 field\(s\) could not be hooked into the code/);
@@ -110,8 +110,9 @@ test("a targeted inspection lists a field only when the concern is about it; the
   assert.match(prompt, /THE MARKS FOLLOW IT/); assert.match(prompt, /RESTRUCTURE that one computation into tracing along the field/);
   assert.match(prompt, /Declare it ONCE per draw/);
   assert.match(prompt, /ITS SHAPE IS ADJUSTED BY HAND, through the execution state/, "its control points are store values handles move");
-  assert.match(prompt, /a value change \(in `valueFixes` or a `"value"` recommendation\) is given only when it actually produces that shape/, "approximating a drawn shape is no fix");
-  assert.match(prompt, /When values cannot produce it, the FIRST recommendation must be a structural change/);
+  const align = readFileSync("prompts/align.md", "utf8");
+  assert.match(align, /Coming out "similar to" or "roughly like" the drawing is not a fix/, "approximating a drawn shape is no fix");
+  assert.match(align, /`"value"` only when values of `params` alone produce exactly the drawn state[^\n]*Otherwise a structural change/);
   assert.match(prompt, /`"@store:<root>:<controls>\.\$\{i\}"`/);
   assert.match(home, /backfillStores\(held\.runtime, stores\)/, "a held step recorded before the hook gets those values once, so handles can move them");
 });

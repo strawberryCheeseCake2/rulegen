@@ -14,10 +14,10 @@ export const targetedToolSchema = z.object({
   marks: z.array(z.array(z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })).max(2000)).max(MAX_MARKS),
   markStyles: z.array(markStyleSchema).max(MAX_MARKS).default([]),
   result: targetedResultSchema,
-  /** Overlays rebuilt for an applied recommendation (see overlayUpdateSchema), newest last. */
+  /** Overlays rebuilt for an applied fix (see overlayUpdateSchema), newest last. */
   overlayUpdates: z.array(overlayUpdateSchema).max(MAX_OVERLAY_UPDATES).default([]),
-  /** How long the inspection that made this tool took, and whether it also wrote recommendation previews (to compare). */
-  timing: z.object({ ms: z.number().nonnegative(), previews: z.boolean() }).optional(),
+  /** How long the inspection that made this tool took. */
+  timing: z.object({ ms: z.number().nonnegative() }).optional(),
 });
 export type TargetedTool = z.infer<typeof targetedToolSchema>;
 export const MAX_TARGETED = 12;
@@ -32,12 +32,15 @@ export const brushSchema = z.object({
   code: z.string().max(120000).default(""),
   /** Targeted inspection tools created with the inspection annotation tool. */
   targeted: z.array(targetedToolSchema).max(MAX_TARGETED).default([]),
-  /** A sub brush (a minimal example of one of its transformations) lives inside this brush's tool group ("" = a group of its own). */
+  /** A sub brush (a minimal example of one of its constraints) lives inside this brush's tool group ("" = a group of its own). */
   parentId: z.string().max(80).default(""),
   /** A small picture of the brush: its master's box cut from the master frame's result (shown in the Brush panel). */
   thumbnail: z.string().max(200000).regex(/^data:image\/(jpeg|png);base64,/).optional(),
-  /** A fork: a copy of brush `brushId` (stamped in frame `frameId`) that a recommendation (`key`, `title`) was applied to instead of that brush. */
-  fork: z.object({ brushId: z.string().max(80), frameId: z.string().max(80), key: z.string().max(400), title: z.string().max(200) }).optional(),
+  /**
+   * A fork: a copy of brush `brushId` (stamped in frame `frameId`) that a fix (`key`, `title`) was applied to instead
+   * of that brush, read from the state drawn with targeted tool `toolId` ("" for forks made before).
+   */
+  fork: z.object({ brushId: z.string().max(80), frameId: z.string().max(80), key: z.string().max(400), title: z.string().max(200), toolId: z.string().max(80).default("") }).optional(),
 // A fork is a brush of its own (its own tools, targeted tools and sub brushes), not inside the group it came from.
 }).transform(brush => brush.fork && brush.parentId ? { ...brush, parentId: "" } : brush);
 export type Brush = z.infer<typeof brushSchema>;
@@ -78,8 +81,8 @@ export function subBrushFor(scene: Scene, frameId: string, name: string, parent:
  * to stamp. Anything interactive (with a state machine) is a brush, a background too; so is anything over the whole
  * canvas that is made by an algorithm (lines traced through a flow field, scattered marks): that is the drawing itself.
  */
-export const isBackdrop = (node: Pick<Scene["nodes"][number], "kind" | "region" | "machine" | "transformations">) => node.kind === "object" && !node.machine && node.region.w >= .95 && node.region.h >= .95
-  && !node.transformations.some(transformation => transformation.properties.some(property => property.value.type === "algorithm"));
+export const isBackdrop = (node: Pick<Scene["nodes"][number], "kind" | "region" | "machine" | "constraints">) => node.kind === "object" && !node.machine && node.region.w >= .95 && node.region.h >= .95
+  && !node.constraints.some(constraint => constraint.params.some(param => param.value.type === "algorithm"));
 /**
  * One brush per root node of an AI-generated scene: a collection (its nested nodes are parts of it), or an object
  * standing alone at the root (a single drawn form is kept as one object); every interactive one, only a still
@@ -128,7 +131,7 @@ export function brushRoots(scene: Scene, brush: Brush, frameId: string) {
 // ── Master and instances ─────────────────────────────────────────────────────
 // The master of a brush is its collection in the source frame; every stamp of it
 // (in any frame) is an instance. Instances follow the brush: their semantic
-// transformations and state machines are changed on the master, or the instance
+// constraints and state machines are changed on the master, or the instance
 // is detached into a brush of its own first.
 
 export type BrushRole = { brush: Brush; rootId: string; master: boolean };

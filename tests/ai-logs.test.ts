@@ -52,7 +52,7 @@ test("concurrent AI generations persist separate complete logs, original respons
     assert.deepEqual(await readFile(path.join(directory, request.image.file)), Buffer.from("AAAA", "base64"));
     assert.equal((await json(directory, "response.json")).output[0].content[0].text, JSON.stringify(output));
     assert.deepEqual((await json(directory, "result.json")).nodes.map((node: { id: string }) => node.id), ["tree", "orb"]);
-    assert.equal((await json(directory, "result.json")).nodes[1].transformations[0].properties[0].value.type, "number");
+    assert.equal((await json(directory, "result.json")).nodes[1].constraints[0].params[0].value.type, "number");
     assert.equal((await stat(path.join(directory, "log.json"))).mode & 0o777, 0o600);
     const textFiles = (await readdir(directory)).filter(name => /\.(json|txt|js)$/.test(name));
     for (const file of textFiles) assert.equal((await readFile(path.join(directory, file), "utf8")).includes(process.env.OPENAI_API_KEY!), false);
@@ -76,16 +76,16 @@ test("every AI intent logs its final validated result and clarification retains 
   const renamed = structuredClone(aiScene); renamed.nodes[0].name = "Bigger tree";
   const results: Record<string, unknown> = {
     extract: aiScene, compose: aiScene, code,
-    transform: { algorithms: [], transformation: { id: "pulse", label: "Size", description: "", properties: [{ id: "radius", label: "Radius", effect: "spatial", description: "", value: { type: "number", value: 30, min: 10, max: 140, step: 1, unit: "px" } }] } },
-    "state-machine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] } },
-    "machine-refine": { algorithms: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", values: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
+    transform: { algorithms: [], constraint: { id: "pulse", property: "size", description: "", params: [{ id: "radius", label: "Radius", effect: "spatial", description: "", value: { type: "number", value: 30, min: 10, max: 140, step: 1, unit: "px" } }], inputs: [], drags: [] } },
+    "state-machine": { algorithms: [], constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] } },
+    "machine-refine": { algorithms: [], constraints: [], machine: { initialState: "rest", states: [{ id: "rest", label: "쉬기", description: "", constraintIds: [] }], transitions: [] }, composePrompt: "- 원을 쉬게 해줘." },
     clarification: { clarification: "나무를 키워줘" },
     "compose-prompt": { prompt: "가지를 키우고 자유롭게 그린 배치와 조합해줘", tags: [] },
     revision: { summary: "나무를 키웁니다", ...renamed },
   };
   for (const intent of Object.keys(results)) {
     globalThis.fetch = async () => Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify(results[intent]) }] }] });
-    await runAI(requestSchema.parse({ intent, image, resultImage: "data:image/jpeg;base64,AQID", scene, targetNodeId: "orb", targetPropertyId: intent === "transform" ? "radius" : "", previous: sceneProgram, annotations, instruction: "나무를 키워줘" }), new AbortController().signal);
+    await runAI(requestSchema.parse({ intent, image, resultImage: "data:image/jpeg;base64,AQID", scene, targetNodeId: "orb", targetParamId: intent === "transform" ? "radius" : "", previous: sceneProgram, annotations, instruction: "나무를 키워줘" }), new AbortController().signal);
   }
   const directories = await folders();
   assert.equal(directories.length, Object.keys(results).length);
@@ -184,4 +184,31 @@ test("unwritable log destination prevents an unlogged AI call", async () => {
   try { await assert.rejects(runAI(requestSchema.parse({ intent: "extract", image }), new AbortController().signal), /Could not save the AI generation log/); }
   finally { await rm(blocked, { force: true }); }
   assert.equal(calls, 0);
+});
+
+test("responses are streamed: the final response of the stream is the result, and a connection that stalls is given up and retried", async () => {
+  const saved = { idle: process.env.RULEGEN_AI_IDLE_MS, base: process.env.RULEGEN_AI_RETRY_BASE_MS };
+  process.env.RULEGEN_AI_IDLE_MS = "60"; process.env.RULEGEN_AI_RETRY_BASE_MS = "1";
+  const final = { id: "resp_stream", status: "completed", usage: { input_tokens: 10, output_tokens: 20 }, output: [{ content: [{ type: "output_text", text: JSON.stringify(output) }] }] };
+  const sse = (events: object[]) => events.map(event => `event: x\ndata: ${JSON.stringify(event)}\n\n`).join("");
+  const streamed = (stallFirst: boolean) => new Response(new ReadableStream({ async start(controller) {
+    const encoder = new TextEncoder();
+    controller.enqueue(encoder.encode(sse([{ type: "response.created" }])));
+    if (stallFirst) return; // nothing more ever comes
+    // The final response split across chunks.
+    const text = sse([{ type: "response.output_text.delta", delta: "{" }, { type: "response.completed", response: final }]);
+    controller.enqueue(encoder.encode(text.slice(0, 40))); controller.enqueue(encoder.encode(text.slice(40))); controller.close();
+  } }), { headers: { "content-type": "text/event-stream", "x-request-id": "req_stream" } });
+  try {
+    const bodies: any[] = []; let calls = 0;
+    globalThis.fetch = async (_url, options) => { bodies.push(JSON.parse(String(options!.body))); calls++; return streamed(calls === 1); };
+    const result = await runAI(requestSchema.parse({ intent: "extract", image, instruction: "Inspect my sketch" }), new AbortController().signal);
+    assert.ok(result, "the second, whole stream gives the result");
+    assert.equal(calls, 2, "the stalled connection was retried"); assert.equal(bodies[0].stream, true);
+    const [folder] = await folders(), log = await json(folder, "log.json");
+    assert.equal(log.status, "success"); assert.equal(log.retries.length, 1); assert.equal(log.retries[0].status, 0);
+    assert.match(await readFile(path.join(folder, "response-1-retry1.txt"), "utf8"), /sent nothing/);
+  } finally {
+    for (const [key, value] of [["RULEGEN_AI_IDLE_MS", saved.idle], ["RULEGEN_AI_RETRY_BASE_MS", saved.base]]) { if (value === undefined) delete process.env[key!]; else process.env[key!] = value; }
+  }
 });

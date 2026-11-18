@@ -9,22 +9,22 @@ import { prepareHandle } from "../app/server/code.server";
 import { proxyDocument } from "../app/lib/proxy-runtime";
 import { ProxyFrame, ProxyFrameBar, proxyLayoutFor } from "../app/components/proxy-frame";
 import { planProxyFrames, proxiesOf, proxyFrameSchema } from "../app/lib/proxy-frames";
-import type { PropertyHandle } from "../app/lib/scene/schema";
+import type { ParamHandle } from "../app/lib/scene/schema";
 
 const noop = () => {};
 const code = "rulegenHandle(function (h) { return { draw() { p.line(0, 0, h.w, h.h); } }; });";
-const widget = (paths: string[][] = [[]]): PropertyHandle => ({ code, prepared: prepareHandle(code), paths, hint: "drag" });
+const widget = (paths: string[][] = [[]]): ParamHandle => ({ code, prepared: prepareHandle(code), paths, hint: "drag" });
 const inside = (a: { x: number; y: number; w: number; h: number }, b: typeof a) => a.x >= b.x - 1e-6 && a.y >= b.y - 1e-6 && a.x + a.w <= b.x + b.w + 1e-6 && a.y + a.h <= b.y + b.h + 1e-6;
 const overlap = (a: { x: number; y: number; w: number; h: number }, b: typeof a) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-test("a proxy frame is laid out by transformation: each section holds only its own widgets, nothing overlaps", () => {
+test("a proxy frame is laid out by constraint: each section holds only its own widgets, nothing overlaps", () => {
   for (const counts of [[1], [2, 1], [3, 1, 2], [1, 1, 1, 1, 1], [4, 2, 1, 3, 1, 1, 2, 1, 1]]) {
     const sections = proxySections(counts), frame = { x: 0, y: 0, w: 900, h: 600 };
     assert.equal(sections.length, counts.length);
     sections.forEach((section, i) => {
       assert.ok(inside(section.box, frame), `section ${i} of ${counts} fits the frame`);
       assert.equal(section.cells.length, counts[i]);
-      section.cells.forEach(cell => { assert.ok(inside(cell, section.box), "a widget stays in its transformation's section"); assert.ok(cell.w > 40 && cell.h > 40); });
+      section.cells.forEach(cell => { assert.ok(inside(cell, section.box), "a widget stays in its constraint's section"); assert.ok(cell.w > 40 && cell.h > 40); });
     });
     const all = sections.flatMap(section => [section.box]), cells = sections.flatMap(section => section.cells);
     all.forEach((a, i) => all.slice(i + 1).forEach(b => assert.ok(!overlap(a, b), "sections do not overlap")));
@@ -32,43 +32,43 @@ test("a proxy frame is laid out by transformation: each section holds only its o
   }
 });
 
-test("each transformation has its own proxy frame (the whole frame), numbered and colored the same everywhere; a node's frames can be hidden and come back", () => {
+test("each constraint has its own proxy frame (the whole frame), numbered and colored the same everywhere; a node's frames can be hidden and come back", () => {
   let scene = sampleScene();
   scene = setHandle(scene, "tree", "structure", widget([["depth"]]));
   scene = setHandle(scene, "tree", "ink", widget());
   const tree = findNode(scene, "tree")!;
-  assert.deepEqual(proxyGroups(tree.transformations).map(group => group.transformation.id), ["branching-growth", "ink-wash"]);
-  const whole = proxyLayoutFor(tree.transformations), ink = proxyLayoutFor(tree.transformations, "ink-wash");
+  assert.deepEqual(proxyGroups(tree.constraints).map(group => group.constraint.id), ["branching-growth", "ink-wash"]);
+  const whole = proxyLayoutFor(tree.constraints), ink = proxyLayoutFor(tree.constraints, "ink-wash");
   assert.deepEqual(whole.sections.map(section => [section.id, section.number]), [["branching-growth", 1], ["ink-wash", 2]]);
-  assert.deepEqual(ink.sections.map(section => [section.id, section.number]), [["ink-wash", 2]], "its own frame keeps the transformation's number");
+  assert.deepEqual(ink.sections.map(section => [section.id, section.number]), [["ink-wash", 2]], "its own frame keeps the constraint's number");
   assert.deepEqual(ink.cells.map(cell => cell.id), ["ink"]);
-  assert.ok(ink.cells[0].box.w > 800 && ink.cells[0].box.h > 500, "one transformation's widget has the frame to itself");
-  assert.match(proxyDocument("tok", "http://x", whole.cells, whole.sections), /SECTIONS=\[\{"id":"branching-growth","label":"Branching growth"/);
+  assert.ok(ink.cells[0].box.w > 800 && ink.cells[0].box.h > 500, "one constraint's widget has the frame to itself");
+  assert.match(proxyDocument("tok", "http://x", whole.cells, whole.sections), /SECTIONS=\[\{"id":"branching-growth","label":"branches"/);
 
-  // Opening: one frame per transformation with widgets; the node's own frame (made before any) goes; hidden ones come back.
+  // Opening: one frame per constraint with widgets; the node's own frame (made before any) goes; hidden ones come back.
   let n = 0; const makeId = () => `proxy-${++n}`;
   const first = planProxyFrames([], "a", "tree", [], makeId);
-  assert.deepEqual(first.frames.map(frame => [frame.id, frame.transformationId]), [["proxy-1", undefined]], "no handles yet: one frame for the node");
+  assert.deepEqual(first.frames.map(frame => [frame.id, frame.constraintId]), [["proxy-1", undefined]], "no handles yet: one frame for the node");
   const split = planProxyFrames(first.frames, "a", "tree", ["branching-growth", "ink-wash"], makeId);
-  assert.deepEqual(split.mine.map(frame => frame.transformationId), ["branching-growth", "ink-wash"]); assert.deepEqual(split.removed.map(frame => frame.id), ["proxy-1"]);
+  assert.deepEqual(split.mine.map(frame => frame.constraintId), ["branching-growth", "ink-wash"]); assert.deepEqual(split.removed.map(frame => frame.id), ["proxy-1"]);
   const hidden = split.frames.map(frame => ({ ...frame, hidden: true }));
   const again = planProxyFrames(hidden, "a", "tree", ["branching-growth", "ink-wash"], makeId);
   assert.deepEqual([again.added.length, again.mine.every(frame => !frame.hidden)], [0, true], "opening shows them again, adding none");
   assert.equal(planProxyFrames([], "a", "tree", ["branching-growth", "ink-wash"], makeId, 1).left, 1, "the limit holds");
-  assert.deepEqual(proxiesOf([...again.frames].reverse(), "a", "tree", ["branching-growth", "ink-wash"]).map(frame => frame.transformationId), ["branching-growth", "ink-wash"], "in transformation order");
+  assert.deepEqual(proxiesOf([...again.frames].reverse(), "a", "tree", ["branching-growth", "ink-wash"]).map(frame => frame.constraintId), ["branching-growth", "ink-wash"], "in constraint order");
 
-  const frame = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-2", node: tree, transformations: tree.transformations, targetName: "A", busy: "", onSet: noop, onError: noop, onDesign: noop, only: "ink-wash" }));
+  const frame = renderToStaticMarkup(createElement(ProxyFrame, { frameId: "proxy-2", node: tree, constraints: tree.constraints, targetName: "A", busy: "", onSet: noop, onError: noop, onDesign: noop, only: "ink-wash" }));
   assert.match(frame, /<iframe/);
-  const bar = renderToStaticMarkup(createElement(ProxyFrameBar, { node: tree, transformations: tree.transformations, current: "proxy-2", busy: false, onHide: noop, onDesign: noop, onDesignAll: noop,
-    siblings: [{ id: "proxy-2", transformationId: "branching-growth" }, { id: "proxy-3", transformationId: "ink-wash", hidden: true }] }));
-  assert.match(bar, /class="proxy-chip here" aria-pressed="true"[^>]*>.*<b>1<\/b>Branching growth/);
-  assert.match(bar, /class="proxy-chip off" aria-pressed="false"[^>]*>.*<b>2<\/b>Ink wash/);
+  const bar = renderToStaticMarkup(createElement(ProxyFrameBar, { node: tree, constraints: tree.constraints, current: "proxy-2", busy: false, onHide: noop, onDesign: noop, onDesignAll: noop,
+    siblings: [{ id: "proxy-2", constraintId: "branching-growth" }, { id: "proxy-3", constraintId: "ink-wash", hidden: true }] }));
+  assert.match(bar, /class="proxy-chip here" aria-pressed="true"[^>]*>.*<b>1<\/b>branches/);
+  assert.match(bar, /class="proxy-chip off" aria-pressed="false"[^>]*>.*<b>2<\/b>color/);
   assert.match(bar, /Hide all/);
-  assert.equal(proxyFrameSchema.parse({ id: "proxy-1", targetFrameId: "a", nodeId: "tree", transformationId: "ink-wash", hidden: true }).hidden, true, "projects keep it");
+  assert.equal(proxyFrameSchema.parse({ id: "proxy-1", targetFrameId: "a", nodeId: "tree", constraintId: "ink-wash", hidden: true }).hidden, true, "projects keep it");
   assert.equal(proxyFrameSchema.parse({ id: "proxy-1", targetFrameId: "a", nodeId: "tree", hidden: ["ink-wash"] }).hidden, undefined, "an older hidden list is dropped");
 });
 
-test("Handles for all: one request per base-state transformation still without handles, each applied; one failing does not stop the rest", async () => {
+test("Handles for all: one request per base-state constraint still without handles, each applied; one failing does not stop the rest", async () => {
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const scene = setHandle(sampleScene(), "tree", "ink", widget());
@@ -80,19 +80,19 @@ test("Handles for all: one request per base-state transformation still without h
     // Like the app's: the frame shows the work as loading until it ends.
     task: async (label: string, work: () => Promise<void>, owner: string) => { deps.updatePanel(owner, { loading: label }); try { await work(); } finally { deps.updatePanel(owner, { loading: "" }); } },
     request: async (intent: string, body: any) => {
-      assert.equal(intent, "handles"); asked.push(`${body.targetNodeId}/${body.targetTransformationId}`);
+      assert.equal(intent, "handles"); asked.push(`${body.targetNodeId}/${body.targetConstraintId}`);
       if (body.targetNodeId === "orb") throw new Error("boom");
-      const node = findNode(body.scene, body.targetNodeId)!, item = node.transformations.find(entry => entry.id === body.targetTransformationId)!;
-      return { handles: item.properties.map(property => ({ propertyId: property.id, handle: widget(property.id === "structure" ? [["depth"]] : [[]]) })), skipped: [] };
+      const node = findNode(body.scene, body.targetNodeId)!, item = node.constraints.find(entry => entry.id === body.targetConstraintId)!;
+      return { handles: item.params.map(param => ({ paramId: param.id, handle: widget(param.id === "structure" ? [["depth"]] : [[]]) })), skipped: [] };
     },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     openProxy: (_owner: string, nodeId: string) => opened.push(nodeId),
   } as any;
   await sceneAI(deps, "a").suggestAllHandles();
-  assert.deepEqual(asked.sort(), ["orb/pulse", "tree/branching-growth"], "ink-wash already has its handle; the orb (a child) is included");
-  assert.ok(findNode(panels.a.scene, "tree")!.transformations[0].properties[0].handle, "the result is on the scene");
+  assert.deepEqual(asked.sort(), ["orb/drift", "orb/pulse", "tree/branching-growth"], "ink-wash already has its handle; the orb (a child) is included");
+  assert.ok(findNode(panels.a.scene, "tree")!.constraints[0].params[0].handle, "the result is on the scene");
   assert.deepEqual(opened, ["tree"]);
-  assert.match(toasts.at(-1)!, /Created 1 direct manipulation handle\(s\) for 1 transformation\(s\).*Could not make: Pulse/);
+  assert.match(toasts.at(-1)!, /Created 1 direct manipulation handle\(s\) for 1 constraint\(s\).*Could not make: (size, x|x, size)/);
 
   asked.length = 0;
   await sceneAI(deps, "a").suggestAllHandles(["tree"]);
@@ -100,11 +100,11 @@ test("Handles for all: one request per base-state transformation still without h
   assert.match(toasts.at(-1)!, /already has its handles: opened the proxy frames of 1 node/);
   assert.deepEqual(opened, ["tree", "tree"], "with nothing to make, it opens the node's proxy group");
 
-  // Redesign all: every transformation with a handle is made again, the AI seeing the current widget.
+  // Redesign all: every constraint with a handle is made again, the AI seeing the current widget.
   asked.length = 0;
   await sceneAI(deps, "a").suggestAllHandles(undefined, true);
   assert.deepEqual(asked.sort(), ["tree/branching-growth", "tree/ink-wash"], "only those with handles (the orb has none)");
-  assert.match(toasts.at(-1)!, /^Redesigned 2 direct manipulation handle\(s\) for 2 transformation\(s\)/);
+  assert.match(toasts.at(-1)!, /^Redesigned 2 direct manipulation handle\(s\) for 2 constraint\(s\)/);
   assert.equal(panels.a.sceneHistory.length >= 2, true, "each result is its own undo step");
   const none = createSketchPanel({ scene: sampleScene() }); panels.b = none;
   await sceneAI(deps, "b").suggestAllHandles(undefined, true);
@@ -126,7 +126,7 @@ test("opening proxies groups a node's frames on the board: a row beside the targ
   const empty = open("tree", []);
   assert.deepEqual(layout.groups.map(group => [group.title, group.frames]), [["◎ tree · proxy", empty]], "even the node's first frame is in its group");
   const two = open("tree", ["t1", "t2"]);
-  assert.equal(layout.groups.length, 1); assert.deepEqual(layout.groups[0].frames, two, "the transformations' frames replace it in the same group");
+  assert.equal(layout.groups.length, 1); assert.deepEqual(layout.groups[0].frames, two, "the constraints' frames replace it in the same group");
   assert.deepEqual(layout.frames[two[0]], { x: 1040 + FRAME_WIDTH + 140, y: 0 }, "the first takes the node frame's spot");
   assert.equal(layout.frames[empty[0]], undefined);
   const three = open("tree", ["t1", "t2", "t3"]);

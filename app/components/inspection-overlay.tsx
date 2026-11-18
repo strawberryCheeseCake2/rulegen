@@ -34,6 +34,8 @@ type Props = {
   focusable?: boolean;
   /** Size of the labels on screen (px, at any zoom; default 12). */
   textSize?: number;
+  /** Areas of the picture other texts already hold (canvas pixels): the labels are placed clear of them. */
+  reserved?: { x: number; y: number; width: number; height: number }[];
 };
 
 /**
@@ -59,7 +61,7 @@ const shapeOf = (kind: string, x: number, y: number, w: number, h: number, props
   : kind === "ellipse" ? <ellipse cx={x + w / 2} cy={y + h / 2} rx={Math.abs(w / 2)} ry={Math.abs(h / 2)} {...props} />
   : kind === "line" ? <line x1={x} y1={y} x2={x + w} y2={y + h} {...props} /> : null;
 
-export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain, focusable = clickable, textSize = 12 }: Props) {
+export function InspectionOverlay({ state, marks, markStyles, result, drawn, liveValues, clickable, zoom, onFocus, onStep, stepName, specs, onHandle, plain, focusable = clickable, textSize = 12, reserved = [] }: Props) {
   // The step being looked at (the latest unless another is picked): overlays are recomputed from its values and stores; the other steps show as ghosts.
   const index = heldIndex(state) ?? -1, step = state.steps[index];
   // Suggested parameters are read at the value the code uses wherever a step does not record them (not accepted yet, or recorded before).
@@ -102,7 +104,7 @@ export function InspectionOverlay({ state, marks, markStyles, result, drawn, liv
   const labels = layoutLabels(current.filter(item => item.label && (counts.set(item.overlay.id, (counts.get(item.overlay.id) ?? 0) + 1).get(item.overlay.id)! <= LABELS_PER_OVERLAY)).map(item => ({
     key: item.key, text: item.label, shape: item.overlay.kind === "label" ? { x: item.x, y: item.y, w: 0, h: 0 } : { x: item.x, y: item.y, w: item.w, h: item.h },
     anchor: item.overlay.kind === "line" ? { x: item.x + item.w, y: item.y + item.h } : item.overlay.kind === "label" ? { x: item.x, y: item.y } : { x: Math.min(item.x, item.x + item.w), y: Math.min(item.y, item.y + item.h) - 4 },
-  })), text, { width: W, height: H }, badges.map(item => ({ x: item.x - badge, y: item.y - badge, width: badge * 2, height: badge * 2 })));
+  })), text, { width: W, height: H }, [...reserved, ...badges.map(item => ({ x: item.x - badge, y: item.y - badge, width: badge * 2, height: badge * 2 }))]);
   return <div className="inspection-overlay" aria-label="Inspection overlay">
     {step && !plain && <span className="inspection-step-badge">Step {index + 1} / {state.steps.length}</span>}
     <svg ref={svg} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">

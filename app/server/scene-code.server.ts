@@ -9,10 +9,11 @@ import { machineSignature } from "../lib/scene/live";
 
 const traverse = (traverseImport as unknown as { default?: typeof traverseImport }).default || traverseImport;
 // Host names the modules must not touch (only rulegenModule, as the top-level call).
-const HOST_NAMES = new Set(["rulegenParams", "rulegenMachines", "rulegenInstances", "rulegenState", "rulegenBase", "rulegenPlaying", "rulegenApply", "rulegenJumpState", "rulegenEmit", "rulegenTickState",
+const HOST_NAMES = new Set(["rulegenParams", "rulegenMachines", "rulegenInstances", "rulegenState", "rulegenBase", "rulegenPlaying", "rulegenApply", "rulegenJumpState", "rulegenEmit", "rulegenOwners",
+  "rulegenFrozen", "rulegenOnTransition", "rulegenTransit", "rulegenEvaluate", "rulegenRecordOf", "rulegenShown", "rulegenFsmEvent", "rulegenLocal",
   "rulegenResetStates", "rulegenSetup", "rulegenDraw", "rulegenModule", "rulegenModules", "rulegenLive", "rulegenStarted", "rulegenKey", "rulegenInstance", "rulegenSync", "rulegenDispatch", "rulegenPlain", "rulegenSnapshot", "rulegenRestore"]);
-/** The module context: m.v / m.box / m.state / m.emit read the module's own nodes; m.history() is the input given so far; m.field names a field the module is driven by; m.term names an inner term of a computation; m.runtime keeps one item's quantity in the execution state (so it can be changed at a moment); m.p is the shared p5 instance; m.store holds the instance's state. */
-const CONTEXT = new Set(["v", "box", "state", "emit", "history", "memo", "field", "term", "runtime", "p", "store"]);
+/** The module context: m.v / m.box read the module's own nodes; m.fsm(id, key?) is the owner of a node's FSM (owner.evaluate(...inputs) computes its current state's constraints in order, owner.dispatch(event) takes a transition); m.owners(id) lists a node's owners; m.history() is the input given so far; m.field names a field the module is driven by; m.term names an inner term of a computation; m.runtime keeps one item's quantity in the execution state (so it can be changed at a moment); m.p is the shared p5 instance; m.store holds the instance's state. */
+const CONTEXT = new Set(["v", "box", "fsm", "owners", "history", "memo", "field", "term", "runtime", "p", "store"]);
 /** The host owns the canvas and the loop. */
 const HOST_CALLS = new Set(["background", "clear", "createCanvas", "resizeCanvas", "noCanvas", "noLoop", "loop", "redraw", "frameRate", "pixelDensity", "remove"]);
 
@@ -34,12 +35,41 @@ const constant = (node: t.Node | null | undefined): boolean => {
  * can save a step's state and restore it.
  */
 function checkFactory(factory: t.FunctionExpression | t.ArrowFunctionExpression) {
-  if (!t.isBlockStatement(factory.body)) return;
+  if (!t.isBlockStatement(factory.body)) throw new Error("The module function needs a body that returns its handlers and constraints.");
   for (const statement of factory.body.body) {
     if (t.isFunctionDeclaration(statement) || t.isReturnStatement(statement) || t.isEmptyStatement(statement)) continue;
     if (t.isVariableDeclaration(statement) && statement.kind === "const" && statement.declarations.every(item => t.isIdentifier(item.id) && constant(item.init))) continue;
     throw new Error("Only functions and constants can sit directly inside the module function. Keep values that change between frames (positions, arrays, objects, etc.) in m.store.");
   }
+}
+const keyName = (key: t.Node, computed: boolean) => computed ? literal(key) : t.isIdentifier(key) ? key.name : literal(key);
+/**
+ * The compute function of every constraint, by the module's node id and the constraint id, from what the module returns:
+ * `return { setup, draw, …, constraints: { "<node id>": { "<constraint id>": computeX, … }, … } }` (each a function, or the
+ * name of a function declared in the module).
+ */
+function computeFunctions(factory: t.FunctionExpression | t.ArrowFunctionExpression) {
+  const body = t.isBlockStatement(factory.body) ? factory.body.body : [];
+  const declared = new Set(body.flatMap(statement => t.isFunctionDeclaration(statement) && statement.id ? [statement.id.name]
+    : t.isVariableDeclaration(statement) ? statement.declarations.flatMap(item => t.isIdentifier(item.id) && (t.isFunctionExpression(item.init) || t.isArrowFunctionExpression(item.init)) ? [item.id.name] : []) : []));
+  const returned = body.filter((statement): statement is t.ReturnStatement => t.isReturnStatement(statement));
+  if (returned.length !== 1 || !t.isObjectExpression(returned[0].argument)) throw new Error("The module function must end with one `return { …handlers, constraints: { … } }` object.");
+  const found = new Map<string, Set<string>>();
+  const field = returned[0].argument.properties.find((item): item is t.ObjectProperty => t.isObjectProperty(item) && keyName(item.key, item.computed) === "constraints");
+  if (!field) return found;
+  if (!t.isObjectExpression(field.value)) throw new Error("`constraints` must be an object literal: { \"<node id>\": { \"<constraint id>\": computeFunction } }.");
+  for (const entry of field.value.properties) {
+    const nodeId = t.isObjectProperty(entry) ? keyName(entry.key, entry.computed) : null;
+    if (!nodeId || !t.isObjectProperty(entry) || !t.isObjectExpression(entry.value)) throw new Error("Each entry of `constraints` is a node ID with an object literal of compute functions.");
+    const own = found.get(nodeId) ?? new Set<string>(); found.set(nodeId, own);
+    for (const item of entry.value.properties) {
+      const id = t.isObjectProperty(item) || t.isObjectMethod(item) ? keyName(item.key, item.computed) : null;
+      const fn = t.isObjectMethod(item) || (t.isObjectProperty(item) && (t.isFunctionExpression(item.value) || t.isArrowFunctionExpression(item.value) || (t.isIdentifier(item.value) && declared.has(item.value.name))));
+      if (!id || !fn) throw new Error(`The compute function of ${nodeId}/${id ?? "?"} must be a function (or the name of one declared in the module).`);
+      own.add(id);
+    }
+  }
+  return found;
 }
 const isP = (node: t.Node) => t.isIdentifier(node, { name: "p" }) || (t.isMemberExpression(node) && !node.computed && t.isIdentifier(node.object, { name: "m" }) && t.isIdentifier(node.property, { name: "p" }));
 
@@ -56,7 +86,8 @@ export function connectScene(result: { title: string; explanation: string; code:
   const below = (id: string): string[] => [id, ...(children.get(id) || []).flatMap(below)];
   const roots = scene.nodes.filter(node => !node.parentId).map(node => node.id);
   const subtree = new Map(roots.map(id => [id, new Set(below(id))]));
-  const machines = new Map(scene.nodes.filter(node => node.machine).map(node => [node.id, node.machine!]));
+  const nodes = new Map(scene.nodes.map(node => [node.id, node]));
+  const computes = new Map<string, Map<string, Set<string>>>(), fsmNodes = new Set<string>(), dispatched = new Map<string, Set<string>>();
   if (result.code.includes("@rulegen-")) throw new Error("Host connection blocks are generated by the server. Please generate again.");
   const ast = parse(result.code, { sourceType: "script" });
   // Top level: only one rulegenModule call per root node.
@@ -70,6 +101,7 @@ export function connectScene(result: { title: string; explanation: string; code:
     if (call.arguments.length !== 2 || !(t.isFunctionExpression(factory) || t.isArrowFunctionExpression(factory)) || factory.params.length !== 1 || !t.isIdentifier(factory.params[0], { name: "m" }))
       throw new Error("rulegenModule must take the form (\"node ID\", function (m) { … }).");
     checkFactory(factory);
+    computes.set(key, computeFunctions(factory));
     modules.set(key, result.code.slice(factory.start!, factory.end!));
     owner.set(statement, key); factories.add(factory);
   }
@@ -97,7 +129,7 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (!referenced) return;
       const member = parent;
       if (!member.isMemberExpression() || member.node.object !== self || member.node.computed || !t.isIdentifier(member.node.property) || !CONTEXT.has(member.node.property.name))
-        throw new Error("m can only be used as m.v / m.box / m.state / m.emit / m.history / m.memo / m.field / m.term / m.runtime / m.p / m.store.");
+        throw new Error("m can only be used as m.v / m.box / m.fsm / m.owners / m.history / m.memo / m.field / m.term / m.runtime / m.p / m.store.");
       const field = (member.node.property as t.Identifier).name;
       if (field === "store") {
         const use = member.parentPath as NodePath;
@@ -115,14 +147,15 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (field === "field") { if (args.length !== 2 || !literal(args[0]) || !/^[a-z0-9-]{1,40}$/.test(literal(args[0])!)) throw new Error('m.field is called as m.field("<field id>", (x, y) => angle or [vx, vy]), with a short lowercase id.'); return; }
       if (field === "v") {
         const key = literal(args[0]);
-        if (!key || !required.has(key) || !subtree.get(moduleOf(path))!.has(decodeURIComponent(key.slice(0, key.indexOf("/"))))) throw new Error("The property connections in the generated code are invalid. Please generate again.");
+        if (!key || !required.has(key) || !subtree.get(moduleOf(path))!.has(decodeURIComponent(key.slice(0, key.indexOf("/"))))) throw new Error("The param connections in the generated code are invalid. Please generate again.");
         used.add(key);
-      } else if (field === "box") nodeOf(path, literal(args[0]), "m.box");
-      else if (field === "state") { if (!machines.has(nodeOf(path, literal(args[0]), "m.state"))) throw new Error("m.state can only read the ID of a node that has a state machine."); }
-      else {
-        const nodeId = literal(args[0]), transitionId = literal(args[1]);
-        if (!nodeId || !transitionId || !subtree.get(moduleOf(path))!.has(nodeId) || !machines.get(nodeId)?.transitions.some(item => item.id === transitionId)) throw new Error("The node or transition ID passed to m.emit is invalid.");
+      } else if (field === "box") {
+        // A node ID given as a string is checked here; one passed through a variable (a shared helper) is checked by the runtime (Unknown node).
+        if (args.length !== 1) throw new Error('m.box is called as m.box("<node id>").');
+        if (literal(args[0]) !== null) nodeOf(path, literal(args[0]), "m.box");
       }
+      else if (field === "owners") nodeOf(path, literal(args[0]), "m.owners");
+      else { if (args.length > 2) throw new Error('m.fsm is called as m.fsm("<node id>") or m.fsm("<node id>", itemKey).'); fsmNodes.add(nodeOf(path, literal(args[0]), "m.fsm")); }
     },
     MemberExpression(path) {
       // p.setup = …, p.draw = … and other writes to p belong to the host.
@@ -132,6 +165,13 @@ export function connectScene(result: { title: string; explanation: string; code:
     },
     CallExpression(path) {
       const callee = path.node.callee;
+      // owner.dispatch("<event>"): an event declared by a transition of one of this module's nodes.
+      if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property, { name: "dispatch" })) {
+        const event = literal(path.node.arguments[0]), module = moduleOf(path), events = [...subtree.get(module) ?? []].flatMap(id => nodes.get(id)?.machine?.transitions.map(item => item.event) ?? []);
+        if (path.node.arguments.length !== 1 || !event) throw new Error('owner.dispatch takes one event name as a string literal: owner.dispatch("<event>").');
+        if (!events.includes(event)) throw new Error(`owner.dispatch("${event}") is not an event of a transition of this module's nodes.`);
+        dispatched.set(module, (dispatched.get(module) ?? new Set()).add(event));
+      }
       if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property) && HOST_CALLS.has(callee.property.name) && isP(callee.object))
         throw new Error(`A module cannot call p.${callee.property.name}(). The host manages the canvas and the loop.`);
     },
@@ -140,7 +180,22 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (t.isIdentifier(path.node.left) && !path.scope.hasBinding(path.node.left.name)) throw new Error(`Cannot write to the undeclared global variable ${path.node.left.name}. Declare it inside the module.`);
     },
   });
-  if ([...required].some(key => !used.has(key))) throw new Error("Some properties could not be connected to the code. Please generate again.");
+  if ([...required].some(key => !used.has(key))) throw new Error("Some params could not be connected to the code. Please generate again.");
+  // Every constraint has its compute function, every node with constraints is evaluated, every declared event is dispatched.
+  for (const [module, members] of subtree) {
+    const own = computes.get(module)!;
+    for (const nodeId of own.keys()) if (!members.has(nodeId)) throw new Error(`constraints["${nodeId}"] is not a node of the ${module} module.`);
+    for (const nodeId of members) {
+      const node = nodes.get(nodeId)!, given = own.get(nodeId) ?? new Set<string>();
+      const missingCompute = node.constraints.filter(constraint => !given.has(constraint.id)).map(constraint => constraint.id);
+      if (missingCompute.length) throw new Error(`Each constraint needs its compute function in constraints["${nodeId}"]: ${missingCompute.join(", ")}.`);
+      const extra = [...given].filter(id => !node.constraints.some(constraint => constraint.id === id));
+      if (extra.length) throw new Error(`constraints["${nodeId}"] has functions for constraints that do not exist: ${extra.join(", ")}.`);
+      if (node.constraints.length && !fsmNodes.has(nodeId)) throw new Error(`${nodeId} has constraints but its FSM is never evaluated: call m.fsm("${nodeId}"…).evaluate(…) where they apply.`);
+      const silent = (node.machine?.transitions ?? []).filter(item => !dispatched.get(module)?.has(item.event)).map(item => item.event);
+      if (silent.length) throw new Error(`Declared transitions are never taken: dispatch ${[...new Set(silent)].map(event => `"${event}"`).join(", ")} for ${nodeId} when they happen.`);
+    }
+  }
   const code = assembleProgram(scene, [...modules].map(([key, factory]) => moduleSource(key, factory)));
   return { ...result, code, sceneBindings: bindings, machineSignature: machineSignature(scene) };
 }

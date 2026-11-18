@@ -32,7 +32,7 @@ export function ResultRevisionPanel({ hasSketch, clarifying, generatingClarifica
       {!hasSketch && <p className="revision-stale">Add a sketch on top of the result, then request changes.</p>}
       <button className="primary-button" disabled={busy || !hasSketch || !instruction.trim()} onClick={onRequest}>{proposal ? "Request changes again" : "Get change proposal"}</button>
       <button className="copy-button" disabled={busy} onClick={onSketch}>Back to sketch</button>
-      {proposal && <div className="revision-proposal" aria-label="Proposed collection and property changes">
+      {proposal && <div className="revision-proposal" aria-label="Proposed collection and param changes">
         <strong>Rule · Visual feature proposal</strong><p>{proposal.summary}</p>
         {changes.map((c, i) => <div className="revision-change" key={i}><strong><span className={`revision-kind kind-${c.kind}`}>{c.kind === "add" ? "Add" : c.kind === "remove" ? "Remove" : "Change"}</span>{c.path}</strong><div><span>Before</span><pre>{c.before}</pre></div><div><span>After</span><pre>{c.after}</pre></div></div>)}
         {stale && <p role="alert" className="revision-stale">The sketch, clarification, or current result changed. Request changes again.</p>}

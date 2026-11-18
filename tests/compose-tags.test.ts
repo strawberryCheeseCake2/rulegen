@@ -7,7 +7,7 @@ import { recoverGeneration } from "../app/lib/generation-recovery";
 import { requestSchema } from "../app/lib/schema";
 
 const line = (id: string, x0: number, y0: number, x1: number, y1: number, tool = "pencil") => ({ id, tool, points: [{ x: x0, y: y0 }, { x: x1, y: y1 }] });
-const tag = (over: Partial<AIComposeTag>): AIComposeTag => ({ id: "t", kind: "object", label: "Part", parentId: "", strokeIds: [], summary: "", members: "", transformations: [], ...over });
+const tag = (over: Partial<AIComposeTag>): AIComposeTag => ({ id: "t", kind: "object", label: "Part", parentId: "", strokeIds: [], summary: "", members: "", constraints: [], ...over });
 const strokes = [line("stroke-1", .1, .1, .2, .2), line("stroke-2", .5, .5, .6, .7), line("stroke-3", .55, .55, .9, .9), line("stroke-4", 0, 0, 1, 1, "eraser")];
 
 test("compose tags sit on the marks they name: the box is taken from those strokes, never from coordinates the AI writes", () => {
@@ -34,12 +34,12 @@ test("compose tags nest only in collections, without loops, and a collection tak
   assert.ok(byId.c.box.x <= .1 && byId.c.box.x + byId.c.box.w >= .9 && byId.c.box.y + byId.c.box.h >= .9);
 });
 
-test("a compose tag's transformations name the pen that carries them (its name and color), none for an unknown pen", () => {
-  const [one] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [
-    { label: "Size", effect: "spatial", how: "grows", penId: "mark-pen-1", properties: [{ label: "Ratio", value: "0.8", how: "per step" }] },
-    { label: "Fade", effect: "stylistic", how: "", penId: "mark-pen-9", properties: [] }] })], strokes, [{ id: "mark-pen-1", name: "Power", color: "#3b73c4" }]);
-  assert.deepEqual(one.transformations.map(item => item.pen && [item.pen.name, item.pen.color]), [["Power", "#3b73c4"], null]);
-  assert.equal(one.transformations[0].properties[0].value, "0.8");
+test("a compose tag's constraints name the pen that carries them (its name and color), none for an unknown pen", () => {
+  const [one] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [
+    { label: "Size", effect: "spatial", how: "grows", penId: "mark-pen-1", params: [{ label: "Ratio", value: "0.8", how: "per step" }] },
+    { label: "Fade", effect: "stylistic", how: "", penId: "mark-pen-9", params: [] }] })], strokes, [{ id: "mark-pen-1", name: "Power", color: "#3b73c4" }]);
+  assert.deepEqual(one.constraints.map(item => item.pen && [item.pen.name, item.pen.color]), [["Power", "#3b73c4"], null]);
+  assert.equal(one.constraints[0].params[0].value, "0.8");
 });
 
 test("compose-prompt results without tags still read, and a restored draft puts its tags back on the frame", () => {
@@ -56,16 +56,16 @@ test("the compose-prompt prompt asks for tags on stroke ids, with no coordinates
   assert.doesNotMatch(prompt, /heart|merged!/i);
 });
 
-test("a tag's transformation finds the minimal examples Decompose made of it, through the pen that carries it", async () => {
+test("a tag's constraint finds the minimal examples Decompose made of it, through the pen that carries it", async () => {
   const { penExamples } = await import("../app/lib/compose-tags");
   const { sampleScene } = await import("./fixtures/scene");
-  const scene = sampleScene(), pen = (over: object) => ({ name: "Pen", color: "#3b73c4", frameId: "a", nodeId: "tree", transformation: "", algorithmId: "", ...over });
-  const frames = { a: { scene, exampleOf: null }, ex1: { scene, exampleOf: { frameId: "a", nodeId: "tree", transformationId: "branching-growth" } }, ex2: { scene, exampleOf: { frameId: "a", nodeId: "orb", transformationId: "pulse" } }, other: { scene, exampleOf: { frameId: "b", nodeId: "tree", transformationId: "branching-growth" } } };
-  assert.deepEqual(penExamples(pen({ transformation: "Branching growth" }), frames), ["ex1"], "a transformation pen: the examples of the transformation it was taken from");
-  assert.deepEqual(penExamples(pen({ algorithmId: "recursive-branch" }), frames), ["ex1"], "an algorithm pen: the examples of the transformations using its algorithm");
-  assert.deepEqual(penExamples(pen({ frameId: "ex2", nodeId: "orb", transformation: "Pulse" }), frames), ["ex2"], "a pen made from an example: that example");
-  assert.deepEqual(penExamples(pen({ transformation: "Nope" }), frames), []); assert.deepEqual(penExamples(null, frames), []);
-  assert.deepEqual(penExamples(pen({ frameId: "gone", transformation: "Branching growth" }), frames), []);
+  const scene = sampleScene(), pen = (over: object) => ({ name: "Pen", color: "#3b73c4", frameId: "a", nodeId: "tree", constraint: "", algorithmId: "", ...over });
+  const frames = { a: { scene, exampleOf: null }, ex1: { scene, exampleOf: { frameId: "a", nodeId: "tree", constraintId: "branching-growth" } }, ex2: { scene, exampleOf: { frameId: "a", nodeId: "orb", constraintId: "pulse" } }, other: { scene, exampleOf: { frameId: "b", nodeId: "tree", constraintId: "branching-growth" } } };
+  assert.deepEqual(penExamples(pen({ constraint: "branches" }), frames), ["ex1"], "a constraint pen: the examples of the constraint it was taken from");
+  assert.deepEqual(penExamples(pen({ algorithmId: "recursive-branch" }), frames), ["ex1"], "an algorithm pen: the examples of the constraints using its algorithm");
+  assert.deepEqual(penExamples(pen({ frameId: "ex2", nodeId: "orb", constraint: "size" }), frames), ["ex2"], "a pen made from an example: that example");
+  assert.deepEqual(penExamples(pen({ constraint: "Nope" }), frames), []); assert.deepEqual(penExamples(null, frames), []);
+  assert.deepEqual(penExamples(pen({ frameId: "gone", constraint: "branches" }), frames), []);
 });
 
 test("Compose without the text prompt sends the tags on the sketch and no text, and keeps composing from them (not tagging again) after the sketch changed", async () => {
@@ -103,24 +103,24 @@ test("Compose without the text prompt sends the tags on the sketch and no text, 
 
 test("the compose intent takes the tags in place of a text prompt, without their boxes or where their pens were made", async () => {
   const { intents } = await import("../app/server/intents.server");
-  const [settled] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [{ label: "Size", effect: "spatial", how: "", penId: "p", properties: [] }] })], strokes, [{ id: "p", name: "Power", color: "#3b73c4", sourceSketchId: "f", source: { nodeId: "n" } }]);
+  const [settled] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [{ label: "Size", effect: "spatial", how: "", penId: "p", params: [] }] })], strokes, [{ id: "p", name: "Power", color: "#3b73c4", sourceSketchId: "f", source: { nodeId: "n" } }]);
   const image = "data:image/png;base64,YQ==";
   assert.match(intents.compose.check!(requestSchema.parse({ intent: "compose", image }))!, /Compose prompt \(or its tags/);
   const input = requestSchema.parse({ intent: "compose", image, composeTags: [settled] });
   assert.equal(intents.compose.check!(input), undefined);
   const sent = intents.compose.context(input) as { tags: any[] };
-  assert.equal(sent.tags[0].box, undefined); assert.deepEqual(sent.tags[0].transformations[0].pen, { name: "Power", color: "#3b73c4" });
+  assert.equal(sent.tags[0].box, undefined); assert.deepEqual(sent.tags[0].constraints[0].pen, { name: "Power", color: "#3b73c4" });
   assert.match(readFileSync("prompts/compose.md", "utf8"), /## Tags on the sketch/);
 });
 
 test("a tag pen written before pens kept where they were made is found among the sketch's pens by name and color", async () => {
   const { placedPen, penExamples } = await import("../app/lib/compose-tags");
   const { sampleScene } = await import("./fixtures/scene");
-  const old = { name: "Grow pen", color: "#C4547D", frameId: "", nodeId: "", transformation: "", algorithmId: "" };
-  const pens = [{ id: "x", name: "Other", color: "#c4547d" }, { id: "y", name: "Grow pen", color: "#c4547d", sourceSketchId: "ex", source: { nodeId: "orb" }, transformation: { label: "Pulse" } }];
+  const old = { name: "Grow pen", color: "#C4547D", frameId: "", nodeId: "", constraint: "", algorithmId: "" };
+  const pens = [{ id: "x", name: "Other", color: "#c4547d" }, { id: "y", name: "Grow pen", color: "#c4547d", sourceSketchId: "ex", source: { nodeId: "orb" }, constraint: { label: "size" } }];
   const placed = placedPen(old, pens)!;
-  assert.deepEqual([placed.frameId, placed.nodeId, placed.transformation, placed.color], ["ex", "orb", "Pulse", "#C4547D"]);
-  assert.deepEqual(penExamples(placed, { ex: { scene: sampleScene(), exampleOf: { frameId: "a", nodeId: "orb", transformationId: "pulse" } } }), ["ex"]);
+  assert.deepEqual([placed.frameId, placed.nodeId, placed.constraint, placed.color], ["ex", "orb", "size", "#C4547D"]);
+  assert.deepEqual(penExamples(placed, { ex: { scene: sampleScene(), exampleOf: { frameId: "a", nodeId: "orb", constraintId: "pulse" } } }), ["ex"]);
   assert.equal(placedPen(old, [])!.frameId, "", "no such pen: as it was");
 });
 
@@ -136,8 +136,8 @@ test("with the text prompt, Compose sends the tags as the user edited them along
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
   const { sampleScene } = await import("./fixtures/scene");
-  const [settled] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [{ label: "Size", effect: "spatial", how: "", penId: "", properties: [{ label: "Ratio", value: "0.8", how: "" }] }] })], strokes, []);
-  const edited = { ...settled, label: "Edited name", transformations: [{ ...settled.transformations[0], properties: [{ label: "Ratio", value: "0.5", how: "smaller each step" }] }] };
+  const [settled] = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [{ label: "Size", effect: "spatial", how: "", penId: "", params: [{ label: "Ratio", value: "0.8", how: "" }] }] })], strokes, []);
+  const edited = { ...settled, label: "Edited name", constraints: [{ ...settled.constraints[0], params: [{ label: "Ratio", value: "0.5", how: "smaller each step" }] }] };
   const panels: Record<string, ReturnType<typeof createSketchPanel>> = { s: createSketchPanel({ composePrompt: "- Text", composeTags: [edited], composeTagsRevision: 1 }) };
   let revision = 1;
   const calls: { intent: string; input: any }[] = [];
@@ -152,7 +152,7 @@ test("with the text prompt, Compose sends the tags as the user edited them along
   } as any;
   await sceneAI(deps, "s").compose();
   const sent = calls.find(call => call.intent === "compose")!.input;
-  assert.equal(sent.instruction, "- Text"); assert.equal(sent.composeTags[0].label, "Edited name"); assert.equal(sent.composeTags[0].transformations[0].properties[0].value, "0.5");
+  assert.equal(sent.instruction, "- Text"); assert.equal(sent.composeTags[0].label, "Edited name"); assert.equal(sent.composeTags[0].constraints[0].params[0].value, "0.5");
   calls.length = 0; revision = 2;
   await sceneAI(deps, "s").compose();
   const later = calls.find(call => call.intent === "compose")!.input.composeTags;
@@ -161,52 +161,52 @@ test("with the text prompt, Compose sends the tags as the user edited them along
   assert.match(readFileSync("prompts/compose.md", "utf8"), /the tags decide each part they describe/);
 });
 
-test("tag-revise changes one transformation of a tag as asked: the AI sees the tags with their pens by id, and the result keeps the pen and goes in its place", async () => {
+test("tag-revise changes one constraint of a tag as asked: the AI sees the tags with their pens by id, and the result keeps the pen and goes in its place", async () => {
   const { runAI } = await import("../app/server/ai.server");
   const { withMockedAI } = await import("./fixtures/scene");
   const { reviseTag, tagRevisionSchema } = await import("../app/lib/compose-tags");
   const pens = [{ kind: "algorithm", id: "mark-pen-1", name: "Power", color: "#3b73c4", sourceSketchId: "f", source: { nodeId: "n", label: "N" }, meaning: "", algorithm: { call: { type: "algorithm", algorithmId: "power", args: [] }, library: [] } }];
-  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [
-    { label: "Size", effect: "spatial", how: "grows", penId: "mark-pen-1", properties: [{ label: "Exponent", value: "1.4", how: "" }] },
-    { label: "Hover", effect: "temporal", how: "grows on hover", penId: "", properties: [] }] })], strokes, pens);
+  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [
+    { label: "Size", effect: "spatial", how: "grows", penId: "mark-pen-1", params: [{ label: "Exponent", value: "1.4", how: "" }] },
+    { label: "Hover", effect: "temporal", how: "grows on hover", penId: "", params: [] }] })], strokes, pens);
   const image = "data:image/png;base64,YQ==", base = { intent: "tag-revise", image, compositionPens: pens, compositionStrokes: [{ id: "stroke-1", tool: "semantic", color: "#3b73c4", width: 2, opacity: 1, points: [{ x: .1, y: .1 }], semanticPenId: "mark-pen-1" }], composeTags: tags };
-  const revised = { label: "Shrinking size", effect: "spatial", how: "shrinks along the path", penId: "mark-pen-1", properties: [{ label: "Ratio", value: "0.8", how: "per item" }] };
-  await withMockedAI(() => ({ transformation: revised, note: "Made it shrink." }), async calls => {
+  const revised = { label: "Shrinking size", effect: "spatial", how: "shrinks along the path", penId: "mark-pen-1", params: [{ label: "Ratio", value: "0.8", how: "per item" }] };
+  await withMockedAI(() => ({ constraint: revised, note: "Made it shrink." }), async calls => {
     const result = tagRevisionSchema.parse(await runAI(requestSchema.parse({ ...base, tagTarget: { tagId: "a", index: 0 }, instruction: "make it shrink instead" }), new AbortController().signal));
     const sent = JSON.parse(calls[0].input[0].content[0].text);
     assert.equal(sent.request, "make it shrink instead"); assert.deepEqual(sent.target, { tagId: "a", index: 0 });
-    assert.equal(sent.tags[0].transformations[0].penId, "mark-pen-1"); assert.equal(sent.tags[0].box, undefined);
-    assert.match(calls[0].instructions, /change one transformation of a Compose tag/);
-    assert.equal(result.transformation.pen?.name, "Power"); assert.equal(result.transformation.pen?.frameId, "f");
+    assert.equal(sent.tags[0].constraints[0].penId, "mark-pen-1"); assert.equal(sent.tags[0].box, undefined);
+    assert.match(calls[0].instructions, /change one constraint of a Compose tag/);
+    assert.equal(result.constraint.pen?.name, "Power"); assert.equal(result.constraint.pen?.frameId, "f");
     const next = reviseTag(tags, result);
-    assert.deepEqual(next[0].transformations.map(item => item.label), ["Shrinking size", "Hover"], "only that transformation changes");
-    assert.equal(next[0].transformations[0].properties[0].value, "0.8");
+    assert.deepEqual(next[0].constraints.map(item => item.label), ["Shrinking size", "Hover"], "only that constraint changes");
+    assert.equal(next[0].constraints[0].params[0].value, "0.8");
     assert.deepEqual(reviseTag(tags, { ...result, tagId: "gone" }), tags);
     // Restoring it from the AI history puts the change back on the frame's tags.
     const restored = recoverGeneration(requestSchema.parse({ ...base, tagTarget: { tagId: "a", index: 0 }, instruction: "x", composeTags: tags }), result);
     assert.equal(restored.project.sketchPanels[restored.owner].composeTags.length, 0, "a log without a project has no tags to change");
   });
-  await assert.rejects(runAI(requestSchema.parse({ ...base, tagTarget: { tagId: "a", index: 5 }, instruction: "x" }), new AbortController().signal), /Could not find the tag's transformation/);
+  await assert.rejects(runAI(requestSchema.parse({ ...base, tagTarget: { tagId: "a", index: 5 }, instruction: "x" }), new AbortController().signal), /Could not find the tag's constraint/);
   await assert.rejects(runAI(requestSchema.parse({ ...base, tagTarget: { tagId: "a", index: 0 }, instruction: " " }), new AbortController().signal), /Say how to change it/);
 });
 
-test("asking to change a tag's transformation puts the AI's version in the frame's tags, with what changed said", async () => {
+test("asking to change a tag's constraint puts the AI's version in the frame's tags, with what changed said", async () => {
   const { sceneAI } = await import("../app/studio/scene-actions");
   const { createSketchPanel } = await import("../app/lib/sketch-panels");
-  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [{ label: "Size", effect: "spatial", how: "", penId: "", properties: [] }] })], strokes, []);
+  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [{ label: "Size", effect: "spatial", how: "", penId: "", params: [] }] })], strokes, []);
   const panels: Record<string, ReturnType<typeof createSketchPanel>> = { s: createSketchPanel({ composeTags: tags, composeTagsRevision: 1 }) };
   const toasts: string[] = [], calls: { intent: string; input: any }[] = [];
   const deps = {
     panel: (id: string) => panels[id] ?? createSketchPanel(), toast: (text: string) => { toasts.push(text); }, documentId: () => 1, requestId: () => 1,
     updatePanel: (id: string, patch: any) => { const base = panels[id] ?? createSketchPanel(); panels[id] = { ...base, ...(typeof patch === "function" ? patch(base) : patch) }; },
     task: async (_label: string, work: () => Promise<void>) => { await work(); },
-    request: async (intent: string, input: any) => { calls.push({ intent, input }); return { tagId: "a", index: 0, transformation: { label: "Fading", effect: "stylistic", how: "fades out", pen: null, properties: [{ label: "End opacity", value: "0.1", how: "" }] }, note: "It fades now." }; },
+    request: async (intent: string, input: any) => { calls.push({ intent, input }); return { tagId: "a", index: 0, constraint: { label: "Fading", effect: "stylistic", how: "fades out", pen: null, params: [{ label: "End opacity", value: "0.1", how: "" }] }, note: "It fades now." }; },
     capture: async () => ({ image: "data:image/png;base64,AAAA", region: { x: 0, y: 0, w: 1, h: 1 } }),
     artwork: () => ({ name: "s", photo: null, strokes: [], revision: 1 }),
   } as any;
   await sceneAI(deps, "s").reviseComposeTag("a", 0, "make it fade out");
   assert.equal(calls[0].intent, "tag-revise"); assert.deepEqual(calls[0].input.tagTarget, { tagId: "a", index: 0 }); assert.equal(calls[0].input.instruction, "make it fade out");
-  assert.equal(panels.s.composeTags[0].transformations[0].label, "Fading"); assert.equal(toasts.at(-1), "It fades now.");
+  assert.equal(panels.s.composeTags[0].constraints[0].label, "Fading"); assert.equal(toasts.at(-1), "It fades now.");
 });
 
 test("tags read as a containment tree: each collection followed by what it contains, at any depth", async () => {
@@ -258,35 +258,35 @@ test("the tag structure can be changed by hand: move into a collection or to the
   assert.equal(addTag(Array.from({ length: 16 }, (_, i) => ({ ...fresh, id: `x${i}` })), "object", ""), null);
 });
 
-test("the tag tree in the Compose panel shows each tag's constraints: its transformations, their pens and the quantities with their values", async () => {
+test("the tag tree in the Compose panel shows each tag's params: its constraints, their pens and the quantities with their values", async () => {
   const { createElement } = await import("react"), { renderToStaticMarkup } = await import("react-dom/server");
   const { SketchComposition } = await import("../app/components/sketch-composition");
   const tags = settleComposeTags([
-    tag({ id: "c", kind: "collection", label: "Copies", strokeIds: ["stroke-1"], transformations: [{ label: "Spread out", effect: "spatial", how: "Placed apart.", penId: "", properties: [{ label: "Count", value: "6", how: "How many." }] }] }),
-    tag({ id: "o", parentId: "c", label: "Unit", strokeIds: ["stroke-2"], transformations: [{ label: "Fade", effect: "stylistic", how: "", penId: "", properties: [{ label: "Opacity", value: "", how: "" }] }] }),
+    tag({ id: "c", kind: "collection", label: "Copies", strokeIds: ["stroke-1"], constraints: [{ label: "Spread out", effect: "spatial", how: "Placed apart.", penId: "", params: [{ label: "Count", value: "6", how: "How many." }] }] }),
+    tag({ id: "o", parentId: "c", label: "Unit", strokeIds: ["stroke-2"], constraints: [{ label: "Fade", effect: "stylistic", how: "", penId: "", params: [{ label: "Opacity", value: "", how: "" }] }] }),
   ], strokes, []);
   const html = renderToStaticMarkup(createElement(SketchComposition, { artwork: { strokes: [], photo: null, name: "s", revision: 1 } as never, prompt: "", onPrompt() {}, onDraft() {}, onCompose() {}, busy: false, drafting: false, tags: tags.length, tagList: tags }));
-  assert.match(html, /aria-label="Constraints of Copies"[\s\S]*Spread out[\s\S]*Count<b>6<\/b>[\s\S]*aria-label="Constraints of Unit"[\s\S]*Fade[\s\S]*Opacity<\/small>/);
+  assert.match(html, /aria-label="Params of Copies"[\s\S]*Spread out[\s\S]*Count<b>6<\/b>[\s\S]*aria-label="Params of Unit"[\s\S]*Fade[\s\S]*Opacity<\/small>/);
 });
 
-test("a transformation can be dragged to another tag or another place in its own tag, and a full tag takes no more", async () => {
-  const { moveTransformation, draggedTransformation, TAG_TRANSFORMATION_DRAG, MAX_TAG_TRANSFORMATIONS } = await import("../app/lib/compose-tags");
-  const t = (label: string) => ({ label, effect: "spatial" as const, how: "", penId: "", properties: [] });
-  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], transformations: [t("A1"), t("A2"), t("A3")] }), tag({ id: "b", strokeIds: ["stroke-2"], transformations: [t("B1")] })], strokes, []);
-  const labels = (next: typeof tags | null) => next?.map(item => `${item.id}:${item.transformations.map(entry => entry.label).join(",")}`);
-  assert.deepEqual(labels(moveTransformation(tags, { tagId: "a", index: 0 }, "b")), ["a:A2,A3", "b:B1,A1"], "onto a tag: at its end");
-  assert.deepEqual(labels(moveTransformation(tags, { tagId: "a", index: 2 }, "b", 0)), ["a:A1,A2", "b:A3,B1"], "before another tag's transformation");
-  assert.deepEqual(labels(moveTransformation(tags, { tagId: "a", index: 0 }, "a", 2)), ["a:A2,A1,A3", "b:B1"], "later in its own tag");
-  assert.deepEqual(labels(moveTransformation(tags, { tagId: "a", index: 2 }, "a", 0)), ["a:A3,A1,A2", "b:B1"], "earlier in its own tag");
-  assert.deepEqual(labels(moveTransformation(tags, { tagId: "a", index: 0 }, "a")), ["a:A2,A3,A1", "b:B1"], "to the end of its own tag");
-  assert.equal(moveTransformation(tags, { tagId: "a", index: 1 }, "a", 1), null, "dropped where it is"); assert.equal(moveTransformation(tags, { tagId: "a", index: 1 }, "a", 2), null);
-  assert.equal(moveTransformation(tags, { tagId: "a", index: 9 }, "b"), null); assert.equal(moveTransformation(tags, { tagId: "a", index: 0 }, "gone"), null);
-  const full = tags.map(item => item.id === "b" ? { ...item, transformations: Array.from({ length: MAX_TAG_TRANSFORMATIONS }, (_, i) => ({ ...item.transformations[0], label: `B${i}` })) } : item);
-  assert.equal(moveTransformation(full, { tagId: "a", index: 0 }, "b"), null, "a full tag takes no more");
-  assert.ok(moveTransformation(full, { tagId: "b", index: 0 }, "b", 3), "reordering a full tag is fine");
-  const data = (value: string) => ({ getData: (type: string) => type === TAG_TRANSFORMATION_DRAG ? value : "" }) as unknown as DataTransfer;
-  assert.deepEqual(draggedTransformation(data(JSON.stringify({ tagId: "a", index: 1 }))), { tagId: "a", index: 1 });
-  assert.equal(draggedTransformation(data("")), null); assert.equal(draggedTransformation(data(JSON.stringify({ tagId: "a", index: "1" }))), null);
+test("a constraint can be dragged to another tag or another place in its own tag, and a full tag takes no more", async () => {
+  const { moveConstraint, draggedConstraint, TAG_CONSTRAINT_DRAG, MAX_TAG_CONSTRAINTS } = await import("../app/lib/compose-tags");
+  const t = (label: string) => ({ label, effect: "spatial" as const, how: "", penId: "", params: [] });
+  const tags = settleComposeTags([tag({ id: "a", strokeIds: ["stroke-1"], constraints: [t("A1"), t("A2"), t("A3")] }), tag({ id: "b", strokeIds: ["stroke-2"], constraints: [t("B1")] })], strokes, []);
+  const labels = (next: typeof tags | null) => next?.map(item => `${item.id}:${item.constraints.map(entry => entry.label).join(",")}`);
+  assert.deepEqual(labels(moveConstraint(tags, { tagId: "a", index: 0 }, "b")), ["a:A2,A3", "b:B1,A1"], "onto a tag: at its end");
+  assert.deepEqual(labels(moveConstraint(tags, { tagId: "a", index: 2 }, "b", 0)), ["a:A1,A2", "b:A3,B1"], "before another tag's constraint");
+  assert.deepEqual(labels(moveConstraint(tags, { tagId: "a", index: 0 }, "a", 2)), ["a:A2,A1,A3", "b:B1"], "later in its own tag");
+  assert.deepEqual(labels(moveConstraint(tags, { tagId: "a", index: 2 }, "a", 0)), ["a:A3,A1,A2", "b:B1"], "earlier in its own tag");
+  assert.deepEqual(labels(moveConstraint(tags, { tagId: "a", index: 0 }, "a")), ["a:A2,A3,A1", "b:B1"], "to the end of its own tag");
+  assert.equal(moveConstraint(tags, { tagId: "a", index: 1 }, "a", 1), null, "dropped where it is"); assert.equal(moveConstraint(tags, { tagId: "a", index: 1 }, "a", 2), null);
+  assert.equal(moveConstraint(tags, { tagId: "a", index: 9 }, "b"), null); assert.equal(moveConstraint(tags, { tagId: "a", index: 0 }, "gone"), null);
+  const full = tags.map(item => item.id === "b" ? { ...item, constraints: Array.from({ length: MAX_TAG_CONSTRAINTS }, (_, i) => ({ ...item.constraints[0], label: `B${i}` })) } : item);
+  assert.equal(moveConstraint(full, { tagId: "a", index: 0 }, "b"), null, "a full tag takes no more");
+  assert.ok(moveConstraint(full, { tagId: "b", index: 0 }, "b", 3), "reordering a full tag is fine");
+  const data = (value: string) => ({ getData: (type: string) => type === TAG_CONSTRAINT_DRAG ? value : "" }) as unknown as DataTransfer;
+  assert.deepEqual(draggedConstraint(data(JSON.stringify({ tagId: "a", index: 1 }))), { tagId: "a", index: 1 });
+  assert.equal(draggedConstraint(data("")), null); assert.equal(draggedConstraint(data(JSON.stringify({ tagId: "a", index: "1" }))), null);
 });
 
 test("Compose is told what each collection holds, and copies what it holds even when its words still name the unit it held before the user moved tags", async () => {
@@ -294,7 +294,7 @@ test("Compose is told what each collection holds, and copies what it holds even 
   const { moveTag, deleteTag } = await import("../app/lib/compose-tags");
   // The AI's reading: copies of a unit in one collection, and a form of its own at the top. The user then moves that form in and deletes the old unit.
   let tags = settleComposeTags([
-    tag({ id: "c", kind: "collection", label: "Copies of a unit", members: "many units", strokeIds: ["stroke-1"], transformations: [{ label: "Layout", effect: "spatial", how: "Places the units apart.", penId: "", properties: [] }] }),
+    tag({ id: "c", kind: "collection", label: "Copies of a unit", members: "many units", strokeIds: ["stroke-1"], constraints: [{ label: "Layout", effect: "spatial", how: "Places the units apart.", penId: "", params: [] }] }),
     tag({ id: "u", parentId: "c", label: "Old unit", strokeIds: ["stroke-1"] }), tag({ id: "f", label: "Form", strokeIds: ["stroke-2"] }),
   ], strokes, []);
   tags = deleteTag(moveTag(tags, "f", "c", strokes)!, "u", strokes);

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { MAX_NESTING_DEPTH, MAX_NODE_PROPERTIES, sceneShapeSchema, type Scene } from "./schema";
-import { nodeProperties } from "./transformations";
+import { MAX_NESTING_DEPTH, MAX_NODE_PARAMS, sceneShapeSchema, type Scene } from "./schema";
+import { nodeParams } from "./constraints";
 import { validateAlgorithms, validateCall } from "./algorithms";
 import { ancestorIds, findNode, sceneDepth } from "./graph";
 import { validateMachine } from "./machines";
@@ -18,19 +18,16 @@ export function validateScene(scene: Scene) {
       if (!parent || parent.kind !== "collection") throw new Error(`Could not find the parent Collection of ${node.name}.`);
       if (ancestorIds(scene, node.id).includes(node.id)) throw new Error("A Collection contains itself.");
     }
-    const transformations = node.transformations.map(transformation => transformation.id);
-    if (new Set(transformations).size !== transformations.length) throw new Error(`${node.name} has duplicate semantic transformation IDs.`);
-    const properties = nodeProperties(node).map(property => property.id);
-    if (new Set(properties).size !== properties.length) throw new Error(`${node.name} has duplicate property IDs.`);
-    if (properties.length > MAX_NODE_PROPERTIES) throw new Error(`${node.name} can have at most ${MAX_NODE_PROPERTIES} properties.`);
-    for (const property of nodeProperties(node)) {
-      validateCall(scene.algorithms, property.value);
-      for (const leaf of valueLeaves(property.value)) { const problem = scalarProblem(leaf.value); if (problem) throw new Error(`${node.name} · ${property.label}: ${problem}`); }
+    const constraints = node.constraints.map(constraint => constraint.id);
+    if (new Set(constraints).size !== constraints.length) throw new Error(`${node.name} has duplicate constraint IDs.`);
+    const params = nodeParams(node).map(param => param.id);
+    if (new Set(params).size !== params.length) throw new Error(`${node.name} has duplicate param IDs.`);
+    if (params.length > MAX_NODE_PARAMS) throw new Error(`${node.name} can have at most ${MAX_NODE_PARAMS} params.`);
+    for (const param of nodeParams(node)) {
+      validateCall(scene.algorithms, param.value);
+      for (const leaf of valueLeaves(param.value)) { const problem = scalarProblem(leaf.value); if (problem) throw new Error(`${node.name} · ${param.label}: ${problem}`); }
     }
-    if (node.machine) {
-      validateMachine(node, node.machine);
-      for (const state of node.machine.states) for (const item of state.values) for (const leaf of valueLeaves(item.value)) { const problem = scalarProblem(leaf.value); if (problem) throw new Error(`${node.name} · ${state.label}: ${problem}`); }
-    }
+    if (node.machine) validateMachine(node, node.machine);
   }
   return scene;
 }

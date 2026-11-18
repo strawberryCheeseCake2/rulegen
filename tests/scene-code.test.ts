@@ -11,15 +11,15 @@ import { createSketchPanel } from "../app/lib/sketch-panels";
 
 const connect = (code = sceneProgram, scene = sampleScene()) => connectScene({ title: "Tree", explanation: "나무", code }, scene);
 
-test("connected code reads every property live; widget edits and node moves patch only the host block", () => {
+test("connected code reads every param live; widget edits and node moves patch only the host block", () => {
   const scene = sampleScene(), generated = connect(sceneProgram, scene);
   assert.equal(sceneLiveStatus(generated, scene), "live");
   const first = run(generated.code); first.draw();
   assert.equal(first.lines.length, 5);
   assert.equal(first.strokes[0], "#75664e");
   const panel = { ...createSketchPanel(), scene };
-  const edited = { ...panel, ...ops.setPropertyScalar(panel, "tree", "structure", ["depth"], 7) };
-  const recolored = { ...edited, ...ops.setPropertyScalar(edited, "tree", "ink", [], "#112233") };
+  const edited = { ...panel, ...ops.setParamScalar(panel, "tree", "structure", ["depth"], 7) };
+  const recolored = { ...edited, ...ops.setParamScalar(edited, "tree", "ink", [], "#112233") };
   const moved = moveNodes(recolored.scene, ["orb"], .1, 0);
   const source = syncScene(generated.code, moved);
   assert.ok(source.endsWith(generated.code.slice(generated.code.indexOf("function algo_power_decay"))), "drawing code is untouched");
@@ -35,31 +35,45 @@ test("connected code reads every property live; widget edits and node moves patc
   assert.equal(sceneLiveStatus(generated, structural.scene), "changed");
 });
 
-test("each node's machine runs independently: jumps, input events from the source state, and timed transitions", () => {
-  const scene = sampleScene(), sketch = run(connect(sceneProgram, scene).code);
+test("each node's FSM runs on its own: evaluate computes the current state's constraints in order, dispatch takes declared transitions", () => {
+  const scene = sampleScene(), panel = { ...createSketchPanel(), scene };
+  const fast = { ...panel, ...ops.setParamScalar(panel, "orb", "speed", [], 120) };
+  const sketch = run(syncScene(connect(sceneProgram, scene).code, fast.scene));
   assert.equal(sketch.read('rulegenState["orb"].id'), "idle");
+  assert.equal(sketch.read('rulegenState["tree"].id'), "default", "a node without a machine is its implicit state");
   sketch.draw(); assert.equal(sketch.circles.at(-1)![2], 48);
+  assert.equal(sketch.read('JSON.stringify(rulegenOwners.orb[""].data)'), '{"size":48}', "idle evaluates its own constraints only");
   sketch.read("p.mousePressed()");
   assert.equal(sketch.read('rulegenState["orb"].id'), "moving");
-  sketch.draw(); assert.equal(sketch.circles.at(-1)![2], 160, "the state's own radius applies");
   assert.equal(sketch.read('rulegenEmit("orb", "press")'), false, "events only fire from their source state");
-  for (let i = 0; i < 12; i++) sketch.draw();
-  assert.equal(sketch.read('rulegenState["orb"].id'), "idle", "timed transition after 1200ms");
-  sketch.read("rulegenPlaying = false"); sketch.read('rulegenJumpState("orb", "moving")');
-  for (let i = 0; i < 20; i++) sketch.draw();
-  assert.equal(sketch.read('rulegenState["orb"].id'), "moving", "paused machines do not advance");
-  assert.equal(sketch.read('rulegenJumpState("tree", "idle")'), false, "nodes without machines have no state");
-  // Editing a state's values changes only that state's drawing.
-  const panel = { ...createSketchPanel(), scene }, inState = { ...panel, ...ops.chooseState(panel, "orb", "moving") };
-  const edited = { ...inState, ...ops.setPropertyScalar(inState, "orb", "radius", [], 100) };
-  const rerun = run(syncScene(connect(sceneProgram, scene).code, edited.scene));
-  rerun.draw(); assert.equal(rerun.circles.at(-1)![2], 48);
-  rerun.read('rulegenJumpState("orb", "moving")'); rerun.draw(); assert.equal(rerun.circles.at(-1)![2], 200);
-  // Transition timing edits are live too.
-  const faster = ops.editTransition(edited, "orb", "settle", { afterMs: 200 }).scene!;
-  const timed = run(syncScene(connect(sceneProgram, scene).code, faster));
-  timed.read('rulegenJumpState("orb", "moving")'); timed.draw(); timed.draw(); timed.draw();
-  assert.equal(timed.read('rulegenState["orb"].id'), "idle");
+  sketch.draw();
+  const start = scene.nodes[1].region.x * 900;
+  assert.ok(Math.abs(sketch.circles.at(-1)![0] - (start + 12)) < 1e-6, "moving also evaluates x: 120px/s for 100ms");
+  for (let i = 0; i < 40 && sketch.read('rulegenState["orb"].id') === "moving"; i++) sketch.draw();
+  assert.equal(sketch.read('rulegenState["orb"].id'), "idle", "the code dispatched settle at the edge");
+  assert.equal(sketch.read('rulegenJumpState("tree", "idle")'), false, "no such state");
+  assert.equal(sketch.read('rulegenJumpState("orb", "moving")'), true, "the panel can put a node into a state");
+  // Each evaluation is recorded as state machine steps: a visit, then its constraints in order.
+  const steps = (sketchRun: typeof sketch) => (JSON.parse(sketchRun.read("JSON.stringify(rulegenRunEnd())")).events as { kind: string; data: { fsm: string; node: string; state: string; property?: string; event?: string; to?: string } }[])
+    .filter(event => event.kind === "trace").map(({ data }) => [data.fsm, data.node, data.state, data.property ?? data.event ?? ""].join(" "));
+  const fresh = run(syncScene(connect(sceneProgram, scene).code, fast.scene));
+  fresh.read('rulegenJumpState("orb", "moving")'); fresh.read("rulegenRunStart(null, null, null, {})"); fresh.draw();
+  assert.deepEqual(steps(fresh), ["state tree default ", "constraint tree default branches", "constraint tree default color", "state orb moving ", "constraint orb moving size", "constraint orb moving x"]);
+  // The order lives in the host block: reordering the state changes it without new code.
+  const inState = { ...fast, ...ops.chooseState(fast, "orb", "moving") }, reordered = { ...inState, ...ops.moveConstraint(inState, "orb", "drift", -1) };
+  assert.equal(sceneLiveStatus(connect(sceneProgram, scene), reordered.scene), "live");
+  const again = run(syncScene(connect(sceneProgram, scene).code, reordered.scene));
+  again.read('rulegenJumpState("orb", "moving")'); again.read("rulegenRunStart(null, null, null, {})"); again.draw();
+  assert.deepEqual(steps(again).slice(3), ["state orb moving ", "constraint orb moving x", "constraint orb moving size"]);
+  // A transition is a step too, followed by entering its destination.
+  const pressed = run(connect(sceneProgram, scene).code);
+  pressed.draw(); pressed.read("rulegenRunStart(null, null, null, {})"); pressed.read("p.mousePressed()");
+  assert.deepEqual(steps(pressed), ["transition orb idle press", "state orb moving "]);
+  // A constraint step carries its value and the params it read.
+  const detail = run(connect(sceneProgram, scene).code);
+  detail.read("rulegenRunStart(null, null, null, {})"); detail.draw();
+  const size = (JSON.parse(detail.read("JSON.stringify(rulegenRunEnd())")).events as { data?: { property?: string; value?: unknown; reads?: Record<string, unknown> } }[]).find(event => event.data?.property === "size")!.data!;
+  assert.deepEqual([size.value, size.reads], [48, { "orb/radius": 24 }]);
 });
 
 test("the module contract: one self-contained module per root, reading only its own nodes through m", () => {
@@ -67,15 +81,22 @@ test("the module contract: one self-contained module per root, reading only its 
   const inside = (extra: string) => sceneProgram.replace("    mousePressed()", `    keyPressed() { ${extra} },\n    mousePressed()`);
   const variants: [string, RegExp][] = [
     [sceneProgram.replace('m.v("tree/ink")', '"#000000"'), /could not be connected to the code/],
-    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/unknown")'), /property connections in the generated code are invalid/],
-    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/" + "speed")'), /property connections in the generated code are invalid/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/unknown")'), /param connections in the generated code are invalid/],
+    [sceneProgram.replace('m.v("orb/speed")', 'm.v("orb/" + "speed")'), /param connections in the generated code are invalid/],
     [inside("const read = m.v;"), /m\.v must be called directly/],
     [inside("helper(m);"), /m\.v \/ m\.box/],
     [inside("rulegenParams[\"orb/radius\"] = 3;"), /cannot access rulegenParams/],
     [inside("rulegenEmit(\"orb\", \"press\");"), /cannot access rulegenEmit/],
-    [inside('m.emit("orb", "settle-now");'), /m\.emit/],
-    [inside('m.emit("tree", "press");'), /m\.emit/],
-    [inside('m.state("tree");'), /m\.state/],
+    [inside("rulegenOwners.orb = {};"), /cannot access rulegenOwners/],
+    [inside('m.fsm("orb").dispatch("settle-now");'), /not an event of a transition/],
+    [inside('const event = "press"; m.fsm("orb").dispatch(event);'), /string literal/],
+    [inside('m.state("tree");'), /m\.v \/ m\.box \/ m\.fsm/],
+    [inside('m.fsm("elsewhere").evaluate();'), /m\.fsm must take a node ID of this module/],
+    [sceneProgram.replace("drift: computeX", ""), /compute function in constraints\["orb"\]: drift/],
+    [sceneProgram.replace("drift: computeX", "drift: computeX, glow: computeX"), /do not exist: glow/],
+    [sceneProgram.replace("drift: computeX", "drift: 3"), /must be a function/],
+    [sceneProgram.replace('orb.dispatch("settle")', "orb.state"), /never taken: dispatch "settle"/],
+    [sceneProgram.replace('m.fsm("tree").evaluate()', '({ color: m.v("tree/ink"), branches: [] })'), /never evaluated/],
     [inside("p.draw = () => {};"), /cannot change properties of p/],
     [inside("p.background(0);"), /p\.background/],
     [inside("m.p.noLoop();"), /p\.noLoop/],
@@ -90,7 +111,7 @@ test("the module contract: one self-contained module per root, reading only its 
   for (const [code, error] of variants) assert.throws(() => connect(code), error, code.slice(-120));
   // A second root node needs its own module.
   const scene = sampleScene(), split = updateNode(scene, "orb", node => ({ ...node, parentId: null }));
-  assert.throws(() => connect(sceneProgram, split), /property connections in the generated code are invalid|Each root node needs a module/);
+  assert.throws(() => connect(sceneProgram, split), /param connections in the generated code are invalid|Each root node needs a module/);
 });
 
 test("modules are stored separately and run as instances: a copy with other node ids draws from the same module", async () => {
@@ -136,13 +157,15 @@ test("module state lives in m.store: the factory scope holds only functions and 
 });
 
 test("a runtime snapshot restores module stores, machine states and the seed; new values redraw from the restored moment", () => {
-  const moving = sceneProgram.replace("p.circle(m.box(\"orb\").x + speed * m.state(\"orb\").elapsed / 1000, 300, m.v(\"orb/radius\") * 2);",
-    "m.store.x = (m.store.x || 0) + 10; m.store.trail = [...(m.store.trail || []), m.store.x].slice(-3);\n      p.circle(m.store.x, 300, m.v(\"orb/radius\") * 2);");
+  const moving = sceneProgram.replace("p.circle(data.x ?? m.box(\"orb\").x, 300, data.size);",
+    "m.store.x = (m.store.x || 0) + 10; m.store.trail = [...(m.store.trail || []), m.store.x].slice(-3);\n      p.circle(m.store.x, 300, data.size);");
+  assert.notEqual(moving, sceneProgram);
   const sketch = run(connect(moving).code);
   sketch.draw(); sketch.draw(); sketch.read("rulegenEmit('orb', 'press')");
   const snapshot = sketch.read("rulegenSnapshot()");
   assert.equal(JSON.stringify(snapshot.stores.tree), JSON.stringify({ x: 20, trail: [10, 20] }));
   assert.equal(snapshot.states.orb.id, "moving");
+  assert.equal(snapshot.owners.orb[""].state, "moving", "each owner's state and data come with the step");
   sketch.draw(); sketch.draw(); sketch.read("rulegenJumpState('orb', 'idle')");
   sketch.read(`rulegenRestore(${JSON.stringify(snapshot)})`);
   assert.equal(sketch.read("rulegenState.orb.id"), "moving");
@@ -193,8 +216,8 @@ test("modules derive input-made things from m.history(), so a value change adjus
       mouseDragged() {},
     };
   }`;
-  // m.history() passes the context check (this module just does not wire every property).
-  assert.throws(() => connect(`rulegenModule("tree", ${derived});`, scene), /properties could not be connected to the code/);
+  // m.history() passes the context check (this module just does not wire every param).
+  assert.throws(() => connect(`rulegenModule("tree", ${derived});`, scene), /params could not be connected to the code/);
   assert.throws(() => connect(`rulegenModule("tree", function (m) { return { draw() { m.history(1); } }; });`, scene), /called without arguments/);
   const sketch = run(assembleProgram(scene, [moduleSource("tree", derived)]));
   sketch.read("p.mouseX = 10; p.mouseY = 10; p.mousePressed(); for (let i = 1; i <= 20; i++) { p.mouseX = 10 + i; p.mouseDragged(); } p.mouseReleased();");

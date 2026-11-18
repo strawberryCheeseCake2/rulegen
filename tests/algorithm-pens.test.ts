@@ -17,7 +17,7 @@ process.env.RULEGEN_AI_LOG_DIR = logDirectory;
 after(() => { rmSync(logDirectory, { recursive: true, force: true }); if (previousLogDirectory === undefined) delete process.env.RULEGEN_AI_LOG_DIR; else process.env.RULEGEN_AI_LOG_DIR = previousLogDirectory; });
 
 const scene = sampleScene();
-const pen = makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "structure" }, "source", "branch-pen", "#3b73c4");
+const pen = makeAlgorithmPen(scene, { nodeId: "tree", paramId: "structure" }, "source", "branch-pen", "#3b73c4");
 const depth = (value: typeof pen) => (value.algorithm!.call.args.find(arg => arg.id === "depth")!.value as { value: number }).value;
 const art: Artwork = { name: "Sketch", photo: null, revision: 1, strokes: [{ tool: "pen", color: pen.color, width: 3, opacity: .8, points: [{ x: 100, y: 150 }, { x: 700, y: 300 }], semanticPen: structuredClone(pen) }, { tool: "pen", color: "#75664e", width: 3, opacity: .8, points: [{ x: 80, y: 80 }, { x: 600, y: 500 }] }] };
 const rawProject = { version: 2, name: "Semantic study", artwork: art, sketchPanels: { source: { scene } }, semanticPens: [pen], activeSemanticPenId: pen.id };
@@ -57,8 +57,8 @@ test("Make pen copies the chosen algorithm locally without producing drawing geo
   assert.deepEqual(pen.algorithm!.library.map(item => item.id).sort(), ["power-decay", "recursive-branch"]);
   assert.equal(pen.source.label, "Tree · Branching"); assert.equal(pen.meaning, scene.algorithms.find(item => item.id === "recursive-branch")!.description);
   assert.equal(pen.sourceSketchId, "source"); assert.equal("primitives" in pen, false); assert.equal("settings" in pen, false);
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "missing" }, "source", "x", "#3b73c4"));
-  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", propertyId: "ink" }, "source", "x", "#3b73c4"), /property that contains an algorithm/);
+  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", paramId: "missing" }, "source", "x", "#3b73c4"));
+  assert.throws(() => makeAlgorithmPen(scene, { nodeId: "tree", paramId: "ink" }, "source", "x", "#3b73c4"), /param that contains an algorithm/);
 });
 
 test("composition includes semantic snapshots and pencil marks with spatial and eraser order", () => {
@@ -115,7 +115,7 @@ test("AI drafts an editable Compose prompt from the image and stored stroke sema
   const previousFetch = globalThis.fetch, previousKey = process.env.OPENAI_API_KEY; process.env.OPENAI_API_KEY = "test-placeholder";
   let payload: any;
   const prompt = "Power 펜의 exponent 2로 점점 커지는 패턴을 만들고, 연필로 그린 곡선을 따라 배치해줘.";
-  const tags = [{ id: "t1", kind: "object", label: "Tree", parentId: "", strokeIds: ["stroke-1", "stroke-3", "stroke-9"], summary: "", members: "ignored", transformations: [{ label: "Growth", effect: "spatial", how: "", penId: "mark-pen-1", properties: [{ label: "Exponent", value: "2", how: "" }] }] }];
+  const tags = [{ id: "t1", kind: "object", label: "Tree", parentId: "", strokeIds: ["stroke-1", "stroke-3", "stroke-9"], summary: "", members: "ignored", constraints: [{ label: "Growth", effect: "spatial", how: "", penId: "mark-pen-1", params: [{ label: "Exponent", value: "2", how: "" }] }] }];
   globalThis.fetch = async (_url, options) => { payload = JSON.parse(String(options?.body)); return Response.json({ output: [{ content: [{ type: "output_text", text: JSON.stringify({ prompt, tags }) }] }] }); };
   try {
     const context = compositionContext({ ...art, strokes: [...art.strokes, { ...art.strokes[0], tool: "eraser", semanticPen: undefined }] });
@@ -124,7 +124,7 @@ test("AI drafts an editable Compose prompt from the image and stored stroke sema
     const result = compositionPromptSchema.parse(await runAI(input, new AbortController().signal));
     assert.equal(result.prompt, prompt);
     // A tag keeps only drawn marks (no eraser, no unknown id), sits on them, and names its pen.
-    assert.deepEqual(result.tags.map(tag => [tag.id, tag.strokeIds, tag.members, tag.transformations[0].pen?.name]), [["t1", ["stroke-1"], "", context.compositionPens[0].name]]);
+    assert.deepEqual(result.tags.map(tag => [tag.id, tag.strokeIds, tag.members, tag.constraints[0].pen?.name]), [["t1", ["stroke-1"], "", context.compositionPens[0].name]]);
     assert.ok(result.tags[0].box.w > 0 && result.tags[0].box.h > 0);
     const sent = JSON.parse(payload.input[0].content[0].text);
     assert.equal(sent.instruction, ""); assert.equal(sent.features, undefined);

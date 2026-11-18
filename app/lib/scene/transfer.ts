@@ -1,9 +1,9 @@
-import type { Algorithm, AlgorithmCall, Scene, SceneNode, SemanticTransformation, Value } from "./schema";
+import type { Algorithm, AlgorithmCall, Scene, SceneNode, Constraint, Value } from "./schema";
 import { MAX_SCENE_NODES, MAX_VALUE_DEPTH } from "./schema";
 import { algorithmClosure, algorithmRefs, findAlgorithm, importAlgorithms, remapValue } from "./algorithms";
 import { clampRegion, descendantIds, findNode, fitCollections, moveNodes, unionRegion, uniqueNodeId } from "./graph";
 import { conformMachine } from "./machines";
-import { appendProperty, canTakeTransformation, findProperty, findTransformation, mapProperties, nodeProperties, takeTransformation, updateProperty } from "./transformations";
+import { appendParam, canTakeConstraint, findParam, findConstraint, mapParams, nodeParams, takeConstraint, updateParam } from "./constraints";
 import { validateScene } from "./validate";
 import { isAlgorithm, replaceAt, valueAt, valueDepth } from "./values";
 
@@ -18,22 +18,18 @@ export function copyDefinition(scene: Scene, algorithmId: string, call: Algorith
   return copyAlgorithm(scene, { ...call, algorithmId });
 }
 
-const nodeValues = (node: SceneNode): Value[] => [...nodeProperties(node).map(p => p.value), ...(node.machine?.states.flatMap(s => s.values.map(v => v.value)) || [])];
-function remapNode(node: SceneNode, ids: Map<string, string>): SceneNode {
-  return { ...node,
-    ...mapProperties(node, p => ({ ...p, value: remapValue(p.value, ids) })),
-    machine: node.machine && { ...node.machine, states: node.machine.states.map(s => ({ ...s, values: s.values.map(v => ({ ...v, value: remapValue(v.value, ids) })) })) } };
-}
+const nodeValues = (node: SceneNode): Value[] => nodeParams(node).map(p => p.value);
+const remapNode = (node: SceneNode, ids: Map<string, string>): SceneNode => mapParams(node, p => ({ ...p, value: remapValue(p.value, ids) }));
 
-/** Paste a copied algorithm into any slot (property root or nested argument). Structural: base value only. */
-export function pasteAlgorithm(scene: Scene, nodeId: string, propertyId: string, path: string[], clip: AlgorithmClip): Scene {
-  const node = findNode(scene, nodeId), property = node && findProperty(node, propertyId);
-  if (!node || !property || !valueAt(property.value, path)) throw new Error("Could not find where to paste.");
+/** Paste a copied algorithm into any slot (param root or nested argument). Structural: base value only. */
+export function pasteAlgorithm(scene: Scene, nodeId: string, paramId: string, path: string[], clip: AlgorithmClip): Scene {
+  const node = findNode(scene, nodeId), param = node && findParam(node, paramId);
+  if (!node || !param || !valueAt(param.value, path)) throw new Error("Could not find where to paste.");
   if (path.length + valueDepth(clip.call) > MAX_VALUE_DEPTH) throw new Error(`Algorithms can be nested at most ${MAX_VALUE_DEPTH} levels deep.`);
   const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
   const call = remapValue(clip.call, ids);
-  const value = replaceAt(property.value, path, () => call);
-  const next = { ...scene, algorithms: library, nodes: scene.nodes.map(item => item.id !== nodeId ? item : conformMachine(updateProperty(item, propertyId, p => ({ ...p, value })))) };
+  const value = replaceAt(param.value, path, () => call);
+  const next = { ...scene, algorithms: library, nodes: scene.nodes.map(item => item.id !== nodeId ? item : conformMachine(updateParam(item, paramId, p => ({ ...p, value })))) };
   return validateScene(next);
 }
 
@@ -94,40 +90,40 @@ export function readAlgorithmDrag(data: DataTransfer): AlgorithmClip | null {
   } catch { return null; }
 }
 
-/** What "Copy" on a transformation in Layers puts on the studio clipboard: the transformation plus every algorithm definition it needs. */
-export type TransformationClip = { transformation: SemanticTransformation; library: Algorithm[]; label: string };
-export function copyTransformation(scene: Scene, nodeId: string, transformationId: string): TransformationClip {
-  const node = findNode(scene, nodeId), transformation = node && findTransformation(node, transformationId);
-  if (!transformation) throw new Error("Could not find the transformation to copy.");
-  const refs = transformation.properties.flatMap(property => algorithmRefs(property.value));
-  return { transformation: structuredClone(transformation), library: algorithmClosure(scene.algorithms, refs), label: transformation.label || transformation.id };
+/** What "Copy" on a constraint in Layers puts on the studio clipboard: the constraint plus every algorithm definition it needs. */
+export type ConstraintClip = { constraint: Constraint; library: Algorithm[]; label: string };
+export function copyConstraint(scene: Scene, nodeId: string, constraintId: string): ConstraintClip {
+  const node = findNode(scene, nodeId), constraint = node && findConstraint(node, constraintId);
+  if (!constraint) throw new Error("Could not find the constraint to copy.");
+  const refs = constraint.params.flatMap(param => algorithmRefs(param.value));
+  return { constraint: structuredClone(constraint), library: algorithmClosure(scene.algorithms, refs), label: constraint.property || constraint.id };
 }
 /**
- * Paste a copied transformation into a node (of this sketch or another): after `afterId` (none: at the end), its
+ * Paste a copied constraint into a node (of this sketch or another): after `afterId` (none: at the end), its
  * algorithms brought into this library (renamed where an id means something else here), its ids made unique in the node.
  */
-export function pasteTransformation(scene: Scene, nodeId: string, clip: TransformationClip, afterId?: string | null): Scene {
+export function pasteConstraint(scene: Scene, nodeId: string, clip: ConstraintClip, afterId?: string | null): Scene {
   const node = findNode(scene, nodeId);
   if (!node) throw new Error("Could not find where to paste.");
-  if (!canTakeTransformation(node, clip.transformation)) throw new Error(`“${node.name}” has no room for “${clip.label}”.`);
+  if (!canTakeConstraint(node, clip.constraint)) throw new Error(`“${node.name}” has no room for “${clip.label}”.`);
   const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
-  const copy = { ...clip.transformation, properties: clip.transformation.properties.map(property => ({ ...property, value: remapValue(property.value, ids) })) };
-  const after = node.transformations.findIndex(item => item.id === afterId), before = after < 0 ? null : node.transformations[after + 1]?.id ?? null;
-  const next = takeTransformation(node, copy, before);
+  const copy = { ...clip.constraint, params: clip.constraint.params.map(param => ({ ...param, value: remapValue(param.value, ids) })) };
+  const after = node.constraints.findIndex(item => item.id === afterId), before = after < 0 ? null : node.constraints[after + 1]?.id ?? null;
+  const next = takeConstraint(node, copy, before);
   return validateScene({ ...scene, algorithms: library, nodes: scene.nodes.map(item => item.id === nodeId ? next : item) });
 }
 
 /**
- * Dropping a block on a transformation's "new socket" creates a property holding it
- * (without a target transformation: the last one with room, or a new one).
+ * Dropping a block on a constraint's "new socket" creates a param holding it
+ * (without a target constraint: the last one with room, or a new one).
  */
-export function addBlockProperty(scene: Scene, nodeId: string, clip: AlgorithmClip, transformationId?: string | null): Scene {
+export function addBlockParam(scene: Scene, nodeId: string, clip: AlgorithmClip, constraintId?: string | null): Scene {
   const node = findNode(scene, nodeId);
   if (!node) throw new Error("Could not find the node to attach the block to.");
   const { library, ids } = importAlgorithms(scene.algorithms, clip.library);
   const call = remapValue(clip.call, ids) as AlgorithmCall;
   const definition = findAlgorithm(library, call.algorithmId);
-  const property = { id: call.algorithmId, label: (definition?.name || clip.label).slice(0, 80), effect: "spatial" as const, description: (definition?.description || "").slice(0, 600), value: call };
-  const next = appendProperty(node, property, transformationId, definition?.name || clip.label).node;
+  const param = { id: call.algorithmId, label: (definition?.name || clip.label).slice(0, 80), effect: "spatial" as const, description: (definition?.description || "").slice(0, 600), value: call };
+  const next = appendParam(node, param, constraintId, definition?.name || clip.label).node;
   return validateScene({ algorithms: library, nodes: scene.nodes.map(item => item.id === nodeId ? next : item) });
 }

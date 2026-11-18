@@ -53,16 +53,19 @@ test("the refine composer shows what is attached and the annotation", () => {
 test("machine-refine sends the attached item, graph image and annotation, and returns the updated Compose prompt", async () => {
   const scene = sampleScene(), machine = orbMachine();
   const refined = { initialState: "idle", states: [
-    ...machine.states.map(state => ({ ...state, values: state.values.map(value => ({ propertyId: value.propertyId, value: value.value })) })),
-    { id: "bounce", label: "튕김", description: "놓으면 튕기듯 돌아옵니다", values: [{ propertyId: "radius", value: num(60, 10, 140, 1, "px") }] },
-  ], transitions: [...machine.transitions.filter(item => item.id !== "settle"), { id: "settle", from: "moving", to: "bounce", label: "정착 전 튕김", trigger: "after", afterMs: 600 }, { id: "bounce-done", from: "bounce", to: "idle", label: "튕김 완료", trigger: "after", afterMs: 500 }] };
+    ...machine.states,
+    { id: "bounce", label: "튕김", description: "놓으면 튕기듯 돌아옵니다", constraintIds: ["bounce-size"] },
+  ], transitions: [...machine.transitions.filter(item => item.id !== "settle"), { id: "settle", from: "moving", to: "bounce", event: "settle", label: "정착 전 튕김" }, { id: "bounce-done", from: "bounce", to: "idle", event: "bounced", label: "튕김 완료" }] };
   const prompt = "- 화면 가운데에 원을 그려줘.\n- 원을 클릭하면 오른쪽으로 움직였다가 튕기듯 돌아오게 해줘.";
   const marks = [{ points: [{ x: .2, y: .2 }, { x: .4, y: .3 }], targets: ["transition settle “정착 후 대기”"] }];
-  await withMockedAI(() => ({ algorithms: [], machine: refined, composePrompt: prompt }), async calls => {
+  // The bounce needs a size relation of its own: a new constraint comes with the machine.
+  const bounceSize = { id: "bounce-size", property: "size", description: "튕기는 동안 커졌다 작아진다", params: [{ id: "bounce-radius", label: "Bounce radius", effect: "spatial", description: "", value: num(60, 10, 140, 1, "px") }], inputs: [], drags: [] };
+  await withMockedAI(() => ({ algorithms: [], constraints: [bounceSize], machine: refined, composePrompt: prompt }), async calls => {
     const result = machineRefineResultSchema.parse(await runAI(requestSchema.parse({ intent: "machine-refine", scene, targetNodeId: "orb", image, machineImage: image, machineMarks: marks,
       machineTarget: { kind: "transition", id: "settle" }, instruction: "정착하기 전에 한 번 튕기게", composePrompt: "- 화면 가운데에 원을 그려줘." }), signal()));
     const orb = result.scene.nodes.find(node => node.id === "orb")!.machine!;
     assert.deepEqual(orb.states.map(state => state.id), ["idle", "moving", "bounce"]);
+    assert.deepEqual(orb.states[2].constraintIds, ["bounce-size"], "the new state evaluates the constraint that came with it");
     assert.equal(result.composePrompt, prompt);
     const context = JSON.parse(calls[0].input[0].content[0].text);
     assert.deepEqual(context.attached, { kind: "transition", ...machine.transitions.find(item => item.id === "settle") });
@@ -96,7 +99,7 @@ test("moved states and labels shape the graph, follow their edges and are saved 
   const middle = bezier(press.curve, .5), close = (a: number, b: number) => Math.abs(a - b) < 1e-6;
   assert.ok(close(press.labelPoint.x, autoMiddle.x) && close(press.labelPoint.y, autoMiddle.y - 40), "a moved label keeps its offset from where it would sit");
   assert.ok(close(middle.x, press.labelPoint.x) && close(middle.y, press.labelPoint.y), "the arrow bends to pass through the moved label");
-  const loop = machineLayout({ ...machine, transitions: [{ id: "spin", from: "idle", to: "idle", label: "회전", trigger: "event", afterMs: 1000 }] }, { states: {}, labels: { spin: { x: 30, y: -20 } } }).edges[0];
+  const loop = machineLayout({ ...machine, transitions: [{ id: "spin", from: "idle", to: "idle", event: "spin", label: "회전" }] }, { states: {}, labels: { spin: { x: 30, y: -20 } } }).edges[0];
   const loopMiddle = bezier(loop.curve, .5);
   assert.ok(close(loopMiddle.x, loop.labelPoint.x) && close(loopMiddle.y, loop.labelPoint.y), "self loops follow their label too");
   const { createSketchPanel, savedSketchPanels } = await import("../app/lib/sketch-panels");

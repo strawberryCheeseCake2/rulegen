@@ -16,11 +16,11 @@ function entries(scene: Scene) {
     add(["node", node.id, "name"], `${root} · Name`, node.name);
     add(["node", node.id, "description"], `${root} · Description`, node.description);
     add(["node", node.id, "parent"], `${root} · Parent`, scene.nodes.find(item => item.id === node.parentId)?.name || "(root)");
-    add(["node", node.id, "transformations"], `${root} · Transformation order`, node.transformations.map(transformation => transformation.label || transformation.id).join(" → "));
-    for (const transformation of node.transformations) {
-      const layer = `${root} · ${transformation.label || transformation.id}`;
-      add(["transformation", node.id, transformation.id], `${layer} · Semantic transformation`, transformation.description);
-      for (const property of transformation.properties) add(["property", node.id, property.id], `${layer} · ${property.label} (${property.effect})`, describeValue(property.value, names));
+    add(["node", node.id, "constraints"], `${root} · Constraint order`, node.constraints.map(constraint => constraint.property || constraint.id).join(" → "));
+    for (const constraint of node.constraints) {
+      const layer = `${root} · ${constraint.property || constraint.id}`;
+      add(["constraint", node.id, constraint.id], `${layer} · constraint`, constraint.description);
+      for (const param of constraint.params) add(["param", node.id, param.id], `${layer} · ${param.label} (${param.effect})`, describeValue(param.value, names));
     }
     if (node.machine) add(["machine", node.id], `${root} · State machine`, node.machine.states.map(state => state.label).join(" → "));
   }

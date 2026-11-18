@@ -1,14 +1,14 @@
 import { brushTool, type Brush, type BrushToolKind, type TargetedTool } from "../lib/brushes";
 import { INPUT_KEY, isRuntimeKey } from "../lib/runtime-edits";
-import { changedKeys, concernCompletion, constraintRows, currentRecommendation, recommendationTransformations, formatScalar, MARK_COLORS, MAX_STEPS, sameFocus, stepValues, type InspectionFocus, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { changedKeys, concernCompletion, paramRows, formatScalar, MARK_COLORS, MAX_STEPS, sameFocus, stepValues, type InspectionFocus, type InspectionState, type MarkStyle } from "../lib/inspection";
 import { findNode } from "../lib/scene/graph";
+import { stateConstraints } from "../lib/scene/machines";
 import type { ScalarValue, Scene } from "../lib/scene/schema";
 import { parameterStatus, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
-import { findProperty } from "../lib/scene/transformations";
+import { findParam } from "../lib/scene/constraints";
 import { useRef, useState } from "react";
 import { Icon } from "./icons";
 
-type Change = { key: string; stateId: string; value: number | string | boolean };
 type Props = {
   brush: Brush; kind: BrushToolKind; scene: Scene; nodeIds: string[]; state: InspectionState; busy: boolean; running: boolean;
   /** The inspected frame (the active one) and every frame the brush is in, so another can be inspected. */
@@ -21,26 +21,18 @@ type Props = {
   onFocus: (focus: InspectionFocus | null) => void; onConcern: (text: string) => void; onClearMarks: () => void;
   /** Inspection annotation: make a new targeted tool from the annotation and concern. Targeted: run its concern again. */
   onInspect: () => void;
-  /** Recommendation previews: whether the inspection also writes them (on/off, to compare the time), and the preview of one recommendation. */
-  previews?: boolean; onPreviews?: (on: boolean) => void;
-  /** Execution frames are only placed with the inspection (AI makes each when its Generate is pressed). */
-  deferExecution?: boolean; onDeferExecution?: (on: boolean) => void; renderPreview?: (listed: Recommendation, index: number) => React.ReactNode;
-  onApplyChanges: (changes: Change[]) => void; /** Apply a recommendation as it reads now (an added transformation is that transformation); `index` in the list, `listed` as stored. */
-  onApplyRecommendation: (recommendation: Recommendation, index: number, listed: Recommendation) => void;
-  /** Applying a recommendation makes a fork of the brush (the brush stays): the forks made from this recommendation, and going to one. */
-  forksOf?: (listed: Recommendation) => { id: string; name: string }[]; onOpenFork?: (forkId: string) => void;
-  /** Rebuild the targeted tool's overlays for a recommendation that was applied (Undo apply brings the previous ones back). */
-  onUpdateOverlays?: (listed: Recommendation) => void;
-  /** Whether the tool shows overlays updated for this applied entry. */
-  overlaysUpdated?: (appliedId: string) => boolean;
+  /** The Execution frame is only placed with the inspection (AI makes it when its Generate is pressed). */
+  deferExecution?: boolean; onDeferExecution?: (on: boolean) => void;
+  /** Forks this targeted tool's fixes were applied to (the brush stays), and going to one. */
+  forks?: { id: string; name: string; title: string }[]; onOpenFork?: (forkId: string) => void;
   /** Switch to another tool of the group (a toolbar tool id). */
   onTool: (toolId: string) => void;
   /** Hidden parameters the targeted inspection suggests (by index in its list): accept exposes it, reject (or bring back) marks it; an accepted one is adjusted here. */
   onAcceptParameter?: (item: ParameterSuggestion, index: number) => void; onRejectParameter?: (index: number, rejected: boolean) => void;
-  onParameterValue?: (nodeId: string, propertyId: string, value: ScalarValue["value"]) => void;
+  onParameterValue?: (nodeId: string, paramId: string, value: ScalarValue["value"]) => void;
   /** The frame's program, and applying the result's item records again (it is applied with the result; Undo apply may take it back). */
   code?: string; onApplyRecording?: (item: Recording) => void;
-  /** Recommendations applied in this frame (newest last), undone ones to redo, and whether the frame is still as each left it. */
+  /** Changes applied in this frame (newest last: fixes, accepted parameters, item records), undone ones to redo, and whether the frame is still as each left it. */
   applied?: { past: { id: string; title: string; key: string }[]; future: { id: string; title: string; key: string }[]; undoClean: boolean; redoClean: boolean };
   onUndoApplied?: () => void; onRedoApplied?: () => void;
   /** Inspection annotation: drawing (false) or erasing marks (true). */
@@ -50,14 +42,12 @@ type Props = {
   /** Autocomplete: concerns AI suggested from the inspection annotation (and the typed start), asked with onSuggest; the first that continues the text is shown as its completion (Tab). */
   suggestions?: { items: string[]; loading: boolean; error: string }; onSuggest?: () => void;
   /**
-   * Open an exploration frame beside this one with the same brush marks: control execution with a metaphoric
-   * handle ("execution"; the cause when `index` is null) or try a recommendation's key values ("parameters").
+   * Open the Execution frame beside this one with the same brush marks: execution goes step by step, and the state
+   * wanted at a moment of it is drawn there.
    */
-  onExplore?: (mode: "execution" | "parameters", index: number | null) => void;
-  /** Whether that exploration frame is open (the button then goes to it). */
-  exploring?: (mode: "execution" | "parameters", index: number | null) => boolean;
-  /** Which recommendation an applied entry was (its key). */
-  recommendationKey?: (item: Recommendation) => string;
+  onExplore?: () => void;
+  /** Whether that Execution frame is open (the button then goes to it). */
+  exploring?: boolean;
 };
 
 type Suggestion = ParameterSuggestion & { rejected?: boolean };
@@ -70,22 +60,22 @@ const suggestedRange = (item: ParameterSuggestion) => {
 };
 /**
  * Constants the code hard-codes that the concern depends on, suggested as new
- * properties. Pending: accept (exposes it, no regeneration) or reject. Accepted:
+ * params. Pending: accept (exposes it, no regeneration) or reject. Accepted:
  * a control right here to try values. Rejected: folded, can be brought back.
- * Clicking one highlights it in the constraint table (and what overlays show it).
+ * Clicking one highlights it in the param table (and what overlays show it).
  */
 function HiddenParameters({ items, scene, busy, focus, onFocus, onAccept, onReject, onValue }: { items: Suggestion[]; scene: Scene; busy: boolean;
   focus: InspectionFocus | null; onFocus: (focus: InspectionFocus) => void;
   onAccept?: Props["onAcceptParameter"]; onReject?: Props["onRejectParameter"]; onValue?: Props["onParameterValue"] }) {
   return <div className="inspection-parameters"><span className="section-kicker">HIDDEN PARAMETERS</span>
-    <span className="inspection-muted">Hard-coded values in the code that relate to this concern. The overlay shows them with the current code values even before Accept. Accept adds them as properties you can adjust right away (no code regeneration).</span>
+    <span className="inspection-muted">Hard-coded values in the code that relate to this concern. The overlay shows them with the current code values even before Accept. Accept adds them as params you can adjust right away (no code regeneration).</span>
     {items.map((item, i) => {
-      const status = parameterStatus(item, scene), node = findNode(scene, item.nodeId), transformation = node?.transformations.find(entry => entry.id === item.transformationId);
-      const property = node ? findProperty(node, item.id) : undefined, value = property && property.value.type !== "algorithm" ? property.value : null;
+      const status = parameterStatus(item, scene), node = findNode(scene, item.nodeId), constraint = node?.constraints.find(entry => entry.id === item.constraintId);
+      const param = node ? findParam(node, item.id) : undefined, value = param && param.value.type !== "algorithm" ? param.value : null;
       const focused = sameFocus(focus, parameterFocus(item));
       return <div key={`${item.nodeId}:${item.id}`} className={`inspection-parameter ${status} ${focused ? "focused" : ""}`}>
-        <button type="button" className="inspection-parameter-head" aria-pressed={focused} title="Highlight it in the properties panel" onClick={() => onFocus(parameterFocus(item))}>
-          <b><em>{status === "accepted" ? "Added" : status === "rejected" ? "Rejected" : "Suggested"}</em>{item.label}<span>{node?.name ?? item.nodeId} · {transformation?.label ?? item.transformationId}</span></b></button>
+        <button type="button" className="inspection-parameter-head" aria-pressed={focused} title="Highlight it in the params panel" onClick={() => onFocus(parameterFocus(item))}>
+          <b><em>{status === "accepted" ? "Added" : status === "rejected" ? "Rejected" : "Suggested"}</em>{item.label}<span>{node?.name ?? item.nodeId} · {constraint?.property ?? item.constraintId}</span></b></button>
         {status !== "rejected" && <span>{item.reason}</span>}
         {status === "pending" && <>
           <code>Current code value {suggestedRange(item)}</code>
@@ -96,7 +86,7 @@ function HiddenParameters({ items, scene, busy, focus, onFocus, onAccept, onReje
           <details><summary>View code changes</summary>{item.edits.map((edit, k) => <pre key={k}><del>{edit.find}</del>{"\n"}<ins>{edit.replace}</ins></pre>)}</details>
         </>}
         {status === "accepted" && value && <ParameterControl label={item.label} value={value} disabled={!onValue} onChange={next => onValue?.(item.nodeId, item.id, next)} />}
-        {status === "accepted" && <small className="inspection-applied-mark">✓ Added as a property · revert with Undo apply</small>}
+        {status === "accepted" && <small className="inspection-applied-mark">✓ Added as a param · revert with Undo apply</small>}
         {status === "rejected" && onReject && <button type="button" className="inspection-parameter-restore" onClick={() => onReject(i, false)}>Show again</button>}
       </div>;
     })}
@@ -184,22 +174,46 @@ function MarkPen({ pen, onPen }: { pen: MarkStyle; onPen: (pen: MarkStyle) => vo
   </div>;
 }
 
+/** The properties an owner holds at a step (its FSM data in the step's runtime), by property name. */
+function ownerData(step: InspectionState["steps"][number]) {
+  const owners = step.runtime && typeof step.runtime === "object" ? (step.runtime as { owners?: Record<string, Record<string, { state?: string; data?: Record<string, unknown> }>> }).owners : undefined;
+  return owners?.[step.nodeId ?? ""]?.[step.key ?? ""]?.data ?? {};
+}
+const shortData = (value: unknown): string => typeof value === "number" ? formatScalar(Math.round(value * 100) / 100) : typeof value === "string" || typeof value === "boolean" ? String(value).slice(0, 24)
+  : value && typeof value === "object" && Number.isFinite((value as { x?: number }).x) && Number.isFinite((value as { y?: number }).y) ? `(${Math.round((value as { x: number }).x)}, ${Math.round((value as { y: number }).y)})`
+  : Array.isArray(value) ? `[${value.length}]` : value === undefined ? "—" : "{…}";
+/**
+ * Within a state machine step: the constraints the state it enters evaluates, in order, each with the property it
+ * holds at that moment. Stepping through them (◀ ▶) focuses one constraint after another, as execution computes them.
+ */
+function StateConstraints({ step, scene, focus, onFocus }: { step: InspectionState["steps"][number]; scene: Scene; focus: InspectionFocus | null; onFocus: (item: InspectionFocus | null) => void }) {
+  const owner = step.nodeId ? findNode(scene, step.nodeId) : undefined, list = owner && step.to ? stateConstraints(owner, step.to) : [], data = ownerData(step);
+  if (!owner || !list.length) return null;
+  const at = list.findIndex(item => focus?.kind === "constraint" && focus.nodeId === owner.id && focus.id === item.id);
+  const go = (i: number) => onFocus({ kind: "constraint", nodeId: owner.id, id: list[Math.max(0, Math.min(list.length - 1, i))].id });
+  return <div className="inspection-state-constraints" aria-label="Constraints this state evaluates">
+    <span className="inspection-subtitle">CONSTRAINTS IN ORDER
+      <span className="inspection-constraint-stepper"><button type="button" aria-label="Previous constraint" disabled={at <= 0} onClick={() => go(at - 1)}>◀</button>
+        <output>{at < 0 ? "–" : at + 1} / {list.length}</output>
+        <button type="button" aria-label="Next constraint" disabled={at >= list.length - 1} onClick={() => go(at + 1)}>▶</button></span></span>
+    <ol>{list.map((item, i) => <li key={item.id}><button type="button" className={i === at ? "focused" : ""} title={item.description} onClick={() => onFocus(i === at ? null : { kind: "constraint", nodeId: owner.id, id: item.id })}>
+      <b>{item.property}</b><span>{shortData(data[item.property])}</span></button></li>)}</ol>
+  </div>;
+}
+
 /**
  * Inspection of one brush: step through the recorded states and transitions
- * (up to MAX_STEPS) and see every constraint value change. With the inspection
+ * (up to MAX_STEPS) and see every param value change. With the inspection
  * annotation tool the user marks a concern, which becomes a new targeted
- * inspection tool (AI overlays, value fixes and recommendations).
+ * inspection tool (AI overlays, and an Execution frame where the state wanted is drawn).
  */
 export function InspectionPanel(props: Props) {
-  // Recommendation previews on/off (the next inspection writes them or not; its time is shown to compare).
-  const previewSwitch = props.onPreviews && <label className="inspection-preview-switch" title="With it on, the inspection also writes a quick visual preview (code) for each recommendation; it takes longer">
-    <input type="checkbox" checked={Boolean(props.previews)} disabled={props.busy} onChange={e => props.onPreviews!(e.target.checked)} />Also generate recommendation previews</label>;
-  const deferSwitch = props.onDeferExecution && <label className="inspection-preview-switch" title="With it on, the Execution frames (cause and each recommendation) are placed but made only when you press Generate in them">
+  const deferSwitch = props.onDeferExecution && <label className="inspection-preview-switch" title="With it on, the Execution frame is placed but made only when you press Generate in it">
     <input type="checkbox" checked={Boolean(props.deferExecution)} disabled={props.busy} onChange={e => props.onDeferExecution!(e.target.checked)} />Generate Execution exploration later (frame only)</label>;
   const { brush, scene, nodeIds, state, busy } = props;
   // Reset history asks once more, in place, before deleting the steps.
   const [confirmReset, setConfirmReset] = useState(false);
-  // Undo/redo of an applied recommendation asks first when the frame changed since (those later edits go too).
+  // Undo/redo of an applied change asks first when the frame changed since (those later edits go too).
   const [confirmStep, setConfirmStep] = useState<"undo" | "redo" | null>(null);
   const annotating = props.kind === "inspect-annotate", targeted = props.kind === "targeted" ? props.targeted : undefined;
   const frames = props.frames ?? [];
@@ -207,37 +221,30 @@ export function InspectionPanel(props: Props) {
     <span>{frames.length ? "Pick a frame to inspect, or add a brush to this frame with the Brush tool." : "Add a brush to this frame with the Brush tool."}</span>
     {frames.length > 0 && <div className="inspection-frame-list">{frames.map(frame => <button key={frame.id} onClick={() => props.onFrame?.(frame.id)}>{frame.master ? "◆" : "◇"} {frame.name}<small>{frame.master ? "master" : "instance"}</small></button>)}</div>}</div>;
   const steps = state.steps, index = state.cursor ?? steps.length - 1, step = steps[index];
-  const changed = changedKeys(steps, index), rows = constraintRows(scene, nodeIds);
+  const changed = changedKeys(steps, index), rows = paramRows(scene, nodeIds);
   const node = (id: string | null) => id ? findNode(scene, id) : undefined;
   const stateLabel = (nodeId: string | null, id: string | null) => id ? node(nodeId)?.machine?.states.find(item => item.id === id)?.label || id : "—";
   const transition = step?.nodeId && step.transitionId ? node(step.nodeId)?.machine?.transitions.find(item => item.id === step.transitionId) : undefined;
   const focus = (item: InspectionFocus) => props.onFocus(sameFocus(state.focus, item) ? null : item);
-  const stepTitle = (item: (typeof steps)[number]) => item.nodeId ? `${node(item.nodeId)?.name ?? item.nodeId}: ${stateLabel(item.nodeId, item.from)} → ${stateLabel(item.nodeId, item.to)}` : "Start";
+  const owner = (item: (typeof steps)[number]) => `${node(item.nodeId)?.name ?? item.nodeId}${item.key ? ` #${item.key}` : ""}`;
+  const stepTitle = (item: (typeof steps)[number]) => item.nodeId ? `${owner(item)}: ${stateLabel(item.nodeId, item.from)} → ${stateLabel(item.nodeId, item.to)}` : "Start";
   /** What a timeline mark says on hover: the transition (or capture) and the state change. */
   const stepLabel = (item: (typeof steps)[number]) => {
     const via = item.nodeId && item.transitionId ? node(item.nodeId)?.machine?.transitions.find(entry => entry.id === item.transitionId) : undefined;
     return item.nodeId ? { event: via?.label || via?.id || "Time / direct move", detail: stepTitle(item) } : { event: stepTitle(item), detail: "Values at this point" };
   };
   const result = targeted?.result ?? null;
-  /** A button that opens (or goes to) an exploration frame. */
-  const explore = (mode: "execution" | "parameters", index: number | null) => props.onExplore && <button type="button" className={`inspection-explore-button ${mode}`} disabled={busy}
-    title={mode === "execution" ? "Open a new frame with the same brush marks and run their execution back and forth with a gesture" : "Open a new frame with the same brush marks and drag this recommendation's key values on it"}
-    onClick={() => props.onExplore!(mode, index)}>
-    <Icon name={mode === "execution" ? "play" : "target"} size={11} />{mode === "execution" ? "Explore Execution" : "Explore key parameters"}{props.exploring?.(mode, index) && <small>Open · go</small>}</button>;
-  /** The node and part a recommendation changes, named as the user sees them. */
-  const recommendationTargets = (item: Recommendation): { node: string; label: string; focus: InspectionFocus }[] => {
-    if (item.kind === "value") return item.changes.flatMap(change => {
-      const row = rows.find(entry => entry.key === change.key); if (!row) return [];
-      return [{ node: row.node, label: `${row.transformation ? `${row.transformation} · ` : ""}${row.property}${row.path ? ` › ${row.path}` : ""}`, focus: { kind: "constraint" as const, nodeId: row.binding.nodeId, id: row.binding.path[0] } }];
-    }).filter((target, i, all) => all.findIndex(other => sameFocus(other.focus, target.focus)) === i);
-    const target = node(item.nodeId);
-    // A transformation fix may change several transformations: one chip each, each highlighting just its own card.
-    // A new transformation: the chip names the node it goes on (clicking selects that node).
-    if (item.kind === "add-transformation") return [{ node: target?.name ?? item.nodeId, label: "+ New transformation", focus: { kind: "transformation" as const, nodeId: item.nodeId, id: "" } }];
-    if (item.kind === "transformation") return recommendationTransformations(item).map(id => ({ node: target?.name ?? item.nodeId, label: target?.transformations.find(entry => entry.id === id)?.label || id, focus: { kind: "transformation" as const, nodeId: item.nodeId, id } }));
-    const label = item.kind === "state" ? target?.machine?.states.find(entry => entry.id === item.targetId)?.label : target?.machine?.transitions.find(entry => entry.id === item.targetId)?.label;
-    return [{ node: target?.name ?? item.nodeId, label: label || item.targetId, focus: { kind: item.kind, nodeId: item.nodeId, id: item.targetId } }];
-  };
+  /** Undo / redo a whole applied change: scene, code and prompt together. */
+  const appliedBar = props.applied && (props.applied.past.length > 0 || props.applied.future.length > 0) && <div className="inspection-applied-bar"><span className="section-kicker">APPLIED</span>
+    {confirmStep ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm undo">
+        Changes made after applying will also be {confirmStep === "undo" ? "reverted" : "overwritten"}.
+        <button className="danger" onClick={() => { const step = confirmStep; setConfirmStep(null); (step === "undo" ? props.onUndoApplied : props.onRedoApplied)?.(); }}>{confirmStep === "undo" ? "Undo" : "Redo"}</button>
+        <button onClick={() => setConfirmStep(null)}>Cancel</button></span>
+      : <span className="inspection-applied-actions">
+        <button disabled={busy || !props.applied.past.length} title={props.applied.past.length ? `Undo “${props.applied.past.at(-1)!.title}” (scene and code)` : "Nothing applied"}
+          onClick={() => props.applied!.undoClean ? props.onUndoApplied?.() : setConfirmStep("undo")}><Icon name="undo" size={12} />Undo apply</button>
+        <button disabled={busy || !props.applied.future.length} title={props.applied.future.length ? `Redo “${props.applied.future.at(-1)!.title}”` : "Nothing to redo"}
+          onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>}</div>;
   return <div className="inspection-body">
     <div className="inspection-toolbar">
       <span className="inspection-brush"><i style={{ background: brush.color }} />{brush.name}</span>
@@ -272,17 +279,18 @@ export function InspectionPanel(props: Props) {
         {step && <div className="inspection-step-detail">
           <span className="section-kicker">STEP {index + 1}</span>
           {step.nodeId ? <>
-            <strong>{node(step.nodeId)?.name}</strong>
+            <strong>{owner(step)}</strong>
             <div className="inspection-chips">
               <button className={sameFocus(state.focus, { kind: "state", nodeId: step.nodeId, id: step.from || "" }) ? "focused" : ""} disabled={!step.from} onClick={() => step.from && focus({ kind: "state", nodeId: step.nodeId!, id: step.from })}>{stateLabel(step.nodeId, step.from)}</button>
               <span>→</span>
               <button className={sameFocus(state.focus, { kind: "state", nodeId: step.nodeId, id: step.to || "" }) ? "focused" : ""} onClick={() => step.to && focus({ kind: "state", nodeId: step.nodeId!, id: step.to })}>{stateLabel(step.nodeId, step.to)}</button>
             </div>
             {transition ? <button className={`inspection-transition ${sameFocus(state.focus, { kind: "transition", nodeId: step.nodeId, id: transition.id }) ? "focused" : ""}`} onClick={() => focus({ kind: "transition", nodeId: step.nodeId!, id: transition.id })}>
-              <Icon name="arrow" size={12} />{transition.label}<small>{transition.trigger === "after" ? `after ${transition.afterMs}ms` : "event"}</small></button>
+              <Icon name="arrow" size={12} />{transition.label}<small>event “{transition.event}”</small></button>
               : <small className="inspection-muted">Moved without a transition (restart or direct move)</small>}
+            <StateConstraints step={step} scene={scene} focus={state.focus} onFocus={item => props.onFocus(item)} />
           </> : <span className="inspection-muted">{stepTitle(step)} · recorded the values at this point.</span>}
-          <span className="inspection-muted">{changed.size ? `${[...changed].filter(key => !key.includes("/@")).length} constraint values differ from the previous step.` : index > 0 ? "Same values as the previous step." : ""}</span>
+          <span className="inspection-muted">{changed.size ? `${[...changed].filter(key => !key.includes("/@")).length} param values differ from the previous step.` : index > 0 ? "Same values as the previous step." : ""}</span>
         </div>}
         {annotating && <form className="inspection-concern" onSubmit={e => { e.preventDefault(); props.onInspect(); }}>
           <span className="section-kicker">INSPECTION ANNOTATION</span>
@@ -319,68 +327,35 @@ export function InspectionPanel(props: Props) {
               </div>}
             </>;
           })()}
-          {previewSwitch}{deferSwitch}
+          {deferSwitch}
           <button type="submit" className="primary" disabled={busy || !(state.concern.trim() || state.marks.length)}><Icon name="target" size={13} />{busy ? "Creating…" : "Create targeted inspection"}</button>
         </form>}
         {targeted && <div className="inspection-concern">
           <span className="section-kicker">TARGETED INSPECTION</span>
           <strong>{targeted.name}</strong>
           {targeted.concern && <span className="inspection-muted">{targeted.concern}</span>}
-          {targeted.timing && <small className="inspection-timing">Last inspection {(targeted.timing.ms / 1000).toFixed(1)}s · recommendation preview {targeted.timing.previews ? "on" : "off"}</small>}
-          {previewSwitch}{deferSwitch}
+          {targeted.timing && <small className="inspection-timing">Last inspection {(targeted.timing.ms / 1000).toFixed(1)}s</small>}
+          {deferSwitch}
           <button type="button" className="inspection-apply-all" disabled={busy} title="Build this inspection again from the current steps" onClick={props.onInspect}><Icon name="target" size={12} />{busy ? "Inspecting…" : "Inspect again"}</button>
         </div>}
         {result && <div className="inspection-result">
           <p>{result.summary}</p>
-          {/* The cause as a process: run the brush's execution under the hand in a frame of its own (its values already have handles here). */}
-          {props.onExplore && <div className="inspection-explore"><span className="inspection-muted">Run this process by hand</span>{explore("execution", null)}</div>}
+          {/* The process under the hand in a frame of its own: step to the moment the concern is about and draw the state wanted there. */}
+          {props.onExplore && <div className="inspection-explore"><span className="inspection-muted">Step to the moment, then draw the state you want there with the tools AI makes for it: the brush is fixed to what you draw.</span>
+            <button type="button" className="inspection-explore-button execution" disabled={busy} title="Open the Execution frame with the same brush marks: run their execution back and forth, and draw the state you want at a moment"
+              onClick={props.onExplore}><Icon name="play" size={11} />Execution · draw the state you want{props.exploring && <small>Open · go</small>}</button></div>}
           {result.overlays.length > 0 && <div className="inspection-legend">{result.overlays.map(overlay => <button key={overlay.id} className={sameFocus(state.focus, overlay.link) ? "focused" : ""} onClick={() => focus(overlay.link)}>
             <i style={{ background: overlay.color }} />{overlay.name || overlay.label.replace(/\$\{[^}]*\}/g, "…").trim() || overlay.id}</button>)}</div>}
-          {result.valueFixes.length > 0 && <div className="inspection-fixes"><span className="section-kicker">VALUE FIX</span>
-            {result.valueFixes.map((fix, i) => <div key={i} className="inspection-fix"><code>{rows.find(row => row.key === fix.key)?.property || fix.key}{fix.stateId ? ` · ${fix.stateId}` : ""} = {String(fix.value)}</code><span>{fix.reason}</span>
-              <button disabled={busy} onClick={() => props.onApplyChanges([fix])}>Apply</button></div>)}
-            {result.valueFixes.length > 1 && <button className="inspection-apply-all" disabled={busy} onClick={() => props.onApplyChanges(result.valueFixes)}>Apply all values</button>}
-          </div>}
           {result.records && <ItemRecords item={result.records} applied={recordingApplied(scene, props.code ?? "", result.records)} busy={busy} onApply={props.onApplyRecording} />}
           {result.parameters.length > 0 && <HiddenParameters items={result.parameters} scene={scene} busy={busy} focus={state.focus} onFocus={focus} onAccept={props.onAcceptParameter} onReject={props.onRejectParameter} onValue={props.onParameterValue} />}
-          {result.recommendations.length > 0 && <div className="inspection-recommendations"><div className="inspection-applied-bar"><span className="section-kicker">RECOMMENDATIONS</span>
-            {/* Undo / redo a whole applied recommendation: scene, code and prompt together. */}
-            {props.applied && (props.applied.past.length > 0 || props.applied.future.length > 0) && (confirmStep ? <span className="inspection-reset-confirm" role="group" aria-label="Confirm undo">
-                Changes made after applying will also be {confirmStep === "undo" ? "reverted" : "overwritten"}.
-                <button className="danger" onClick={() => { const step = confirmStep; setConfirmStep(null); (step === "undo" ? props.onUndoApplied : props.onRedoApplied)?.(); }}>{confirmStep === "undo" ? "Undo" : "Redo"}</button>
-                <button onClick={() => setConfirmStep(null)}>Cancel</button></span>
-              : <span className="inspection-applied-actions">
-                <button disabled={busy || !props.applied.past.length} title={props.applied.past.length ? `Undo “${props.applied.past.at(-1)!.title}” (scene and code)` : "Nothing applied"}
-                  onClick={() => props.applied!.undoClean ? props.onUndoApplied?.() : setConfirmStep("undo")}><Icon name="undo" size={12} />Undo apply</button>
-                <button disabled={busy || !props.applied.future.length} title={props.applied.future.length ? `Redo “${props.applied.future.at(-1)!.title}”` : "Nothing to redo"}
-                  onClick={() => props.applied!.redoClean ? props.onRedoApplied?.() : setConfirmStep("redo")}><Icon name="redo" size={12} />Redo</button></span>)}</div>
-            {result.recommendations.map((listed, i) => {
-              // A new transformation it already added reads as that transformation (back to "new" if it is undone).
-              const item = currentRecommendation(listed, scene), added = item !== listed, appliedEntry = props.recommendationKey ? [...(props.applied?.past ?? [])].reverse().find(entry => entry.key === props.recommendationKey!(listed)) : undefined, applied = Boolean(appliedEntry);
-              return <div key={i} className={`inspection-recommendation ${applied ? "applied" : ""} ${added ? "added" : ""}`}><b><em>{item.kind === "value" ? "Value" : item.kind === "transformation" ? (added ? "Transformation · added" : "Transformation") : item.kind === "add-transformation" ? "New Transformation" : item.kind === "state" ? "State" : "Transition"}</em>{item.title}</b>
-              {/* What it changes: click to highlight it (the transformation card, the property, or the state/transition in the graph). */}
-              <div className="inspection-targets">{recommendationTargets(item).map(target => <button key={`${target.focus.kind}:${target.focus.nodeId}:${target.focus.id}`} className={`inspection-target ${sameFocus(state.focus, target.focus) ? "focused" : ""}`}
-                aria-pressed={sameFocus(state.focus, target.focus)} title="Highlight what this changes" onClick={() => focus(target.focus)}><Icon name="target" size={11} /><span>{target.node}</span><b>{target.label}</b></button>)}</div>
-              <span>{item.detail}</span>
-              {/* Made with previews on: roughly what it would draw, before applying it. */}
-              {"preview" in listed && props.renderPreview?.(listed, i)}
-              {/* Understand it by hand before (or after) applying it, in a frame of its own. */}
-              {props.onExplore && <div className="inspection-explore">{explore("execution", i)}{explore("parameters", i)}</div>}
-              <button disabled={busy} title={added ? "Refine the transformation this recommendation added (in a new fork)" : "Copy this frame and apply it to a fork of the brush there; this brush stays as it is"} onClick={() => props.onApplyRecommendation(item, i, listed)}>
-                <span className="fork-mark">⑂</span>{item.kind === "value" ? "Fork & apply values" : item.kind === "add-transformation" ? "Fork & add with AI" : "Fork & apply with AI"}</button>
-              {(props.forksOf?.(listed) ?? []).map(fork => <button key={fork.id} type="button" className="inspection-fork-link" title="Go to this fork (its frame, with its targeted tool)" onClick={() => props.onOpenFork?.(fork.id)}>⑂ Applied in fork · {fork.name}<Icon name="arrow" size={11} /></button>)}
-              {applied && <small className="inspection-applied-mark">✓ Applied{added ? " · added as the transformation above" : ""} · revert with Undo apply</small>}
-              {/* The overlays follow what was applied when asked; Undo apply takes them back with it. */}
-              {appliedEntry && targeted && props.onUpdateOverlays && <div className="inspection-overlay-update">
-                {props.overlaysUpdated?.(appliedEntry.id) && <small className="inspection-applied-mark">✓ Updated the overlay to match this change · Undo apply reverts it too</small>}
-                <button disabled={busy} title="Rebuild this inspection's overlays for the scene and code after this recommendation" onClick={() => props.onUpdateOverlays!(listed)}>
-                  <Icon name="target" size={12} />{props.overlaysUpdated?.(appliedEntry.id) ? "Update overlays again" : "Update overlays"}</button></div>}</div>;
-            })}
-          </div>}
+          {/* Fixes applied to forks of the brush from what was drawn in the Execution frame. */}
+          {(props.forks ?? []).length > 0 && <div className="inspection-forks"><span className="section-kicker">FIXED IN FORKS</span>
+            {props.forks!.map(fork => <button key={fork.id} type="button" className="inspection-fork-link" title="Go to this fork (its frame, with its targeted tool)" onClick={() => props.onOpenFork?.(fork.id)}>⑂ {fork.title}<small>{fork.name}</small><Icon name="arrow" size={11} /></button>)}</div>}
+          {appliedBar}
         </div>}
       </section>
-      <section className="inspection-table" aria-label="Constraint values">
-        <table><thead><tr><th>Constraint</th><th>Value</th><th>Δ</th><th>Steps</th></tr></thead><tbody>
+      <section className="inspection-table" aria-label="Param values">
+        <table><thead><tr><th>Param</th><th>Value</th><th>Δ</th><th>Steps</th></tr></thead><tbody>
           {rows.map(row => {
             // A what-if value set at this step only (by a handle) shows over the recorded one.
             const value = stepValues(step)?.[row.key], previous = stepValues(steps[index - 1])?.[row.key], edited = Boolean(step?.edits && row.key in step.edits);
@@ -389,12 +364,12 @@ export function InspectionPanel(props: Props) {
             const delta = typeof value === "number" && typeof previous === "number" && value !== previous ? value - previous : null;
             const numbers = steps.map(item => stepValues(item)![row.key]).filter((item): item is number => typeof item === "number");
             const low = Math.min(...numbers), high = Math.max(...numbers);
-            const item: InspectionFocus = { kind: "constraint", nodeId: row.binding.nodeId, id: row.binding.path[0] };
+            const item: InspectionFocus = { kind: "param", nodeId: row.binding.nodeId, id: row.binding.path[0] };
             return <tr key={row.key} className={`${changed.has(row.key) ? "changed" : ""} ${edited || items ? "edited" : ""} ${sameFocus(state.focus, item) ? "focused" : ""}`} onClick={() => focus(item)}>
-              <td><span className="inspection-node">{row.node}</span><span>{row.transformation && `${row.transformation} · `}<b>{row.property}</b>{row.path && ` › ${row.path}`}</span>
+              <td><span className="inspection-node">{row.node}</span><span>{row.constraint && `${row.constraint} · `}<b>{row.param}</b>{row.path && ` › ${row.path}`}</span>
                 {(edited || items > 0) && <span className="inspection-step-edit" title={edited ? `Recorded ${formatScalar(step!.values[row.key])}; this step is drawn with ${formatScalar(value)} only` : `${items} drawn item(s) at this step have their own value`}>
                   {edited ? `This step only (recorded ${formatScalar(step!.values[row.key])})` : ""}{edited && items ? " · " : ""}{items ? `${items} items only` : ""}
-                  {props.onResetEdit && <button type="button" aria-label={`Reset ${row.property} at this step`} title="Back to the recorded value" onClick={e => { e.stopPropagation(); props.onResetEdit!(row.key); }}><Icon name="close" size={9} /></button>}</span>}</td>
+                  {props.onResetEdit && <button type="button" aria-label={`Reset ${row.param} at this step`} title="Back to the recorded value" onClick={e => { e.stopPropagation(); props.onResetEdit!(row.key); }}><Icon name="close" size={9} /></button>}</span>}</td>
               <td className="inspection-value">{row.binding.type === "color" && typeof value === "string" ? <i className="inspection-color" style={{ background: value }} /> : null}{formatScalar(value)}</td>
               <td className="inspection-delta">{delta !== null ? `${delta > 0 ? "+" : ""}${formatScalar(delta)}` : changed.has(row.key) ? "changed" : ""}</td>
               <td className="inspection-trace">{steps.map((item, i) => { const v = stepValues(item)![row.key];
@@ -402,7 +377,7 @@ export function InspectionPanel(props: Props) {
                 return <i key={item.id} className={i === index ? "current" : ""} title={`${i + 1}: ${formatScalar(v)}`} style={{ height, background: row.binding.type === "color" && typeof v === "string" ? v : undefined }} />; })}</td>
             </tr>;
           })}
-          {!rows.length && <tr><td colSpan={4} className="inspection-muted">This brush has no constraint values to adjust.</td></tr>}
+          {!rows.length && <tr><td colSpan={4} className="inspection-muted">This brush has no param values to adjust.</td></tr>}
         </tbody></table>
       </section>
     </div>

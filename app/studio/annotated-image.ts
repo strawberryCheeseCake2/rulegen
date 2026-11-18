@@ -1,3 +1,5 @@
+import { boxOf, mergeOf, PAPER, placedOutline, type IdealObject, type IdealState } from "../lib/alignment";
+
 /** Normalized (0..1) annotation strokes over the frame. */
 export type Marks = { x: number; y: number }[][];
 
@@ -21,22 +23,48 @@ export async function annotatedImage(image: string, marks: Marks, color = "#7c3a
 export const compactMarks = (marks: Marks, max = 64) => marks.slice(-max).map(mark => mark.filter((_, i) => i % Math.max(1, Math.ceil(mark.length / 64)) === 0).slice(0, 64));
 
 /**
- * Direct manipulations of a preview's objects drawn over its picture for AI: each object's region carried where the
- * user moved, scaled and rotated it, its box before dashed and after solid (in `color`).
+ * The state the user drew over a picture, for AI: erased parts and where lifted parts were painted with the paper
+ * (their outline dashed), lifted parts drawn where they were put, forms with their outline (merged forms as one
+ * outline: every outline stroked, then every inside painted over), lines, and the names given.
  */
-export async function manipulatedImage(image: string, items: { box: { x: number; y: number; w: number; h: number }; outline?: { x: number; y: number }[]; dx: number; dy: number; scale: number; rotate: number }[], color = "#0e7490") {
-  if (!items.length) return image;
+export async function idealImage(image: string, state: IdealState) {
+  if (!state.objects.length) return image;
   const base = new Image(); base.src = image; await base.decode();
   const canvas = document.createElement("canvas"); canvas.width = base.naturalWidth; canvas.height = base.naturalHeight;
   const ctx = canvas.getContext("2d")!, k = canvas.width / 900; ctx.drawImage(base, 0, 0);
-  for (const item of items) {
-    const { x, y, w, h } = item.box, cx = (x + w / 2) * k, cy = (y + h / 2) * k, outline = item.outline ?? [];
-    // The crop's outline (its box when it has none), around its center.
-    const trace = (dx: number, dy: number) => { ctx.beginPath(); if (outline.length > 2) { outline.forEach((p, i) => i ? ctx.lineTo(p.x * k + dx, p.y * k + dy) : ctx.moveTo(p.x * k + dx, p.y * k + dy)); ctx.closePath(); } else ctx.rect(x * k + dx, y * k + dy, w * k, h * k); };
-    ctx.save(); ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, 2 * k); ctx.setLineDash([6 * k, 5 * k]); trace(0, 0); ctx.stroke(); ctx.restore();
-    ctx.save(); ctx.translate(cx + item.dx * k, cy + item.dy * k); ctx.rotate(item.rotate * Math.PI / 180); ctx.scale(item.scale, item.scale);
-    trace(-cx, -cy); ctx.save(); ctx.clip(); ctx.drawImage(base, -cx, -cy); ctx.restore();
-    ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, 2.5 * k) / item.scale; ctx.stroke(); ctx.restore();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  const trace = (points: { x: number; y: number }[], closed = true) => { ctx.beginPath(); points.forEach((p, i) => i ? ctx.lineTo(p.x * k, p.y * k) : ctx.moveTo(p.x * k, p.y * k)); if (closed) ctx.closePath(); };
+  const of = (kind: IdealObject["kind"]) => state.objects.filter(item => item.kind === kind);
+  for (const item of [...of("erase"), ...of("crop")]) {
+    trace(item.outline); ctx.fillStyle = PAPER; ctx.fill();
+    ctx.save(); ctx.strokeStyle = item.color; ctx.globalAlpha = .7; ctx.lineWidth = Math.max(1.5, 1.5 * k); ctx.setLineDash([6 * k, 5 * k]); ctx.stroke(); ctx.restore();
+  }
+  for (const item of of("crop")) {
+    const c = { x: item.box.x + item.box.w / 2, y: item.box.y + item.box.h / 2 };
+    ctx.save(); ctx.translate((c.x + item.dx) * k, (c.y + item.dy) * k); ctx.rotate(item.rotate * Math.PI / 180); ctx.scale(item.scale, item.scale); ctx.translate(-c.x * k, -c.y * k);
+    trace(item.outline); ctx.save(); ctx.clip(); ctx.drawImage(base, 0, 0); ctx.restore();
+    ctx.strokeStyle = item.color; ctx.lineWidth = Math.max(2, 2 * k) / item.scale; ctx.stroke(); ctx.restore();
+  }
+  const groups = [...state.merges.map(merge => of("shape").filter(item => merge.members.includes(item.id))).filter(items => items.length > 1),
+    ...of("shape").filter(item => !mergeOf(state, item.id)).map(item => [item])];
+  for (const items of groups) {
+    const outlines = items.map(placedOutline);
+    ctx.strokeStyle = items[0].color; ctx.lineWidth = (items.length > 1 ? 7 : 3.5) * k;
+    for (const points of outlines) { trace(points); ctx.stroke(); }
+    if (items.length > 1) for (const points of outlines) { trace(points); ctx.fillStyle = PAPER; ctx.fill(); }
+    ctx.save(); ctx.globalAlpha = .14; ctx.fillStyle = items[0].color; for (const points of outlines) { trace(points); ctx.fill(); } ctx.restore();
+  }
+  for (const item of of("line")) { trace(placedOutline(item), false); ctx.strokeStyle = item.color; ctx.lineWidth = 4 * k; ctx.stroke(); }
+  // Items of the picture pointed at as they are: a dashed outline around each.
+  for (const item of of("item")) { trace(item.outline); ctx.save(); ctx.strokeStyle = item.color; ctx.lineWidth = 2.5 * k; ctx.setLineDash([7 * k, 4 * k]); ctx.stroke(); ctx.restore(); }
+  // Names on what they name.
+  ctx.font = `600 ${Math.round(17 * k)}px Inter, Arial, sans-serif`; ctx.textAlign = "center";
+  const named = [...state.objects.filter(item => item.label && !mergeOf(state, item.id)?.label).map(item => ({ text: item.label, color: item.color, points: placedOutline(item) })),
+    ...state.merges.filter(merge => merge.label).map(merge => ({ text: merge.label, color: state.objects.find(item => merge.members.includes(item.id))?.color ?? "#1f2328", points: state.objects.filter(item => merge.members.includes(item.id)).flatMap(placedOutline) }))];
+  for (const label of named) {
+    if (!label.points.length) continue;
+    const box = boxOf(label.points), x = Math.min(880, Math.max(20, box.x + box.w / 2)) * k, y = Math.max(18, box.y - 8) * k;
+    ctx.lineWidth = 4 * k; ctx.strokeStyle = PAPER; ctx.strokeText(label.text, x, y); ctx.fillStyle = label.color; ctx.fillText(label.text, x, y);
   }
   return canvas.toDataURL("image/png");
 }

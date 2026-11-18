@@ -20,7 +20,7 @@ export const workspaceSchema = z.object({
 });
 export type FrameGroup = WorkspaceLayout["groups"][number];
 export type WorkspaceLayout = z.infer<typeof workspaceSchema>;
-export type FrameId = "source" | `sketch-${string}` | `proxy-${string}` | `explore-${string}` | `slot-${string}`;
+export type FrameId = "source" | `sketch-${string}` | `proxy-${string}` | `explore-${string}`;
 export const FRAME_WIDTH = 900, FRAME_HEIGHT = 600, FRAME_GAP_X = 140, FRAME_GAP_Y = 140;
 /** Room an exploration frame's controls take under it. */
 export const EXPLORE_BAR_HEIGHT = 260;

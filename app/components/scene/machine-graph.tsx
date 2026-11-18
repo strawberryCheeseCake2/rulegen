@@ -112,7 +112,7 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
         const active = edge.from === runtimeId, picked = pickedTransition === edge.id, path = curvePath(edge.curve);
         const taken = inspected?.transition === edge.id, related = Boolean(inspected?.transitions.includes(edge.id));
         return <g key={edge.id} className={`machine-transition-edge ${active ? "active-transition" : ""} ${picked ? "selected-transition" : ""} ${taken ? "inspected-transition" : ""} ${related ? "related-transition" : ""}`}><title>{taken ? `${edge.description} · transition taken at this step` : edge.description}</title>
-          <path d={path} className={`transition-path ${edge.event ? "event-edge" : ""} ${active ? "active-edge" : ""}`} markerEnd={`url(#${marker})`} />
+          <path d={path} className={`transition-path ${active ? "active-edge" : ""}`} markerEnd={`url(#${marker})`} />
           <path d={path} className="transition-hit" data-transition-id={edge.id} />
           <g className={`transition-label ${moving?.kind === "label" && moving.id === edge.id ? "dragging" : ""}`} data-transition-id={edge.id} transform={`translate(${edge.labelPoint.x},${edge.labelPoint.y})`} role="button" tabIndex={0} aria-pressed={picked} aria-label={`Select transition ${edge.fullLabel}`}
             onKeyDown={e => { if ((e.key === "Enter" || e.key === " ") && !busy && !annotating) { e.preventDefault(); onTransition(edge.id); } }}>

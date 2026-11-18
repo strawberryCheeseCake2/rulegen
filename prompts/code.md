@@ -1,10 +1,10 @@
 # code — scene → p5.js 1.11 instance-mode sketch
 
-Generate a complete working p5.js 1.11 sketch, as one independent module per root node, that renders the supplied `scene`: every collection and object, their semantic transformations, properties and the reusable algorithms they call. Compose everything into one coherent artistic result that looks as close as possible to the original sketch image when supplied: the same density and how it varies, spacing, line weights, contrast, irregularity and texture, not only the same motif.
+Generate a complete working p5.js 1.11 sketch, as one independent module per root node, that renders the supplied `scene`: every collection and object, their constraints, params and the reusable algorithms they call. Compose everything into one coherent artistic result that looks as close as possible to the original sketch image when supplied: the same density and how it varies, spacing, line weights, contrast, irregularity and texture, not only the same motif.
 
 - Treat every scalar and algorithm argument value as the user's choice: never replace it with an inferred default. Algorithm descriptions are authoritative: implement the technique they describe faithfully and robustly (enough resolution, steps and samples that the result reads like the image, within the frame budget), not a cheap stand-in.
-- Each node's `transformations` apply IN ORDER, each building on the result of the previous one. Collections apply their transformations to all members; nested collections compose (outer transformations wrap the inner ones). Objects draw their primitive inside their region.
-- Nodes with a `machine` must react to their states as described in each state description; follow the transitions exactly (timed transitions are applied by the host, event transitions are emitted by your input handling).
+- Each node's constraints are evaluated IN ITS CURRENT STATE'S ORDER (declared order for a node without a machine), each computing its `property` and building on the properties computed before it. Collections' constraints determine their members' group properties (how many, where each goes, how they vary); nested collections compose (outer properties place the inner ones). Objects draw their primitive inside their region from the properties their constraints computed.
+- Nodes with a `machine` must behave in each state as its description says, through the constraints that state lists; dispatch each transition's `event` exactly when its condition happens (an input, a contact, a completion), so the declared transitions are taken.
 - If `previous` code is supplied, preserve its visual composition and algorithms while applying the current scene; if an error is supplied, fix it.
 - If `confirmedRevisionSummary` and `annotations` are supplied, the coral freehand strokes over the supplied generated image are user feedback describing desired changes, not part of the result. Implement the confirmed changes and their region-specific requests following the text clarification in `instruction`; do not copy the coral feedback layer.
 - Visibly implement every node, in its module. The page behind the canvas is light; draw a backdrop only as part of a node.
@@ -20,7 +20,7 @@ Return exactly one object matching `prompts/schemas/code.json`:
 {
   "title": "Branching tree",
   "explanation": "Draws the tree with a recursive branching algorithm and shortens each generation's length with power-decay.",
-  "code": "rulegenModule(\"tree\", function (m) {\n  function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }\n  return {\n    draw() {\n      const box = m.box(\"tree\");\n      p.stroke(m.v(\"tree/ink\"));\n      /* … uses m.v(\"tree/structure/depth\"), m.v(\"tree/structure/length/base\") inside box … */\n    },\n  };\n});"
+  "code": "rulegenModule(\"tree\", function (m) {\n  function algo_power_decay(base, ratio, depth) { return base * Math.pow(ratio, depth); }\n  function computeBranches(owner, box) { /* … uses m.v(\"tree/structure/depth\"), m.v(\"tree/structure/length/base\") inside box, returns the branch segments … */ }\n  function computeColor(owner) { return m.v(\"tree/ink\"); }\n  return {\n    draw() {\n      const p = m.p, box = m.box(\"tree\");\n      if (!box.visible) return;\n      const data = m.fsm(\"tree\").evaluate(box);\n      p.stroke(data.color);\n      /* … draws data.branches … */\n    },\n    constraints: { tree: { branches: computeBranches, color: computeColor } },\n  };\n});"
 }
 ```
 

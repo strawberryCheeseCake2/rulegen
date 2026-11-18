@@ -1,45 +1,51 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CodePreview, type CodePreviewHandle, type ExecutionRun, type RunVariant, type VariantEffect } from "./code-preview";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { CodePreview, type CodePreviewHandle, type ExecutionRun } from "./code-preview";
 import { InspectionOverlay } from "./inspection-overlay";
 import { Icon } from "./icons";
-import { EditSheet, EditTools, pictureEdited } from "./picture-edit";
-import { dataShapes, termGlyphs, testGlyphs, type TestShape, emptyExploreEdit, EXEC_KEY, exploreStep, jumpTarget, keyStep, keySteps, KEY_STEPS, markSteps, runSteps, stepsAt, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, previewKey, RUN_ROOT, gestureRange, runStores, stageCounts, STEPS_ROOT, stepOp, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame } from "../lib/explore";
-import { evaluate, formatScalar, handleGrips, pathValue, stepContext, type InspectionState, type InspectResult, type Overlay, type Scalar } from "../lib/inspection";
-import type { ScalarValue } from "../lib/scene/schema";
-import { editRuntime, isRuntimeKey, INPUT_KEY, STORE_KEY, targetNumber } from "../lib/runtime-edits";
+import { IdealSheet, IdealTools, kitTool, objectAt, RefInput, refChoices, blockSize, controlSize, tagBlocks, tagBox, TagControl, tagTarget, VariableMarks, widgetCan, type WidgetControl } from "./ideal-state";
+import { applyWidget, behaviorFallbacks, behaviorProbe, behaviorValues, behaviorValuesOf, boxOf, decidedSpecs, type IdealObject, describeRefs, specExamples, expandRefs, idealEdited, MAX_PICKED, pickedRecord, PICKED_ROOT, placedOutline, readsPicked, readVariables, refsIn, removeObjects, specScope, stateChanges, type AlignRefs, type SpecReader, type TagWidgetSpec } from "../lib/alignment";
+import { fsmName, fsmOf, fsmVisits, visitOf, dataShapes, termGlyphs, testGlyphs, type TestShape, emptyExploreEdit, EXEC_KEY, exploreStep, jumpTarget, keyStep, keySteps, KEY_STEPS, runSteps, stepsAt, inputPath, LAST_ROOT, NEXT_ROOT, PATH_ROOT, RUN_ROOT, runStores, stageCounts, STEPS_ROOT, stepOp, type ExecutionMoment, type ExecutionPart, type ExploreEdit, type ExploreFrame } from "../lib/explore";
+import { evaluate, formatScalar, handleGrips, INPUT_ROOT, layoutBlocks, layoutLabels, stepContext, textWidth, type LabelRequest, type PlacedLabel, type InspectionState, type InspectResult, type Scalar } from "../lib/inspection";
+import type { ScalarValue, Scene } from "../lib/scene/schema";
+import { editRuntime, targetNumber, targetPoint } from "../lib/runtime-edits";
 import { pictureDiff, type Rgb } from "../lib/picture-diff";
+import type { WidgetWorld } from "../lib/tag-widget-runtime";
+import { TagWidgetLayer } from "./tag-widget";
 
+/** What a widget is asked for with: the drawn object, where it is, the rules on its tag with what each reads now, the widget it has, and the runtime state. */
+export type WidgetRequest = { object: string; box: { x: number; y: number; w: number; h: number }; rules: { aspect: string; expr: string; now: number | null }[];
+  current: TagWidgetSpec | null; refs: AlignRefs };
 type Props = {
   frame: ExploreFrame; zoom: number;
-  /** The spec of each value of the brush a handle may change (its constraints). */
+  /** The spec of each value of the brush a handle may change (its params). */
   specs: Record<string, ScalarValue>;
-  /** What each value is called (for the list of values tried here). */
-  labelOf: (key: string) => string;
-  /** The program's keys a dragged value is drawn with (a preview value: one per stamp of the brush). */
-  expand: (key: string) => string[];
   onProgress: (progress: number) => void;
   /** A value dragged in this frame (null: back to how the frame started). */
   onValue: (key: string, value: Scalar | null) => void;
+  /** The execution state set by hand (runtime keys) replaced with these values. */
+  onStateValues?: (values: Record<string, Scalar>) => void;
   /** Make the frame again (`note`: what to change, optional). */ onRetry: (note?: string) => void; onActivate: () => void;
   /**
-   * Showing on an Execution frame's picture, at one moment of execution, how it should come out (annotation, crops
-   * moved, scaled or rotated, a note), and asking AI for a new recommendation from it (on this picture).
+   * Debugging intent alignment at one moment of execution: the state the user draws on the picture (`onEdit`), AI
+   * making the tools to draw it for the concern at this moment (`onKit`, from the picture as drawn now), and fixing
+   * the brush to what was drawn (`onFix`); `onCancel` stops either, `onOpenFork` goes to the fork a fix was applied to.
    */
-  onEdit?: (patch: Partial<ExploreEdit>) => void; onRecommend?: (image: string, moment: ExecutionMoment) => void; onCancelRecommend?: () => void;
-  /** What a part of the brush (a semantic transformation, state or transition) is called, and on which node; null when it is gone. */
+  onEdit?: (patch: Partial<ExploreEdit>) => void; onKit?: (image: string, moment: ExecutionMoment, request?: string) => void;
+  /** `refs`: the runtime state what was drawn and said refers to, as it reads at this moment. */
+  onFix?: (image: string, moment: ExecutionMoment, refs: AlignRefs) => void;
+  /** AI makes a widget for the rules on a drawn object's tag (`refs`: all the runtime state there is, as it reads now). */
+  onWidget?: (image: string, moment: ExecutionMoment, request: WidgetRequest) => void;
+  /** The objects of the brush (its nodes) what is drawn can be tagged as. */
+  objects?: { id: string; name: string }[];
+  onCancel?: () => void; onOpenFork?: (forkId: string) => void;
+  /** The target frame's scene: what each state machine step is (its owner, state, constraint or transition) in the brush's own words. */
+  scene?: Scene;
+  /** What a part of the brush (a constraint, state or transition) is called, and on which node; null when it is gone. */
   partName?: (part: ExecutionPart) => { name: string; node: string } | null;
-  /** Show a part in the frame's panels: a transformation in the properties panel, a state or transition in the state machine panel. */
+  /** Show a part in the frame's panels: a constraint in the params panel, a state or transition in the state machine panel. */
   onPart?: (part: ExecutionPart) => void;
-  /** Show a value of the brush (a constraint key) where it is edited: its property in the properties panel. */
-  onVariable?: (key: string) => void;
 };
-const PART_KINDS: Record<ExecutionPart["kind"], string> = { transformation: "Transformation", state: "State", transition: "Transition" };
-/**
- * One thing that may shape a mark: a value of the brush, an inner term of its code (m.term), or execution state it keeps
- * (a store value a handle moves). `nudge` changes it a little (to measure what it does), `strong` a lot (to compare by eye).
- */
-type Influence = { id: string; kind: "value" | "term" | "state"; label: string; key: string; nudge: RunVariant; strong: RunVariant | null };
-const INFLUENCE_KINDS: Record<Influence["kind"], string> = { value: "Value", term: "Inner term", state: "Execution state" };
+const PART_KINDS: Record<ExecutionPart["kind"], string> = { constraint: "Constraint", state: "State", transition: "Transition" };
 /** A value read at a step, short. */
 const shortValue = (value: unknown): string => typeof value === "number" ? formatScalar(Math.round(value * 100) / 100)
   : Array.isArray(value) && value.length <= 3 && value.every(item => typeof item === "number") ? `(${value.map(item => formatScalar(Math.round(item * 100) / 100)).join(", ")})`
@@ -49,41 +55,38 @@ const shortValue = (value: unknown): string => typeof value === "number" ? forma
 const vectorOf = (value: unknown): [number, number] | null => Array.isArray(value) && typeof value[0] === "number" && typeof value[1] === "number" ? [value[0], value[1]]
   : value && typeof value === "object" && Number.isFinite((value as { x?: number }).x) && Number.isFinite((value as { y?: number }).y) ? [(value as { x: number }).x, (value as { y: number }).y] : null;
 type Step = { label: string; none: number; op: number; step: number };
-/** What a step changed: drawn (blue) and gone (orange). What an influence would change: where it would be (purple) and where it is now (orange). */
+/** A part of the picture (canvas pixels). */
+type Area = { x: number; y: number; width: number; height: number };
 /** One color per inner term (arrows and bars). */
 const TERM_COLORS = ["#d9480f", "#0b7285", "#7048e8", "#2b8a3e", "#c2255c", "#e67700", "#1864ab", "#5f3dc4"];
-const CHANGE_COLORS: { added: Rgb; removed: Rgb } = { added: [37, 99, 235], removed: [234, 88, 12] }, COMPARE_COLORS: { added: Rgb; removed: Rgb } = { added: [124, 58, 237], removed: [234, 88, 12] };
-/** Canvas pixels a hand moves before a gesture counts (and the least distance from a pivot a gesture can be measured by). */
-const STEP_SLOP = 12;
-/** A plain grip on the next step: dragging it any way executes that step. */
-const nextStepGrip = (link: Overlay["link"], stage: string | undefined): Overlay => ({ id: "@next-step", kind: "ellipse", name: "Next step", x: 's("@next", "cx") - 14', y: 's("@next", "cy") - 14', w: "28", h: "28", label: "",
-  color: "#2a4f86", link, when: "", each: "", handle: { key: EXEC_KEY, gesture: "drag", x: 's("@next", "cx")', y: 's("@next", "cy")', pivotX: "", pivotY: "", value: "start + max(abs(dx), abs(dy)) / 40", hint: `Drag to run ${stage ?? "the next step"}` } });
+/** What a step changed: drawn (blue) and gone (orange). */
+const CHANGE_COLORS: { added: Rgb; removed: Rgb } = { added: [37, 99, 235], removed: [234, 88, 12] };
 
 /**
  * An exploration frame: the brush marks of the step the inspection held, run by
- * their own copy of the program and held still, with the frame's handles over them.
+ * their own copy of the program and held still, with overlays that explain them.
  * Execution of the code's run goes STEP BY STEP: each step is one internal operation
- * (a checkpoint the code passes), executed or taken back one at a time with the
- * operation's own metaphoric handle (or the step buttons); the picture shows what is
+ * (a checkpoint the code passes), executed or taken back one at a time with the step
+ * buttons, the keys or by pressing a part of the picture; the picture shows what is
  * drawn by then over a faint picture of the finished marks, and the step just executed
- * and the next one say what they do. Execution can also go along the recorded input or
- * the recorded steps. Value handles redraw it with the value. Nothing outside this
- * frame changes.
+ * says what it did. Execution can also go along the recorded input or
+ * the recorded steps. A state tool's grips set the execution state at the moment by hand
+ * and redraw it from there. Nothing outside this frame changes.
  */
-export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgress, onValue, onRetry, onActivate, onEdit, onRecommend, onCancelRecommend, partName, onPart, onVariable }: Props) {
-  const result = frame.result, execution = frame.mode === "execution", running = result?.axis === "run";
+export function ExploreFrameView({ frame, zoom, specs, onProgress, onValue, onStateValues, onRetry, onActivate, onEdit, onKit, onFix, onWidget, onCancel, onOpenFork, partName, onPart, objects = [], scene }: Props) {
+  const result = frame.result, running = result?.axis === "run";
   // The code's run as last recorded (its events do not depend on how much of it is drawn).
   const [run, setRun] = useState<ExecutionRun | null>(null);
   const step = exploreStep(frame, running ? run : null), stepwise = running && step.done !== null && step.count !== null;
   const done = step.done ?? 0, count = step.count ?? 0;
   // Partway through, the brush is drawn as it is after the step just executed (its checkpoint's picture, when the code draws nothing until later).
   const pictured = step.budget !== null && done > 0 && run?.events.some(event => event.kind === "trace") ? done - 1 : null;
-  const params = { ...frame.base.params, ...Object.fromEntries(Object.entries(frame.values).flatMap(([key, value]) => expand(key).map(each => [each, value]))) };
+  const params = frame.values;
   const restoreId = `${frame.id}:${step.key}`;
   // The moment as the handles here moved its state (the input bent, a store value changed).
   const runtime = useMemo(() => editRuntime(step.runtime, frame.values), [step.runtime, frame.values]);
   const [drawn, setDrawn] = useState<{ restore: string; stores: Record<string, unknown> } | null>(null);
-  // The frame's code failing as it runs (e.g. a recommendation's preview code): shown under the frame, cleared with new code.
+  // The frame's code failing as it runs: shown under the frame, cleared with new code.
   const [runError, setRunError] = useState("");
   useEffect(() => { setRunError(""); }, [frame.executable]);
   // The finished marks (the whole run drawn), shown faintly while execution is partway.
@@ -92,108 +95,115 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const traced = useMemo(() => stepwise && run ? runStores(run, done) : null, [stepwise, run, done]);
   // The overlays read the stores as this moment is drawn now and the path execution goes along: the run's steps
   // (every event and step, the next and the last one), or the recorded input.
-  const stores = { ...(drawn?.restore === restoreId ? drawn.stores : {}),
+  // The things pressed with a state tool that reads them (an object drawn follows it where it is moved), in order.
+  const [selected, setSelected] = useState<string[]>([]);
+  const [picks, setPicks] = useState<{ id: string | null; box: Area }[]>([]);
+  useEffect(() => { setPicks([]); }, [frame.edit?.mode, restoreId]);
+  const picked = picks.flatMap(pick => { if (!pick.id) return [pick.box]; const item = frame.edit?.ideal.objects.find(object => object.id === pick.id);
+    return item ? [(({ x, y, w, h }) => ({ x, y, width: w, height: h }))(boxOf(placedOutline(item)))] : []; });
+  const stores = { [PICKED_ROOT]: picked.map(box => pickedRecord({ x: box.x, y: box.y, w: box.width, h: box.height })), ...(drawn?.restore === restoreId ? drawn.stores : {}),
     ...(traced ? { [RUN_ROOT]: traced[RUN_ROOT], [STEPS_ROOT]: traced[STEPS_ROOT], [NEXT_ROOT]: traced[NEXT_ROOT], [LAST_ROOT]: traced[LAST_ROOT], [PATH_ROOT]: traced.path } : { [PATH_ROOT]: path }) };
   const next = traced?.[NEXT_ROOT] as Step | undefined, last = traced?.[LAST_ROOT] as Step | undefined;
   const counts = useMemo(() => run && stepwise ? stageCounts(run, done) : new Map<number, { count: number; done: number; first: number }>(), [run, stepwise, done]);
-  const stageOf = (op: number) => result?.stages.find(stage => stage.op === op);
+  // The run's state machine steps: each visit (or transition) with its constraint steps, and the one execution is in.
+  const visits = useMemo(() => run && stepwise ? fsmVisits(run) : [], [run, stepwise]);
+  const steps = useMemo(() => run && stepwise ? runSteps(run) : [], [run, stepwise]);
+  // What a step does, in the brush's own words (its owner and state, the constraint's property and description, the transition).
+  const nameOfStep = (index: number) => scene && steps[index] ? fsmName(scene, steps[index].data) : null;
+  const stageOf = (op: number) => { const at = steps.findIndex((_, i) => stepOp(run!, i) === op); return at < 0 ? undefined : nameOfStep(at) ?? undefined; };
   const currentOp = run && stepwise ? stepOp(run, Math.min(done, count - 1)) : 0;
-  // A preview's new values, as the program starts with them.
-  const previews = Object.fromEntries((result?.values ?? []).map(value => [previewKey(value), value.value.value]));
+  const visitNow = visitOf(visits, Math.min(done, count - 1)), visit = visits[visitNow];
   // The execution value handles read and change: steps done (step by step), else the progress.
   const position = stepwise ? done : frame.progress;
   const state: InspectionState = { brushId: frame.brushId, cursor: 0, marks: [], markStyles: [], concern: "", focus: null,
-    steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { ...step.values, ...previews, ...params, ...frame.values, [EXEC_KEY]: position }, runtime }] };
+    steps: [{ id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: { ...step.values, ...frame.values, [EXEC_KEY]: position }, runtime }] };
   const context = stepContext(state.steps, 0, {}, stores);
-  // Execution goes on by gesture (an operation's handle), unless turned off: then only by the buttons (kept in this browser).
-  const [gestures, setGesturesState] = useState(true);
-  useEffect(() => { try { setGesturesState(localStorage.getItem("rulegen:explore-gestures") !== "0"); } catch { /* storage unavailable */ } }, []);
-  const setGestures = (on: boolean) => { setGesturesState(on); try { localStorage.setItem("rulegen:explore-gestures", on ? "1" : "0"); } catch { /* storage unavailable */ } };
-  // Every step can be executed by hand: when no handle of the next step's operation can be placed there (it
-  // reads data the step does not have), a plain grip on the step does it.
-  const unhandled = Boolean(gestures && result && stepwise && next && !next.none
-    && !handleGrips(result.overlays, context).some(grip => grip.handle.key === EXEC_KEY));
-  // Without gestures the overlays stay (what they show), their execution grips go.
-  const overlays = result ? [...result.overlays.map(item => !gestures && item.handle?.key === EXEC_KEY ? { ...item, handle: null } : item),
-    ...(unhandled ? [nextStepGrip(result.overlays[0]?.link ?? { kind: "constraint", nodeId: frame.nodeIds[0] ?? "", id: "" }, stageOf(next!.op)?.name)] : [])] : [];
-  // Value handles that read a place this step's picture does not have (only once the picture's stores are in).
-  const unplaced = result && drawn?.restore === restoreId ? result.overlays.filter(item => item.handle && item.handle.key !== EXEC_KEY && !handleGrips([item], context).length
+  // Drawing the state wanted at this moment of execution: on the picture as it is drawn now (the latest one a little after it is drawn).
+  const edit = frame.edit ?? emptyExploreEdit(), showing = Boolean(onEdit && result);
+  // A state tool chosen: its grips set the execution state at this moment (as a targeted inspection's handles do).
+  // They are the only grips on the frame, and only while it is chosen; the frame's own overlays only explain.
+  const stateTool = showing ? kitTool(edit.mode, edit.kit?.tools ?? []) : undefined, setting = stateTool?.kind === "state" ? stateTool : undefined;
+  const overlays: InspectResult["overlays"] = result ? [...result.overlays.map(item => ({ ...item, handle: null })),
+    ...(setting ? setting.handles.map(item => ({ ...item, id: `state:${setting.id}:${item.id}`, color: item.color || setting.color })) : [])] : [];
+  // Grips of the state tool that read a place this moment does not have (only once the picture's stores are in).
+  // A grip on each item of a list that has none at this moment has nothing to grab here: that is not a fault (nothing to say).
+  const emptyList = (each: string) => { if (!each.trim()) return false; const cut = each.indexOf(":"), root = cut < 0 ? each : each.slice(0, cut), path = cut < 0 ? "" : each.slice(cut + 1);
+    try { return !(Number(evaluate(`len(${JSON.stringify(root)}, ${JSON.stringify(path)})`, context)) > 0); } catch { return false; } };
+  const unplaced = setting && drawn?.restore === restoreId ? setting.handles.filter(item => item.handle && !emptyList(item.each ?? "") && !handleGrips([item], context).length
     && (() => { try { return !item.when?.trim() || Boolean(evaluate(item.when, context)); } catch { return true; } })()).length : 0;
-  const shown: InspectResult | null = result && { summary: result.summary, overlays: overlays as InspectResult["overlays"], valueFixes: [], recommendations: [], parameters: [], records: null };
+  // What the chosen state tool's grips hold at this moment (as drawn now), item by item.
+  const holding = setting ? handleGrips(setting.handles, context).flatMap(grip => {
+    const key = grip.handle.key, number = targetNumber(key, context.stores), point = Number.isFinite(number) ? null : targetPoint(key, context.stores, context.stores[INPUT_ROOT]);
+    const text = Number.isFinite(number) ? formatScalar(Math.round(number * 10) / 10) : point ? `(${Math.round(point.x)}, ${Math.round(point.y)})` : "";
+    return text ? [{ key, name: grip.overlay.name || setting.name, text }] : [];
+  }).filter((item, i, all) => all.findIndex(other => other.key === item.key) === i).slice(0, 8) : [];
+  // The rules on tags read on the frame at this moment (the stores as drawn now), with the object's own box as item("…")
+  // and the runtime state the kit refers to as `@id.field`.
+  const variables = edit.kit?.variables ?? [];
+  const readIn = (expr: string, scope: typeof context) => { try { const value = Number(evaluate(expandRefs(expr, variables), scope)); return Number.isFinite(value) ? value : null; } catch { return null; } };
+  const read: SpecReader = (expr, item) => readIn(expr, { ...context, item: specScope(item), itemIndex: 0 });
+  // The runtime state at this moment: shown on the picture while inspected, or while the tag of what is selected refers to it.
+  const readings = readVariables(variables, expr => readIn(expr, context)), [inspecting, setInspecting] = useState<string[]>([]);
+  // What the behaviors drawn give the brush's code: the frame runs with them (at any moment: a behavior is the brush's, not one moment's).
+  const kitTools = edit.kit?.tools ?? [], behaving = useMemo(() => behaviorValues(edit.ideal, kitTools, read), [edit.ideal, kitTools, drawn, traced]);
+  // Which behavior tools change what the brush draws: a typical drawing of each (its probe) against none, over the WHOLE run
+  // drawn by the brush's own code (a behavior is the brush's, not one moment's; partway, the frame may show a checkpoint's
+  // own picture of what is kept, which a behavior need not change). Checked once per program; unknown where the frame
+  // cannot draw a variant (it stays offered), and kept as it was found when a probe does not read (not hidden for that).
+  const preview = useRef<CodePreviewHandle>(null), [effects, setEffects] = useState<Record<string, boolean>>({});
+  useEffect(() => setEffects({}), [frame.executable]);
+  const behaviorTools = kitTools.filter(tool => tool.kind === "behavior"), storesIn = drawn?.restore === restoreId;
+  useEffect(() => {
+    const todo = behaviorTools.filter(tool => effects[tool.id] === undefined);
+    if (!showing || !storesIn || !frame.executable || !todo.length) return;
+    let cancelled = false;
+    void (async () => {
+      const none = { ...frame.values, ...behaviorFallbacks(kitTools) }, base = await preview.current?.variantShot({ id: "none", params: none }, true);
+      if (!base || cancelled) return;
+      const found: Record<string, boolean> = {};
+      for (const tool of todo) {
+        const probe = behaviorProbe(tool, kitTools), values = probe ? behaviorValuesOf(tool, probe, read) : {};
+        if (!Object.keys(values).length) continue;
+        const shot = await preview.current?.variantShot({ id: tool.id, params: { ...none, ...values } }, true);
+        const diff = shot ? await pictureDiff(base, shot, CHANGE_COLORS) : null;
+        if (diff) found[tool.id] = diff.added + diff.removed > 24;
+      }
+      if (!cancelled) setEffects(current => ({ ...current, ...found }));
+    })();
+    return () => { cancelled = true; };
+  }, [showing, storesIn, frame.executable, behaviorTools.map(tool => tool.id).join(" ")]);
+  // A behavior drawn: the picture is the whole run as the brush's code draws it with what was drawn (partway, a step's own
+  // picture would not show it); the steps still explain.
+  const behaviorOn = Object.keys(behaving).length > 0;
+  // Left out: behaviors whose drawing changes nothing the brush draws; runtime state that reads nothing at this moment (once the stores are in).
+  const dead = { tools: behaviorTools.filter(tool => effects[tool.id] === false).map(tool => tool.id),
+    variables: storesIn ? readings.filter(item => item.fields.every(field => field.value === null)).map(item => item.variable.id) : [] };
+  const texts = [edit.note, ...edit.ideal.merges.map(merge => merge.label), ...edit.ideal.objects.flatMap(item => [item.label, ...item.specs.map(spec => spec.expr)])];
+  // What was drawn belongs to the moment it was drawn at: elsewhere it is not shown (and can be gone back to).
+  const here = !edit.at || edit.at.key === restoreId;
+  const tagRefs = refsIn(edit.ideal.objects.filter(item => selected.includes(item.id)).flatMap(item => [item.label, ...item.specs.map(spec => spec.expr)]), variables).map(item => item.id);
+  // The tag of what is selected is edited on the picture (a tag pressed there selects what it is on).
+  const tagEditing = tagTarget(edit.ideal, selected);
+  // The widget open on a drawn object (AI made it for the rules on its tag): drawn over the picture, it takes its input.
+  const widget = here && edit.widgetOn ? edit.widgets[edit.widgetOn] : undefined, widgetItem = widget && edit.ideal.objects.find(item => item.id === widget.id);
+  const inspected = readings.filter(item => inspecting.includes(item.variable.id) || (here && tagRefs.includes(item.variable.id)));
+  const objectNames = Object.fromEntries(objects.map(item => [item.id, item.name]));
+  const shown: InspectResult | null = result && { summary: result.summary, overlays, parameters: [], records: null };
   const from = result?.from ?? 0, to = result?.to ?? 1;
-  const allSpecs: Record<string, ScalarValue> = { ...specs, ...Object.fromEntries((result?.values ?? []).map(value => [previewKey(value), value.value])),
-    [EXEC_KEY]: stepwise ? { type: "number", value: done, min: 0, max: count, step: 1, unit: "" } : { type: "number", value: frame.progress, min: from, max: to, step: .001, unit: "" } };
   /** Execute (or take back) up to `target` steps done. */
   const goTo = (target: number) => { if (stepwise) onProgress(Math.max(0, Math.min(count, Math.round(target))) / Math.max(1, count)); };
-  // A mark of the picture looked at closely (pressed while jumping, or the one the step just executed drew): what shapes it is measured on it.
-  // Picked, the mark is FOLLOWED: execution takes the steps of its item (m.focus) and goes through only the steps where it
-  // changes; the other marks are drawn faint (`solo`). A mark of no item is followed by its own drawing call.
-  const [picked, setPicked] = useState<{ x: number; y: number; index: number; done: number; item: string | null } | null>(null), [solo, setSolo] = useState(true);
-  useEffect(() => { setPicked(null); }, [frame.executable]);
-  const focus = picked?.item ?? null, focusNow = useRef(focus); focusNow.current = focus;
-  // The item the recorded run followed (it is recorded again once a mark is picked), and going to its first step once it is.
-  const [runFocus, setRunFocus] = useState<string | null>(null), toFirst = useRef(false);
-  const marked = useMemo(() => picked && run && runFocus === focus ? markSteps(run, picked) : [], [picked, run, runFocus, focus]);
-  useEffect(() => { if (toFirst.current && marked.length) { toFirst.current = false; goTo(marked[0] - 1); } }, [marked]);
-  const follow = (mark: NonNullable<typeof picked>) => { setPicked(mark); setChosen(null); toFirst.current = true; };
-  // A long run stops only at its KEY steps (one round of its operations in full, then chunks, and the step jumped to), unless all steps are asked for;
-  // following a mark, at the steps where it changes (and just before the first).
-  const [allSteps, setAllSteps] = useState(false);
-  const keys = useMemo(() => !run || !stepwise ? [] : marked.length ? [...new Set([0, marked[0] - 1, ...marked, count])].sort((a, b) => a - b)
-    : keySteps(run, KEY_STEPS, picked ? [picked.done] : []), [run, stepwise, picked, marked, count]);
-  const keyed = !allSteps && keys.length > 0 && (marked.length > 0 || keys.length < count + 1), keyAt = keys.filter(stop => stop > 0 && stop <= done).length;
+  // A long run stops only at its KEY steps (one round of its operations in full, then chunks, and the step jumped to), unless all steps are asked for.
+  const [allSteps, setAllSteps] = useState(false), [jumped, setJumped] = useState<number | null>(null);
+  useEffect(() => { setJumped(null); }, [frame.executable]);
+  const keys = useMemo(() => !run || !stepwise ? [] : keySteps(run, KEY_STEPS, jumped !== null ? [jumped] : []), [run, stepwise, jumped]);
+  const keyed = !allSteps && keys.length > 0 && keys.length < count + 1, keyAt = keys.filter(stop => stop > 0 && stop <= done).length;
   const stepBy = (way: 1 | -1) => goTo(keyed ? keyStep(keys, done, way) : done + way);
-  // What shapes the picked mark: each value of the brush, inner term of its code (m.term) and execution state a handle moves, changed in turn.
-  const preview = useRef<CodePreviewHandle>(null);
-  const [termScales, setTermScales] = useState<Record<string, number>>({});
-  const influences = useMemo<Influence[]>(() => {
-    if (!run || !stepwise) return [];
-    const now = state.steps[0].values, out: Influence[] = [];
-    for (const [key, spec] of Object.entries(allSpecs)) {
-      if (key === EXEC_KEY || spec.type !== "number" || spec.max <= spec.min) continue;
-      const at = typeof now[key] === "number" ? now[key] as number : spec.value, span = spec.max - spec.min;
-      const nudged = at + span * .1 <= spec.max ? at + span * .1 : at - span * .1, far = at - spec.min > spec.max - at ? spec.min : spec.max;
-      const set = (value: number) => Object.fromEntries(expand(key).map(each => [each, value]));
-      out.push({ id: `value:${key}`, kind: "value", label: labelOf(key), key, nudge: { id: `value:${key}`, params: set(nudged) }, strong: { id: `strong:${key}`, params: set(far) } });
-    }
-    for (const name of run.terms ?? []) out.push({ id: `term:${name}`, kind: "term", label: name.slice(name.indexOf("/") + 1), key: name, nudge: { id: `term:${name}`, terms: { [name]: 0 } }, strong: { id: `strong:${name}`, terms: { [name]: 0 } } });
-    // Execution state the handles move (a store point or number), from this frame's overlays and the inspection's.
-    const stores = (runtime && typeof runtime === "object" ? (runtime as { stores?: Record<string, unknown> }).stores : null) ?? {}, seen = new Set<string>();
-    for (const overlay of [...(result?.overlays ?? []), ...frame.request.inspection.overlays]) {
-      const key = overlay.handle?.key; if (!key || !key.startsWith(STORE_KEY) || key.includes("${") || seen.has(key)) continue; seen.add(key);
-      const number = targetNumber(key, stores), moved = (amount: number) => editRuntime(runtime, { [key]: Number.isFinite(number) ? number + amount * (Math.abs(number) || 1) : `${amount * 70},${amount * 70}` });
-      out.push({ id: `state:${key}`, kind: "state", label: overlay.name || key.slice(STORE_KEY.length), key, nudge: { id: `state:${key}`, runtime: moved(.2) }, strong: { id: `strong:${key}`, runtime: moved(.6) } });
-    }
-    return out.slice(0, 20);
-  }, [run, stepwise, JSON.stringify(state.steps[0].values), JSON.stringify(allSpecs), runtime, result, frame.request.inspection.overlays]);
-  const [measured, setMeasured] = useState<{ key: string; effects: VariantEffect[] } | null>(null), [measuring, setMeasuring] = useState(false);
-  const measureKey = picked ? JSON.stringify([picked.index, frame.values, termScales, frame.executable.length, influences.map(item => item.id)]) : "";
-  const effects = measured && measured.key === measureKey ? measured.effects : null;
-  const measure = async () => {
-    if (!picked || !preview.current) return;
-    const key = measureKey; setPlaying(false); setMeasuring(true);
-    try { const out = await preview.current.influence(influences.map(item => item.nudge), picked.item !== null ? { item: picked.item } : picked.index); setMeasured(out ? { key, effects: out } : null); } finally { setMeasuring(false); }
-  };
-  // The ones that move the mark (or take it away), most first.
-  const ranked = (effects ? influences.flatMap(item => { const effect = effects.find(each => each.id === item.nudge.id); return effect && (effect.gone || effect.moved >= .3) ? [{ item, effect }] : []; }) : [])
-    .sort((a, b) => Number(b.effect.gone) - Number(a.effect.gone) || b.effect.moved - a.effect.moved);
-  const most = Math.max(1, ...ranked.map(row => row.effect.moved));
-  const [chosen, setChosen] = useState<string | null>(null), choice = ranked.find(row => row.item.id === chosen) ?? null;
-  // The chosen one changed a lot, drawn faintly over the picture as far as execution is now (to see where it parts from it).
-  const [compare, setCompare] = useState<{ key: string; image: string } | null>(null);
-  const compareKey = choice?.item.strong ? `${choice.item.id}|${restoreId}|${JSON.stringify(frame.values)}|${JSON.stringify(termScales)}` : "";
-  useEffect(() => {
-    const strong = choice?.item.strong; if (!compareKey || !strong) return;
-    let live = true; const timer = setTimeout(() => { void preview.current?.variantShot(strong).then(async image => {
-      if (!live || !image) return;
-      // Drawn as what differs from the picture now: where it would be (purple) and where it is now (orange).
-      const diff = await pictureDiff(shots.current.get(shotKeyNow.current) ?? latestShot.current, image, COMPARE_COLORS);
-      if (live && diff) setCompare({ key: compareKey, image: diff.image }); }); }, 150);
-    return () => { live = false; clearTimeout(timer); };
-  }, [compareKey]);
+  // State machine stepping: a whole visit (a state entered or evaluated, its constraints in order) or a transition at a time.
+  const visitBy = (way: 1 | -1) => { const starts = [...visits.map(item => item.start).filter(start => start > 0), count];
+    goTo(way > 0 ? starts.find(start => start > done) ?? count : [0, ...starts].filter(start => start < done).at(-1) ?? 0); };
   // Each moment's picture as last drawn (by moment and the values it is drawn with), and what changed from the moment
   // shown before to this one: drawn (blue) and gone (orange), so a step's change shows even among many marks.
-  const shotKey = `${restoreId}|${JSON.stringify([frame.values, termScales])}`, shotKeyNow = useRef(shotKey); shotKeyNow.current = shotKey;
+  const shotKey = `${restoreId}|${JSON.stringify(frame.values)}`, shotKeyNow = useRef(shotKey); shotKeyNow.current = shotKey;
   const shots = useRef(new Map<string, string>()), previousShot = useRef<{ key: string; restore: string } | null>(null);
   const [change, setChange] = useState<{ key: string; image: string; added: number; removed: number; byStep: boolean } | null>(null), [showChange, setShowChangeState] = useState(false), [captions, setCaptions] = useState(true);
   // How big the words on the picture are (overlay labels, step numbers, verdicts), kept in this browser.
@@ -218,12 +228,16 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   /** Where a step is on the picture (canvas pixels), when it has a place. */
   const placeOf = (event: typeof lastStep) => event && Number.isFinite(event.x) && Number.isFinite(event.y) && (event.w ?? 0) * (event.h ?? 0) < 900 * 600 * .5 ? { x: event.x!, y: event.y!, w: event.w ?? 0, h: event.h ?? 0 } : null;
   const lastPlace = placeOf(lastStep), nextPlace = placeOf(nextStep);
-  const readValues = lastStep ? [
-    ...Object.entries(lastStep.data && typeof lastStep.data === "object" ? lastStep.data as Record<string, unknown> : {}).filter(([key, value]) => !["op", "x", "y", "w", "h"].includes(key) && (typeof value === "number" || vectorOf(value))).slice(0, 6).map(([key, value]) => ({ key, text: shortValue(value), term: "" })),
-    ...Object.entries(lastStep.terms ?? {}).map(([key, term]) => ({ key, text: shortValue(term.last), term: `${lastStep.root ?? ""}/${key}` })) ] : [];
+  // The numbers of the state the step worked with (its data, the concern's quantities): on the picture beside where it
+  // works; in the bar when the picture is not explained, with the inner terms it computed.
+  const stepNumbers = lastStep ? Object.entries(lastStep.data && typeof lastStep.data === "object" ? lastStep.data as Record<string, unknown> : {})
+    .filter(([key, value]) => !["op", "x", "y", "w", "h"].includes(key) && (typeof value === "number" || typeof value === "boolean" || (Array.isArray(value) && vectorOf(value)))).slice(0, 4)
+    .map(([key, value]) => ({ key, text: shortValue(value) })) : [];
+  const readValues = lastStep ? [...(captions ? [] : stepNumbers.map(item => ({ ...item, term: "" }))),
+    ...Object.entries(lastStep.terms ?? {}).map(([key, term]) => ({ key, text: shortValue(term.last), term: `${lastStep.root ?? ""}/${key}` }))] : [];
   // What the step worked on and what made its result, drawn where it works: the geometry in its data (point lists as
-  // paths, points; the next step's dashed) and its inner terms, each an arrow (a vector) or a signed bar (a number) in
-  // a color of its own, with the arrows' sum. The chosen influence stands out.
+  // paths, points; the next step's dashed) and its inner terms that are vectors, each an arrow in a color of its own,
+  // with the arrows' sum (numbers are read in the bar).
   const lastShapes = useMemo(() => lastStep ? dataShapes(lastStep.data) : [], [lastStep]);
   // The decisions the step made (m.test): the range, region or distance tested, colored by how it came out, with the
   // verdict on it ("not merged!"); the next step's, dashed, still undecided.
@@ -232,10 +246,6 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
   const tested = testGlyphs(lastStep?.tests), verdict = tested.find(test => test.pass) ?? tested[0] ?? null, othersTested = Math.max(0, tested.length - 1);
   const glyphs = termGlyphs(lastStep?.terms), anchor = lastPlace ? { x: lastPlace.x + lastPlace.w / 2, y: lastPlace.y + lastPlace.h / 2 } : lastShapes[0]?.points.at(-1) ?? null;
   const termColor = (name: string) => { const all = (run?.terms ?? []).map(key => key.slice(key.indexOf("/") + 1)), at = all.indexOf(name); return TERM_COLORS[(at < 0 ? all.length : at) % TERM_COLORS.length]; };
-  const faded = (name: string) => choice?.item.kind === "term" && choice.item.label !== name;
-  /** The mark the step just executed drew (the last one drawn so far), looked at closely. */
-  const pickStep = () => { if (!run) return; const limit = step.budget ?? Infinity, event = [...run.events].reverse().find(item => item.kind !== "trace" && item.index < limit && Number.isFinite(item.x));
-    if (event) follow({ x: event.x! + (event.w ?? 0) / 2, y: event.y! + (event.h ?? 0) / 2, index: event.index, done, item: event.item ?? null }); };
   // Play: one step at a time (or the progress through the process), from where it is (the start, when it is at the end).
   const [playing, setPlaying] = useState(false), latest = useRef({ done, count, progress: frame.progress, stepBy, onProgress }); latest.current = { done, count, progress: frame.progress, stepBy, onProgress };
   useEffect(() => {
@@ -255,56 +265,115 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
     return () => cancelAnimationFrame(id);
   }, [playing, stepwise]);
   const play = () => { if (!playing && (stepwise ? done >= count : frame.progress >= to)) { if (stepwise) goTo(0); else onProgress(from); } setPlaying(!playing); };
-  const tried = Object.entries(frame.values);
-  // The steps the handle being dragged may reach (fixed when the drag starts): one step forward or back, unless its operation is one continuous motion.
-  // A drag that has executed (or taken back) its step keeps that until it is released (`latched`), so moving on never undoes it.
-  const block = useRef<{ range: [number, number]; start: number; many: boolean; latched: number | null } | null>(null);
-  // Showing how it should come out, at this moment of execution: on the picture as it is drawn now (the latest one a little after it is drawn).
-  const edit = frame.edit ?? emptyExploreEdit(), showing = Boolean(onEdit && execution && result);
   const [shot, setShot] = useState(""), wantShot = useRef(true), latestShot = useRef("");
   const take = (image: string) => { if (!wantShot.current || !image) return; wantShot.current = false; setShot(image); };
-  const [selected, setSelected] = useState<number | null>(null);
   const stage = stageOf(currentOp), says = (item: Step | undefined, n: number) => item && !item.none ? [item.label || `Step ${n}`, stageOf(item.op)?.name].filter(Boolean).join(" · ") : "";
   const moment: ExecutionMoment = { summary: result?.summary ?? "", axis: result?.axis ?? "run", done: stepwise ? done : null, count: stepwise ? count : null, progress: frame.progress,
     last: says(last, done), next: says(next, done + 1), stage: stepwise && stage ? { name: stage.name, explain: stage.explain } : null };
-  // What was shown belongs to the moment it was shown at: elsewhere it is not drawn (and can be gone back to).
-  const here = !edit.at || edit.at.key === restoreId;
-  // The bar stays short: the summary folded to two lines, showing how it should be folded until asked for (open while it holds something).
-  const [summaryOpen, setSummaryOpen] = useState(false), [recommendAsked, setRecommendOpen] = useState(false);
-  const recommendOpen = recommendAsked || pictureEdited(edit) || edit.making || Boolean(edit.reply || edit.error);
-  const editHere = (patch: Partial<ExploreEdit>) => { if (!onEdit) return; const next = { ...edit, ...patch }, empty = !next.marks.length && !next.manipulations.length;
-    onEdit({ ...patch, at: empty ? null : edit.at ?? { key: restoreId, progress: frame.progress, moment } }); };
+  // The bar stays short: the summary folded to two lines, the drawing tools folded until asked for (open while they hold something).
+  const [summaryOpen, setSummaryOpen] = useState(false), [alignAsked, setAlignOpen] = useState(false);
+  // The execution state set by hand with state tools, against what it was at this moment.
+  const changes = stateChanges(frame.values, step.runtime, edit.kit?.tools ?? []);
+  const sketched = idealEdited(edit.ideal, edit.marks, edit.note) || changes.length > 0;
+  const alignOpen = alignAsked || sketched || Boolean(edit.kit) || edit.kitting || edit.making || Boolean(edit.reply || edit.error || edit.kitError);
+  const picture = edit.image || shot || latestShot.current;
+  const editHere = (patch: Partial<ExploreEdit>) => { if (!onEdit) return; const next = { ...edit, ...patch }, empty = !next.marks.length && !next.ideal.objects.length;
+    // Lifted parts are cut from the picture as it was when the first was lifted.
+    const image = next.ideal.objects.some(item => item.kind === "crop") ? edit.image || picture : "";
+    onEdit({ ...patch, image, at: empty ? null : edit.at ?? { key: restoreId, progress: frame.progress, moment } }); };
+  /** Make the tools for this moment (opening the tools the first time makes them); AI's guesses are drawn at this moment. */
+  /** `request`: a tool asked for in words, added to the tools there are. */
+  const makeKit = (request = "") => { if (!picture || edit.kitting) return; if (!request) onEdit?.({ kitAt: restoreId }); onKit?.(picture, moment, request); };
+  /** Fix the brush to what was drawn, with the runtime state it refers to as it reads now. */
+  const fix = () => onFix?.(picture, edit.at?.moment ?? moment, describeRefs(readings, texts));
+  /** AI makes the widget for the rules on an object's tag as they are now (the one it has, to make a better one). */
+  const makeWidget = (item: IdealObject) => { if (!picture || edit.widgeting) return; const made = edit.widgets[item.id];
+    onWidget?.(picture, edit.at?.moment ?? moment, { object: item.id, box: boxOf(placedOutline(item)), rules: decidedSpecs(item.specs).map(spec => ({ aspect: spec.aspect.trim(), expr: spec.expr.trim(), now: read(spec.expr, item) })),
+      current: made ? { reading: made.reading, hint: made.hint, params: made.params, rules: made.rules, code: made.code } : null, refs: describeRefs(readings, readings.map(item => `@${item.variable.id}`)) }); };
+  const widgetControl = (item: IdealObject): WidgetControl => { const made = edit.widgets[item.id], on = Boolean(made) && edit.widgetOn === item.id;
+    return { on, can: widgetCan(item), made: Boolean(made), making: edit.widgeting === item.id, error: edit.widgeting ? "" : edit.widgetError, hint: made?.hint ?? "",
+      toggle: () => on ? onEdit?.({ widgetOn: "" }) : made ? onEdit?.({ widgetOn: item.id, widgetError: "" }) : makeWidget(item), remake: () => makeWidget(item) }; };
+  /** What the open widget reads: its values, the object where it is, the other objects, what its rules read and the runtime state. */
+  const widgetWorld = (item: IdealObject, values: Record<string, number | string | boolean>): Omit<WidgetWorld, "px"> => { const at = (other: IdealObject) => { const box = boxOf(placedOutline(other));
+    return { x: box.x, y: box.y, w: box.w, h: box.h, cx: box.x + box.w / 2, cy: box.y + box.h / 2, rotate: other.rotate, id: other.id, label: other.label }; };
+    return { values, item: at(item), others: edit.ideal.objects.filter(other => other.id !== item.id).map(at), rules: Object.fromEntries(decidedSpecs(item.specs).map(spec => [spec.aspect.trim(), read(spec.expr, item)])),
+      refs: Object.fromEntries(readings.flatMap(entry => entry.fields.map(field => [field.ref, field.value]))) }; };
+  const openAlign = () => { setAlignOpen(true); if (!edit.kit && !edit.kitting) makeKit(); };
   // Jumping: pressing a part of the picture executes up to the step that draws it (pressed again: the next step that draws there).
   const [jumping, setJumping] = useState(false), [aim, setAim] = useState<{ x: number; y: number } | null>(null), jumpSheet = useRef<SVGSVGElement>(null);
   const jumpOn = jumping && stepwise && Boolean(run) && edit.mode === "run";
   const jumpPoint = (e: React.PointerEvent) => { const box = jumpSheet.current!.getBoundingClientRect(); return { x: (e.clientX - box.left) / Math.max(1, box.width) * 900, y: (e.clientY - box.top) / Math.max(1, box.height) * 600 }; };
   const aimed = jumpOn && aim && run ? jumpTarget(stepsAt(run, aim), done) : null;
+  /** The item of the picture drawn at a point as far as execution is now (its box), for a tag. */
+  const itemAt = (at: { x: number; y: number }) => { const found = run && stepwise ? stepsAt(run, at).filter(moment => moment.done <= done).at(-1)?.event : undefined;
+    return found && Number.isFinite(found.x) && Number.isFinite(found.y) ? { x: found.x!, y: found.y!, w: found.w ?? 0, h: found.h ?? 0 } : null; };
   const stepLabel = (n: number) => { if (!run || n <= 0) return "Before start"; const item = runSteps(run)[n - 1]; return [item?.label || `Step ${n}`, stageOf(stepOp(run, n - 1))?.name].filter(Boolean).join(" · "); };
-  // The parts of the brush (semantic transformations, states, transitions) the execution, or one of its operations, belongs to.
+  // The parts of the brush (constraints, states, transitions) the execution, or one of its operations, belongs to.
   const parts = (list: ExecutionPart[] | undefined) => (list ?? []).flatMap(part => { const named = partName?.(part); return named ? [{ ...part, ...named }] : []; });
   const partChips = (list: ExecutionPart[] | undefined, small = false) => parts(list).map(part => <button key={`${part.kind}:${part.nodeId}:${part.id}`} type="button" className={`explore-part ${part.kind} ${small ? "small" : ""}`}
-    title={`${PART_KINDS[part.kind]} “${part.name}” · ${part.node} · click to view in the ${part.kind === "transformation" ? "transformation panel on the right" : "state machine panel below"}`}
+    title={`${PART_KINDS[part.kind]} “${part.name}” · ${part.node} · click to view in the ${part.kind === "constraint" ? "constraint panel on the right" : "state machine panel below"}`}
     onClick={() => onPart?.({ kind: part.kind, nodeId: part.nodeId, id: part.id })}><em>{PART_KINDS[part.kind]}</em>{part.name}</button>);
   const where = (at: NonNullable<ExploreEdit["at"]>) => at.moment.done !== null ? `Step ${at.moment.done}/${at.moment.count}` : `${Math.round(at.progress * 100)}%`;
-  return <div className={`explore-frame-surface explore-${frame.mode} ${showing && here ? `edit-${edit.mode}` : ""}`} tabIndex={-1} onPointerDownCapture={onActivate}
+  // Every text the frame writes on the picture is laid out together, so none covers another: the decision first, then
+  // the state the step worked with (its points, its numbers), then its arrows' names; the step numbers and the caption
+  // are kept clear, and what is left is given to the overlays' labels (`reserved`).
+  const surface = useRef<HTMLDivElement>(null), caption = useRef<HTMLDivElement>(null);
+  const [captionBox, setCaptionBox] = useState<Area | null>(null), [unit, setUnit] = useState(1);
+  useLayoutEffect(() => {
+    const at = surface.current?.getBoundingClientRect(), box = caption.current?.getBoundingClientRect();
+    const next = at && box && at.width > 0 ? { x: (box.left - at.left) / at.width * 900, y: (box.top - at.top) / at.height * 600, width: box.width / at.width * 900, height: box.height / at.height * 600 } : null;
+    if (JSON.stringify(next && Object.values(next).map(Math.round)) !== JSON.stringify(captionBox && Object.values(captionBox).map(Math.round))) setCaptionBox(next);
+    const px = at && at.width > 0 ? Math.round(at.width / 900 * 100) / 100 : 1; if (px !== unit) setUnit(px);
+  });
+  const k = textSize / 17, explained = stepwise && Boolean(run) && captions;
+  const arrows = useMemo(() => {
+    if (!anchor || !glyphs.vectors.length) return [];
+    const top = Math.max(1e-9, ...glyphs.vectors.map(item => Math.hypot(item.v[0], item.v[1])));
+    const sum: [number, number] = [glyphs.vectors.reduce((n, item) => n + item.v[0], 0), glyphs.vectors.reduce((n, item) => n + item.v[1], 0)];
+    return [...glyphs.vectors.map(item => ({ key: item.name, v: item.v, color: termColor(item.name), label: item.name, className: "" })), ...(glyphs.vectors.length > 1 ? [{ key: "@sum", v: sum, color: "#1f2a24", label: "together", className: "sum" }] : [])]
+      .flatMap(item => { const size = Math.hypot(item.v[0], item.v[1]); if (size < 1e-9) return []; const length = Math.min(130, 22 + 80 * size / top);
+        return [{ ...item, tx: anchor.x + item.v[0] / size * length, ty: anchor.y + item.v[1] / size * length }]; });
+  }, [anchor?.x, anchor?.y, JSON.stringify(glyphs.vectors)]);
+  // The tags written on the picture and the one edited there come first (they are what the user wrote), clear of the
+  // caption and the step numbers; the frame's other texts keep clear of them.
+  const tagged = showing && here, editingTag = tagged && !edit.making ? tagEditing : null;
+  const tagRequests = tagged ? [...(editingTag && tagBox(edit.ideal, editingTag) ? [{ key: `edit:${editingTag}`, ...controlSize(edit.ideal, editingTag, unit), shape: tagBox(edit.ideal, editingTag)! }] : []),
+    ...tagBlocks(edit.ideal, objectNames, read, editingTag).map(block => ({ key: block.key, ...blockSize(block), shape: block.box }))] : [];
+  const layTags = (taken: Area[]) => layoutBlocks(tagRequests, { width: 900, height: 600 }, taken);
+  const sheet = (() => {
+    if (!explained) { const tags = layTags(captionBox ? [captionBox] : []); return { verdict: null, points: new Map<string, PlacedLabel>(), numbers: new Map<string, PlacedLabel>(), arrows: new Map<string, PlacedLabel>(), tags, taken: [...(captionBox ? [captionBox] : []), ...tags] }; }
+    const number = (place: typeof lastPlace, text: string, end: boolean) => { const size = textSize * 1.3, width = textWidth(text, size), x = end ? place!.x - 4 - width : place!.x + (place!.w * place!.h > 0 ? place!.w : 18);
+      return { x, y: place!.y - 6 - size * .8, width, height: size }; };
+    let taken: Area[] = [...(captionBox ? [captionBox] : []), ...(lastPlace ? [number(lastPlace, String(done), true)] : []), ...(nextPlace ? [number(nextPlace, String(done + 1), false)] : [])];
+    const tags = layTags(taken); taken = [...taken, ...tags];
+    const lay = (requests: LabelRequest[], size: number) => { const out = layoutLabels(requests, size, { width: 900, height: 600 }, taken);
+      taken = [...taken, ...out.map(label => ({ x: label.x, y: label.y - label.height * .8, width: label.width, height: label.height }))]; return new Map(out.map(label => [label.key, label])); };
+    const verdictText = verdict ? `${verdict.pass ? "✓ " : "✗ "}${verdict.verdict}` : "", verdictSize = textSize * 1.35 * 1.08;
+    const verdictLabel = verdict ? lay([{ key: "verdict", text: verdictText, anchor: { x: verdict.at.x - textWidth(verdictText, verdictSize) / 2, y: verdict.at.y - 10 }, shape: { x: verdict.at.x, y: verdict.at.y, w: 0, h: 0 } }], verdictSize).get("verdict") ?? null : null;
+    const points = lay(lastShapes.map(shape => { const end = shape.points.at(-1)!;
+      return { key: shape.key, text: `${shape.key.split(".").at(-1)}${shape.points.length === 1 ? ` (${Math.round(end.x)}, ${Math.round(end.y)})` : ""}`, anchor: { x: end.x + 9, y: end.y - 8 }, shape: { x: end.x - 7, y: end.y - 7, w: 14, h: 14 } }; }), textSize * .95 * 1.05);
+    const valueSize = textSize * .85, right = lastPlace ? lastPlace.x + lastPlace.w + 10 + 190 * k < 900 : true;
+    const numbers = lastPlace ? lay(stepNumbers.map((item, row) => { const text = `${item.key} ${item.text}`;
+      return { key: item.key, text, anchor: { x: right ? lastPlace.x + lastPlace.w + 10 : lastPlace.x - 10 - textWidth(text, valueSize), y: lastPlace.y + (14 + row * 22) * k }, shape: { x: lastPlace.x, y: lastPlace.y, w: lastPlace.w, h: lastPlace.h } }; }), valueSize) : new Map<string, PlacedLabel>();
+    const named = lay(arrows.map(item => ({ key: item.key, text: item.label, anchor: { x: item.tx + 6, y: item.ty - 6 }, shape: { x: item.tx - 4, y: item.ty - 4, w: 8, h: 8 } })), textSize * .95 * 1.08);
+    return { verdict: verdictLabel, points, numbers, arrows: named, tags, taken };
+  })();
+  return <div ref={surface} className={`explore-frame-surface explore-${frame.mode} ${showing && here ? `edit-${edit.mode.startsWith("tool:") ? "tool" : edit.mode}` : ""}`} tabIndex={-1} onPointerDownCapture={onActivate}
     style={{ "--explore-text": `${textSize}px` } as React.CSSProperties}
-    onKeyDown={e => { if (e.key === "Escape" && selected !== null) { e.preventDefault(); e.stopPropagation(); setSelected(null); return; }
+    onKeyDown={e => { if (e.key === "Escape" && selected.length) { e.preventDefault(); e.stopPropagation(); setSelected([]); return; }
+      if ((e.key === "Delete" || e.key === "Backspace") && selected.length && here && !edit.making) { e.preventDefault(); e.stopPropagation(); editHere({ ideal: removeObjects(edit.ideal, selected) }); setSelected([]); return; }
       if (e.key === "Escape" && jumping) { e.preventDefault(); e.stopPropagation(); setJumping(false); return; }
       if (!stepwise || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return; e.preventDefault(); e.stopPropagation(); setPlaying(false);
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") stepBy(e.key === "ArrowLeft" ? -1 : 1); else goTo(e.key === "Home" ? 0 : count); }}>
-    {frame.executable ? <CodePreview ref={preview} executable={frame.executable} onError={setRunError} restore={{ id: restoreId, runtime, params, ...(Object.keys(termScales).length ? { terms: termScales } : {}), ...(running ? { run: { budget: step.budget, roots: frame.nodeIds, show: pictured, focus, solo: picked && solo ? { item: picked.item, index: picked.item === null ? picked.index : null } : null } } : {}) }}
+      // ←/→: one constraint (one step); with ⇧: one state machine step. Without FSM steps: the key steps as before.
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") { const way = e.key === "ArrowLeft" ? -1 : 1; if (!visits.length) stepBy(way); else if (e.shiftKey) visitBy(way); else goTo(done + way); }
+      else goTo(e.key === "Home" ? 0 : count); }}>
+    {frame.executable ? <CodePreview ref={preview} executable={frame.executable} onError={setRunError} restore={{ id: restoreId, runtime, params: { ...params, ...behaving }, ...(running ? { run: behaviorOn ? { budget: null, roots: frame.nodeIds, show: null } : { budget: step.budget, roots: frame.nodeIds, show: pictured } } : {}) }}
       onCapture={image => { if (running && budget.current === null) setGhost(image); latestShot.current = image; take(image); }}
-      onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) { setRun(recorded); setRunFocus(focusNow.current); } noteShot(restore); wantShot.current = true; setTimeout(() => take(latestShot.current), 300); }} />
+      onDrawn={(restore, stored, recorded) => { setDrawn({ restore, stores: stored }); if (recorded) setRun(recorded); noteShot(restore); wantShot.current = true; setTimeout(() => take(latestShot.current), 300); }} />
       : <div className="frame-render-status"><span className="loading-spinner" /><strong>Preparing the preview…</strong></div>}
-    {stepwise && ghost && step.budget !== null && <img className="explore-ghost" src={ghost} alt="" aria-hidden="true" />}
+    {stepwise && ghost && step.budget !== null && !behaviorOn && <img className="explore-ghost" src={ghost} alt="" aria-hidden="true" />}
     {/* What the step (or the value) just changed in the picture. */}
     {showChange && change?.key === shotKey && change.added + change.removed > 0 && <img className="explore-change" src={change.image} alt="" aria-hidden="true" />}
-    {/* The chosen influence changed a lot, as far as execution is now: where it parts from the picture. */}
-    {choice && compare?.key === compareKey && <img className="explore-compare" src={compare.image} alt="" aria-hidden="true" />}
-    {/* The mark looked at closely. */}
-    {picked && stepwise && <svg className="explore-influence-sheet" viewBox="0 0 900 600" preserveAspectRatio="none" aria-hidden="true">
-      <circle className="explore-picked" cx={picked.x} cy={picked.y} r={11} vectorEffect="non-scaling-stroke" />
-    </svg>}
     {/* The picture explains itself: where the step just executed worked (its number) and where the next one will, what it
         worked on and what made its result (drawn, not written); in the corner away from it only which step and the colors. */}
     {stepwise && run && captions && <>
@@ -317,102 +386,93 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
         {lastShapes.map(shape => { const end = shape.points.at(-1)!; return <g key={`l:${shape.key}`} className="explore-data last">
           {shape.points.length > 1 ? <polyline points={shape.points.map(q => `${q.x},${q.y}`).join(" ")} vectorEffect="non-scaling-stroke" /> : null}
           <circle cx={end.x} cy={end.y} r={shape.points.length > 1 ? 4 : 7} />
-          <text x={end.x + 9} y={end.y - 8}>{shape.key.split(".").at(-1)}</text></g>; })}
+          {sheet.points.get(shape.key) && <text x={sheet.points.get(shape.key)!.x} y={sheet.points.get(shape.key)!.y}>{sheet.points.get(shape.key)!.text}</text>}</g>; })}
+        {/* The step's numbers, beside where it works (where there is room). */}
+        <g className="explore-data-values">{stepNumbers.map(item => { const placed = sheet.numbers.get(item.key);
+          return placed && <text key={item.key} x={placed.x} y={placed.y}>{item.key} <tspan>{item.text}</tspan></text>; })}</g>
         {/* What this step decided: what it tested, in the outcome's color, and the verdict on it. */}
         {verdict && <g className={`explore-test ${verdict.pass ? "pass" : "fail"}`}>
           {verdict.shapes.map((shape, j) => <TestShapeView key={j} shape={shape} />)}
-          <text className="verdict" x={verdict.at.x} y={verdict.at.y - 10} textAnchor="middle">{verdict.pass ? "✓ " : "✗ "}{verdict.verdict}</text></g>}
+          {sheet.verdict && <text className="verdict" x={sheet.verdict.x} y={sheet.verdict.y}>{sheet.verdict.text}</text>}</g>}
         {/* What made this step's result: its inner terms where it works. Arrows (vectors) scaled to the largest, and their sum. */}
-        {anchor && glyphs.vectors.length > 0 && (() => {
-          const top = Math.max(1e-9, ...glyphs.vectors.map(item => Math.hypot(item.v[0], item.v[1]))), scale = (v: [number, number], most = 80) => { const size = Math.hypot(v[0], v[1]); if (size < 1e-9) return null; const length = Math.min(130, 22 + most * size / top); return [v[0] / size * length, v[1] / size * length] as const; };
-          const arrow = (key: string, v: [number, number], color: string, label: string, className = "") => { const d = scale(v); if (!d) return null; const tx = anchor.x + d[0], ty = anchor.y + d[1], a = Math.atan2(d[1], d[0]);
-            const head = [[tx, ty], [tx - 11 * Math.cos(a - .45), ty - 11 * Math.sin(a - .45)], [tx - 11 * Math.cos(a + .45), ty - 11 * Math.sin(a + .45)]].map(q => q.join(",")).join(" ");
-            return <g key={key} className={`explore-term-glyph ${className}`} style={{ color }}><line x1={anchor.x} y1={anchor.y} x2={tx} y2={ty} vectorEffect="non-scaling-stroke" /><polygon points={head} /><text x={tx + 6} y={ty - 6}>{label}</text></g>; };
-          const sum: [number, number] = [glyphs.vectors.reduce((n, item) => n + item.v[0], 0), glyphs.vectors.reduce((n, item) => n + item.v[1], 0)];
-          return <>{glyphs.vectors.map(item => arrow(item.name, item.v, termColor(item.name), item.name, faded(item.name) ? "faded" : ""))}{glyphs.vectors.length > 1 && arrow("@sum", sum, "#1f2a24", "together", "sum")}</>;
-        })()}
-        {/* Numbers (signed bars) next to where it works: how much each term gives, and which way. */}
-        {anchor && glyphs.scalars.length > 0 && (() => {
-          // Laid out for the text size (17 as drawn first).
-          const k = textSize / 17, rows = glyphs.scalars.slice(0, 6), most = Math.max(1e-9, ...rows.map(item => Math.abs(item.value))), height = (rows.length * 24 + 12) * k;
-          const ox = Math.min(900 - 250 * k, Math.max(4, anchor.x + 26)), oy = Math.min(600 - height - 4, Math.max(4, anchor.y - height / 2)), axis = ox + 110 * k;
-          return <g className="explore-term-bars"><rect x={ox} y={oy} width={244 * k} height={height} rx={8} />
-            <line className="axis" x1={axis} y1={oy + 6} x2={axis} y2={oy + height - 6} vectorEffect="non-scaling-stroke" />
-            {rows.map((item, row) => { const y = oy + (12 + row * 24) * k, length = 60 * k * item.value / most;
-              return <g key={item.name} className={faded(item.name) ? "faded" : ""} style={{ color: termColor(item.name) }}>
-                <text className="name" x={axis - 66 * k} y={y + 12 * k} textAnchor="end">{item.name}</text>
-                <rect className="bar" x={Math.min(axis, axis + length)} y={y + 2 * k} width={Math.max(2, Math.abs(length))} height={14 * k} rx={3} />
-                <text className="value" x={axis + 66 * k} y={y + 13 * k}>{shortValue(item.value)}</text></g>; })}</g>;
-        })()}
+        {anchor && arrows.map(item => { const a = Math.atan2(item.ty - anchor.y, item.tx - anchor.x), placed = sheet.arrows.get(item.key);
+          const head = [[item.tx, item.ty], [item.tx - 11 * Math.cos(a - .45), item.ty - 11 * Math.sin(a - .45)], [item.tx - 11 * Math.cos(a + .45), item.ty - 11 * Math.sin(a + .45)]].map(q => q.join(",")).join(" ");
+          return <g key={item.key} className={`explore-term-glyph ${item.className}`} style={{ color: item.color }}><line x1={anchor.x} y1={anchor.y} x2={item.tx} y2={item.ty} vectorEffect="non-scaling-stroke" />
+            <polygon points={head} />{placed && <text x={placed.x} y={placed.y}>{placed.text}</text>}</g>; })}
       </svg>
-      <div className={`explore-caption ${lastPlace && lastPlace.x + lastPlace.w / 2 < 450 ? "right" : "left"}`} aria-live="polite">
-        <span className="explore-caption-head"><b>{marked.length ? "This mark · step" : "Step"} {done}</b> / {count}{stage && <i>{stage.name}</i>}</span>
+      <div ref={caption} className={`explore-caption ${lastPlace && lastPlace.x + lastPlace.w / 2 < 450 ? "right" : "left"}`} aria-live="polite">
+        <span className="explore-caption-head"><b>Step {done}</b> / {count}{stage && <i>{stage.name}</i>}</span>
         {/* In words, next to what the picture shows: what the step did, why it matters, what it decided, what comes next. */}
-        {last && !last.none && <span className="explore-caption-now">{last.label || `Step ${done}`}</span>}
-        {stage?.explain && <span className="explore-caption-why">{stage.explain}</span>}
+        {last && !last.none && <span className="explore-caption-now">{last.label || (lastStep && lastStep.kind !== "trace" ? `Draws: ${lastStep.kind}` : `Step ${done}`)}</span>}
         {verdict && <span className={`explore-caption-verdict ${verdict.pass ? "pass" : "fail"}`}>{verdict.pass ? "✓" : "✗"} {verdict.verdict}{othersTested > 0 && <small> · {othersTested} more compared</small>}</span>}
-        {next && !next.none && <span className="explore-caption-next">Next: {next.label || `Step ${done + 1}`}</span>}
         {showChange && change?.key === shotKey && change.added + change.removed > 0 && <span className="explore-caption-legend"><i className="added" />drawn by this step{change.removed > 0 && <><i className="removed" />gone</>}</span>}
       </div>
     </>}
-    {shown && <InspectionOverlay state={state} marks={[]} result={shown} drawn={stores} liveValues={{}} clickable zoom={zoom} onFocus={() => {}} plain specs={allSpecs} textSize={textSize}
-      onHandle={(phase, key, value, _item, _each, motion) => {
-        if (phase === "start") { setPlaying(false); const many = Boolean(run && stageOf(stepOp(run, done))?.many);
-          block.current = stepwise && run ? { range: gestureRange(run, done, many), start: done, many, latched: null } : null; }
-        if (value !== null) {
-          // One gesture executes (or takes back) one step of its operation, never into another operation.
-          if (key === EXEC_KEY) {
-            if (stepwise) {
-              const drag = block.current ?? { range: [0, count] as [number, number], start: done, many: false, latched: null };
-              if (drag.latched !== null) return;
-              // A hand still settling is no step; a gesture that cannot measure itself (its pivot on the grip) runs one step forward once clearly dragged.
-              const reached = Math.max(drag.range[0], Math.min(drag.range[1], !motion || motion.moved < STEP_SLOP ? drag.start : motion.reach < STEP_SLOP ? drag.start + 1 : Number(value)));
-              // Over key steps, one gesture goes to the next (or previous) key step.
-              const target = keyed && !drag.many && reached !== drag.start ? keyStep(keys, drag.start, reached > drag.start ? 1 : -1) : reached;
-              if (!drag.many && target !== drag.start) drag.latched = target;
-              goTo(target);
-            } else onProgress(Number(value));
-          }
-          else onValue(key, value);
-        }
-        if (phase === "end") block.current = null;
-      }} />}
-    {/* What the user shows at this moment: over the handles while cropping or annotating, under them (drawn only) while running. */}
-    {showing && here && <EditSheet className="explore-edit-sheet" edit={edit} onEdit={editHere} shot={shot || latestShot.current} editable={!edit.making} selected={selected} onSelect={setSelected} />}
+    {/* A state tool that reads things pressed: pressing an item of the picture or something drawn picks it (again: unpicks it); its grips stay on top. */}
+    {setting && readsPicked(setting) && here && <svg className="explore-pick-sheet" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Press things to check them with this tool"
+      onPointerDown={e => { if (e.button !== 0) return; e.preventDefault(); e.stopPropagation(); const box = e.currentTarget.getBoundingClientRect(), at = { x: (e.clientX - box.left) / Math.max(1, box.width) * 900, y: (e.clientY - box.top) / Math.max(1, box.height) * 600 };
+        const object = objectAt(edit.ideal, at), item = object ? null : itemAt(at);
+        const pick = object ? { id: object.id, box: { x: 0, y: 0, width: 0, height: 0 } } : item ? { id: null, box: item.w * item.h > 0 ? { x: item.x, y: item.y, width: item.w, height: item.h } : { x: item.x - 12, y: item.y - 12, width: 24, height: 24 } } : null;
+        if (!pick) return;
+        const same = (other: typeof pick) => pick.id ? other.id === pick.id : !other.id && JSON.stringify(other.box) === JSON.stringify(pick.box);
+        setPicks(list => list.some(same) ? list.filter(other => !same(other)) : [...list, pick].slice(-MAX_PICKED)); }}>
+      {picked.map((box, i) => <g key={i} className="explore-pick" style={{ color: setting.color }}><rect x={box.x - 4} y={box.y - 4} width={box.width + 8} height={box.height + 8} vectorEffect="non-scaling-stroke" />
+        <text x={box.x - 6} y={box.y - 8} textAnchor="end">{i + 1}</text></g>)}
+    </svg>}
+    {shown && <InspectionOverlay state={state} marks={[]} result={shown} drawn={stores} liveValues={{}} clickable zoom={zoom} onFocus={() => {}} plain specs={specs} textSize={textSize} reserved={sheet.taken}
+      onHandle={(phase, key, value) => { if (phase === "start") setPlaying(false); if (value !== null) onValue(key, value); }} />}
+    {/* The runtime state inspected (or referred to by the tag of what is selected), where it is at this moment. */}
+    {showing && inspected.length > 0 && <VariableMarks readings={inspected} avoid={sheet.taken} />}
+    {/* The state wanted at this moment: over the overlays while drawing, under them (shown only) while looking or setting state. */}
+    {showing && here && <IdealSheet className="explore-edit-sheet" state={edit.ideal} onState={ideal => editHere({ ideal })} tools={edit.kit?.tools ?? []} mode={edit.mode}
+      marks={edit.marks} onMarks={marks => editHere({ marks })} shot={picture} selected={selected} onSelect={setSelected} editable={!edit.making}
+      onMode={mode => onEdit?.({ mode })} itemAt={itemAt} objectNames={objectNames} read={read}
+      onTagPress={id => setSelected(edit.ideal.merges.find(merge => merge.id === id)?.members ?? [id])} tagEditing={editingTag} placedTags={sheet.tags} />}
+    {/* The widget made for the rules on a tag: manipulated on the picture, it writes the rules (the object follows them). */}
+    {showing && widget && widgetItem && <TagWidgetLayer widget={widget} world={widgetWorld(widgetItem, widget.values)} disabled={edit.making}
+      onValues={values => { const next = { ...widget.values, ...values }; editHere({ ideal: applyWidget(edit.ideal, widget.id, widget, next, read), widgets: { ...edit.widgets, [widget.id]: { ...widget, values: next } } }); }}
+      onError={message => onEdit?.({ widgetError: `The widget stopped: ${message}` })} />}
+    {editingTag && (() => { const item = edit.ideal.objects.find(entry => entry.id === editingTag), spot = sheet.tags.find(entry => entry.key === `edit:${editingTag}`);
+      return <TagControl state={edit.ideal} onState={ideal => editHere({ ideal })} id={editingTag} objects={objects} tools={edit.kit?.tools ?? []} refs={refChoices(readings)} editable
+        examples={specExamples(edit.kit)} read={read} at={spot ? { x: spot.x, y: spot.y } : undefined} widget={item ? widgetControl(item) : undefined} />; })()}
     {/* Jumping: the part under the pointer, and the step that draws it (pressing executes up to there). */}
     {jumpOn && <svg ref={jumpSheet} className="explore-jump-sheet" viewBox="0 0 900 600" preserveAspectRatio="none" aria-label="Press a part to jump execution to the step that draws it"
       onPointerMove={e => setAim(jumpPoint(e))} onPointerLeave={() => setAim(null)}
       onPointerDown={e => { if (e.button !== 0 || !run) return; e.preventDefault(); e.stopPropagation(); const at = jumpPoint(e), target = jumpTarget(stepsAt(run, at), done);
-        setAim(at); if (target) { setPlaying(false); goTo(target.done); follow({ ...at, index: target.event.index, done: target.done, item: target.event.item ?? null }); } }}>
+        setAim(at); if (target) { setPlaying(false); setJumped(target.done); goTo(target.done); } }}>
       {aimed && <>
         <rect className="explore-jump-box" x={aimed.event.x} y={aimed.event.y} width={Math.max(4, aimed.event.w ?? 0)} height={Math.max(4, aimed.event.h ?? 0)} vectorEffect="non-scaling-stroke" />
         <text className="explore-jump-label" x={Math.min(880, Math.max(8, aim!.x + 14))} y={Math.max(18, aim!.y - 12)} textAnchor={aim!.x > 600 ? "end" : "start"}>{`Step ${aimed.done}/${count} · ${stepLabel(aimed.done)}`}</text>
       </>}
     </svg>}
     <div className="explore-bar board-scroll" onPointerDown={e => e.stopPropagation()}>
-      <span className="section-kicker">{execution ? "EXECUTION · STEP BY STEP" : "KEY PARAMETERS"} · {frame.source.kind === "cause" ? "Cause" : frame.source.title}</span>
-      {frame.status === "idle" && <span className="explore-status" role="status">Not generated yet. {execution ? "Press to have the AI split this process into steps and make a gesture to run at each step." : "Press to have the AI make key parameter handles."}{frame.source.kind === "recommendation" ? " (“Continue generating” on the fork frame makes both.)" : ""}<button onClick={() => onRetry()}>Generate</button></span>}
+      <span className="section-kicker">EXECUTION · STEP BY STEP</span>
+      {frame.status === "idle" && <span className="explore-status" role="status">Not generated yet. Press to have the AI split this process into steps.<button onClick={() => onRetry()}>Generate</button></span>}
       {frame.status === "queued" && <span className="explore-status" role="status"><span className="loading-spinner" />Waiting in line. The AI will generate this once the earlier exploration frames finish…</span>}
-      {frame.status === "loading" && <span className="explore-status" role="status"><span className="loading-spinner" />{execution ? "The AI is splitting the inner workings into steps and making a gesture to run at each step…" : "The AI is making key parameter handles…"}</span>}
+      {frame.status === "loading" && <span className="explore-status" role="status"><span className="loading-spinner" />The AI is splitting the inner workings into steps…</span>}
       {frame.status === "error" && <span className="explore-status error" role="alert">{frame.error}<button onClick={() => onRetry()}>Retry</button></span>}
       {/* Make the frame again, optionally saying what to change. */}
       {(frame.status === "ready" || frame.status === "error") && <form className="explore-regenerate" onSubmit={e => { e.preventDefault(); onRetry(remake); setRemake(""); }}>
         <input value={remake} onChange={e => setRemake(e.currentTarget.value)} maxLength={400} placeholder="What to change (optional), e.g. fewer marks, explain the test" aria-label="What to change when regenerating" />
         <button type="submit" title="Have the AI make this frame again (with what you wrote)"><Icon name="undo" size={12} />Regenerate</button></form>}
-      {runError && <span className="explore-status error" role="alert">Code execution error{frame.result?.edits.length ? " (recommendation preview code)" : ""}: {runError}<button onClick={() => onRetry()}>Regenerate</button></span>}
+      {runError && <span className="explore-status error" role="alert">Code execution error{frame.result?.edits.length ? " (with the execution checkpoints)" : ""}: {runError}<button onClick={() => onRetry()}>Regenerate</button></span>}
       {/* Handles AI made that cannot be placed at this moment (they read something this step does not have). */}
-      {!runError && unplaced > 0 && <span className="explore-status error" role="alert">Couldn't find a place for {unplaced} handle(s). Their positions read values that aren't in this step's picture.<button onClick={() => onRetry()}>Regenerate</button></span>}
+      {!runError && setting && unplaced > 0 && <span className="explore-status error" role="alert">Couldn't place {unplaced} grip(s) of “{setting.name}” at this moment. They read values this moment's state doesn't have.</span>}
       {/* The parts of the brush this execution runs. */}
-      {result && execution && parts(result.of).length > 0 && <div className="explore-parts"><span>Part of</span>{partChips(result.of)}</div>}
+      {result && parts(result.of).length > 0 && <div className="explore-parts"><span>Part of</span>{partChips(result.of)}</div>}
       {result && <p className={`explore-summary ${summaryOpen ? "open" : ""}`} title={summaryOpen ? "Click to fold" : "Click to read all"} onClick={() => setSummaryOpen(!summaryOpen)}>{result.summary}</p>}
-      {result && execution && running && !stepwise && <span className="explore-status" role="status"><span className="loading-spinner" />Recording the code execution as steps…</span>}
+      {result && running && !stepwise && <span className="explore-status" role="status"><span className="loading-spinner" />Recording the code execution as steps…</span>}
+      {behaviorOn && stepwise && done < count && <span className="explore-status" role="status">The picture is the whole run with the behavior you drew; the steps explain the run.</span>}
       {/* Step by step: execute or take back one internal operation at a time; what was just done and what comes next. */}
-      {result && execution && stepwise && <>
+      {result && stepwise && <>
         <div className="explore-stepper" role="group" aria-label="Execution steps">
           <button aria-label="Back to the first step" title="First (Home)" disabled={done <= 0} onClick={() => { setPlaying(false); goTo(0); }}><Icon name="undo" size={12} /></button>
-          <button aria-label="Take back one step" title={keyed ? "Back to the previous key step (←)" : "Back one step (←)"} disabled={done <= 0} onClick={() => { setPlaying(false); stepBy(-1); }}>◀</button>
-          <output>{keyed ? <>{marked.length ? "This mark's step" : "Key step"} <b>{keyAt}</b> / {keys.length - 1} <small>· step {done}/{count}</small></> : <>Step <b>{done}</b> / {count}</>}</output>
-          <button aria-label="Execute one step" title={keyed ? "Execute up to the next key step (→)" : "Execute one step (→)"} className="primary" disabled={done >= count} onClick={() => { setPlaying(false); stepBy(1); }}>▶ {keyed ? "Next key step" : "One step"}</button>
+          {visits.length > 0 && <button aria-label="Back one state machine step" title="Back to where the previous state machine step starts (⇧←)" disabled={done <= 0} onClick={() => { setPlaying(false); visitBy(-1); }}>◀◀ State</button>}
+          <button aria-label="Take back one step" title={visits.length ? "Back one constraint (←)" : keyed ? "Back to the previous key step (←)" : "Back one step (←)"} disabled={done <= 0} onClick={() => { setPlaying(false); visits.length ? goTo(done - 1) : stepBy(-1); }}>◀</button>
+          <output>{visits.length ? <>State step <b>{Math.max(0, visits.filter(item => item.start < done).length)}</b> / {visits.length} <small>· step {done}/{count}</small></>
+            : keyed ? <>Key step <b>{keyAt}</b> / {keys.length - 1} <small>· step {done}/{count}</small></> : <>Step <b>{done}</b> / {count}</>}</output>
+          <button aria-label="Execute one step" title={visits.length ? "Execute the next constraint (→)" : keyed ? "Execute up to the next key step (→)" : "Execute one step (→)"} disabled={done >= count} onClick={() => { setPlaying(false); visits.length ? goTo(done + 1) : stepBy(1); }}>▶ {visits.length ? "Constraint" : keyed ? "Next key step" : "One step"}</button>
+          {visits.length > 0 && <button aria-label="Execute one state machine step" title="Execute the whole state machine step: the state visit with its constraints in order, or the transition (⇧→)" className="primary" disabled={done >= count} onClick={() => { setPlaying(false); visitBy(1); }}>▶▶ State</button>}
           <button aria-label="Execute all steps" title="To the end (End)" disabled={done >= count} onClick={() => { setPlaying(false); goTo(count); }}>⏭</button>
           <button aria-label={playing ? "Pause stepping" : "Play step by step"} title={playing ? "Pause" : "Play step by step"} onClick={play}><Icon name={playing ? "pause" : "play"} size={12} /></button>
           <button className={jumpOn ? "active" : ""} aria-pressed={jumpOn} title="Moves execution to the step that draws the part you press in the picture (Esc to turn off)"
@@ -420,8 +480,7 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
           {count > KEY_STEPS && <button className={allSteps ? "active" : ""} aria-pressed={allSteps} title={allSteps ? "Stop only at the key steps: one round of the operations in full, then the rest in chunks" : `Go through every one of the ${count} steps`}
             onClick={() => setAllSteps(!allSteps)}>{allSteps ? "Key steps only" : `All ${count} steps`}</button>}
           <button className={showChange ? "active" : ""} aria-pressed={showChange} title="Color what the step just changed in the picture: drawn blue, gone orange" onClick={() => setShowChange(!showChange)}>Show change</button>
-          <label className="explore-toggle" title="Write on the picture what the step did, where, what it read and what comes next"><input type="checkbox" checked={captions} onChange={e => setCaptions(e.currentTarget.checked)} />Explain on picture</label>
-          <label className="explore-toggle" title="Run steps by dragging the operation's handle on the picture (off: only with the buttons and keys)"><input type="checkbox" checked={gestures} onChange={e => setGestures(e.currentTarget.checked)} />Step by gesture</label>
+          <label className="explore-toggle" title="Write on the picture what the step did, where, the state it worked with and what it decided"><input type="checkbox" checked={captions} onChange={e => setCaptions(e.currentTarget.checked)} />Explain on picture</label>
           <span className="explore-text-size" role="group" aria-label="Text size on the picture" title="How big the words on the picture are">
             <button aria-label="Smaller text on the picture" disabled={textSize <= 10} onClick={() => setTextSize(textSize - 2)}>A−</button><output>{textSize}</output>
             <button aria-label="Larger text on the picture" disabled={textSize >= 36} onClick={() => setTextSize(textSize + 2)}>A+</button></span>
@@ -429,90 +488,63 @@ export function ExploreFrameView({ frame, zoom, specs, labelOf, expand, onProgre
         {showChange && change?.key === shotKey && <span className="explore-change-legend">{change.added + change.removed > 0
           ? <><i className="added" />{change.byStep ? "drawn by this step" : "drawn with this value"}{change.removed > 0 && <><i className="removed" />gone</>}</>
           : change.byStep ? "This step changed nothing in the picture (it only computes; its result shows at a later step)." : "Nothing changed in the picture."}</span>}
-        {/* Where execution is, the key steps, and the steps the chosen influence changes (click one to go there). */}
+        {/* Where execution is and the key steps. */}
         {count > 1 && <div className="explore-timeline">
           <div className="explore-timeline-track" title="Click to go to that point of execution"
             onClick={e => { const box = e.currentTarget.getBoundingClientRect(), at = Math.round((e.clientX - box.left) / Math.max(1, box.width) * count); setPlaying(false);
               goTo(keyed ? keys.reduce((best, stop) => Math.abs(stop - at) < Math.abs(best - at) ? stop : best, 0) : at); }}>
             {keyed && keys.map(stop => <i key={stop} className="key" style={{ left: `${stop / count * 100}%` }} />)}
-            {choice && choice.effect.steps.slice(0, 200).map(i => <button key={i} className="hit" style={{ left: `${(i + 1) / count * 100}%` }} aria-label={`Go to step ${i + 1}`}
-              title={`Step ${i + 1} · ${stepLabel(i + 1)} · comes out different with ${choice.item.label} changed`} onClick={e => { e.stopPropagation(); setPlaying(false); goTo(i + 1); }} />)}
             <b className="now" style={{ left: `${done / count * 100}%` }} />
           </div>
-          {choice && <small>{choice.effect.steps.length ? `${choice.effect.steps.length} step(s) come out different with “${choice.item.label}” changed (marked) · click one to go there` : `No step's data or drawing changes with “${choice.item.label}”`}</small>}
         </div>}
         {jumpOn && <span className="explore-explain">Press the picture to execute up to the step that draws that part · press the same spot again for the next step that draws there · Esc to turn off</span>}
-        <div className="explore-step-now">
-          <span><em>Just executed</em>{last && !last.none ? <><b>{last.label || `Step ${done}`}</b>{stageOf(last.op) && <i>{stageOf(last.op)!.name}</i>}{partChips(stageOf(last.op)?.of, true)}</> : "Nothing executed yet"}</span>
-          <span><em>Next</em>{next && !next.none ? <><b>{next.label || `Step ${done + 1}`}</b>{stageOf(next.op) && <i>{stageOf(next.op)!.name}</i>}{partChips(stageOf(next.op)?.of, true)}</> : "All steps executed"}</span>
-        </div>
-        {/* What the step just executed worked with: its data and the inner terms it computed (the chosen one stands out). */}
+        {/* What the step just did, here when it is not written on the picture (only what was done: what comes next shows when it is done). */}
+        {!captions && <div className="explore-step-now"><b>{last && !last.none ? last.label || `Step ${done}` : "Nothing executed yet"}</b>{last && stageOf(last.op) && <i>{stageOf(last.op)!.name}</i>}</div>}
+        {/* What the step just executed worked with: its data and the inner terms it computed. */}
         {readValues.length > 0 && <div className="explore-step-values" aria-label="Values the step just executed read">
-          <em>Read</em>{readValues.map(item => <span key={`${item.term}:${item.key}`} className={`${item.term ? "term" : ""} ${choice && item.term && choice.item.key === item.term ? "chosen" : ""}`}
+          <em>Read</em>{readValues.map(item => <span key={`${item.term}:${item.key}`} className={item.term ? "term" : ""}
             title={item.term ? "Inner term (m.term) computed in this step: its last value" : "Value this step's checkpoint recorded"}>{item.key} <b>{item.text}</b></span>)}
         </div>}
-        {/* What shapes a mark, only when one is looked at closely: each influence changed a little, how far the mark moves. */}
-        {picked ? <div className="explore-influence" role="group" aria-label="What shapes the picked mark">
-          <div className="explore-influence-head"><span className="section-kicker">FOLLOWING ONE MARK</span>
-            <small>{picked.item !== null ? `Item ${picked.item}` : "One drawing call"} · {marked.length ? `changes at ${marked.length} step(s): ◀ ▶ go through them` : "recording its steps…"}</small>
-            <label title="Draw the other marks faint, so this one stands out"><input type="checkbox" checked={solo} onChange={e => setSolo(e.currentTarget.checked)} />Dim the rest</label>
-            <button aria-label="Stop following this mark" title="Stop following this mark" onClick={() => { setPicked(null); setChosen(null); }}><Icon name="close" size={10} /></button></div>
-          <span className="section-kicker">WHAT SHAPES IT</span>
-          {measuring ? <span className="explore-status" role="status"><span className="loading-spinner" />Drawing this step again with each of {influences.length} values, inner terms and execution states changed a little…</span>
-            : !effects ? <span className="explore-influence-ask">{influences.length ? <button className="primary" onClick={() => { void measure(); }}>Measure what shapes it</button> : null}
-              <small>{influences.length ? `Changes each of ${influences.length} values, inner terms and execution states a little and measures how far this mark moves.` : "This brush has no values, inner terms or execution state to change here."}</small></span>
-            : ranked.length === 0 ? <span className="explore-status">Nothing measured moves this mark.<button onClick={() => { void measure(); }}>Measure again</button></span>
-            : <div className="explore-influence-list">{ranked.map(({ item, effect }) => <button key={item.id} className={chosen === item.id ? "active" : ""} aria-pressed={chosen === item.id}
-                title={`${INFLUENCE_KINDS[item.kind]} “${item.label}”: ${effect.gone ? "changing it takes this mark away" : `changed a little, the mark moves ${effect.moved}px`} · ${effect.steps.length} step(s) change · click to compare`}
-                onClick={() => setChosen(chosen === item.id ? null : item.id)}>
-                <em className={item.kind}>{INFLUENCE_KINDS[item.kind]}</em><span>{item.label}</span>
-                <i className="explore-influence-bar"><i style={{ width: `${effect.gone ? 100 : Math.max(4, effect.moved / most * 100)}%` }} /></i>
-                <small>{effect.gone ? "takes it away" : `${effect.moved}px`}</small></button>)}</div>}
-          {/* The chosen one: compared on the picture (faint, as far as execution is now), and tried by hand. */}
-          {choice && <div className="explore-influence-try">
-            <span>{choice.item.kind === "term" ? "Faint: without this term" : choice.item.kind === "value" ? "Faint: this value at the far end of its range" : "Faint: this state moved further"} · as far as execution is now</span>
-            {choice.item.kind === "term" && <label>Scale<input type="range" min={0} max={2} step={.05} value={termScales[choice.item.key] ?? 1}
-              onChange={e => { const value = e.currentTarget.valueAsNumber; setTermScales(current => { const next = { ...current }; if (Math.abs(value - 1) < 1e-9) delete next[choice.item.key]; else next[choice.item.key] = value; return next; }); }} />
-              <output>×{(termScales[choice.item.key] ?? 1).toFixed(2)}</output></label>}
-            {choice.item.kind === "value" && allSpecs[choice.item.key]?.type === "number" && (() => { const spec = allSpecs[choice.item.key] as Extract<ScalarValue, { type: "number" }>, now = state.steps[0].values[choice.item.key];
-              return <label>{choice.item.label}<input type="range" min={spec.min} max={spec.max} step={spec.step} value={typeof now === "number" ? now : spec.value} onChange={e => onValue(choice.item.key, e.currentTarget.valueAsNumber)} />
-                <output>{formatScalar(typeof now === "number" ? now : spec.value)}</output></label>; })()}
-            {choice.item.kind === "value" && specs[choice.item.key] && onVariable && <button onClick={() => onVariable(choice.item.key)}>Show in properties<Icon name="arrow" size={11} /></button>}
-            {choice.item.kind === "state" && <span>{overlays.some(item => item.handle?.key === choice.item.key) ? "Move it with its handle on the picture." : "Move it with its handle in the targeted inspection of the original frame."}</span>}
-            {Object.keys(termScales).length > 0 && <button onClick={() => setTermScales({})}>Reset terms</button>}
-          </div>}
-        </div> : <span className="explore-explain">To see how one mark is made, step by step: <button className="link" onClick={pickStep} disabled={!run}>follow the mark this step drew</button> or press one with ◎ Jump to pressed.</span>}
-        {/* The kinds of operation the run is made of: how far each is, and what it does (the one now explained). */}
-        {result.stages.length > 0 && <div className="explore-stages">{result.stages.map(stage => { const entry = counts.get(stage.op);
-          return <button key={stage.op} className={stage.op === currentOp ? "current" : ""} disabled={!entry} title={[stage.explain, ...parts(stage.of).map(part => `${PART_KINDS[part.kind]} “${part.name}”`)].filter(Boolean).join("\n")}
-            onClick={() => { setPlaying(false); if (entry) goTo(entry.first); }}>{stage.name}<small>{entry ? `${entry.done}/${entry.count}` : "0"}</small></button>; })}</div>}
+        {/* The state machine step execution is in: its owner and state, then its constraints in evaluation order (done, now, to come). */}
+        {visit && <div className="explore-fsm" aria-label="State machine step">
+          <button type="button" className={`explore-fsm-head ${visit.head.fsm}`} title={nameOfStep(visit.start)?.explain || undefined} onClick={() => { setPlaying(false); goTo(visit.start + 1); }}>
+            <em>{visit.head.fsm === "transition" ? "Transition" : "State"}</em>{nameOfStep(visit.start)?.name ?? (visit.head.fsm === "transition" ? `${visit.head.state} → ${visit.head.to}` : visit.head.state)}</button>
+          {visit.steps.slice(1).map((index, order) => { const named = nameOfStep(index), item = fsmOf(steps[index]?.data);
+            return <button key={index} type="button" className={`explore-fsm-constraint ${index < done ? "done" : ""} ${index === done - 1 ? "current" : ""}`} title={named?.explain || undefined}
+              onClick={() => { setPlaying(false); goTo(index + 1); }}><small>{order + 1}</small>{item?.property ?? named?.name}{index < done && item && "value" in item && <b>{shortValue(item.value)}</b>}</button>; })}
+        </div>}
         {stageOf(currentOp)?.explain && <span className="explore-explain">{stageOf(currentOp)!.explain}</span>}
       </>}
-      {result && execution && !running && <div className="explore-scrub">
+      {result && !running && <div className="explore-scrub">
         <button aria-label={playing ? "Pause execution" : "Play execution"} title={playing ? "Pause" : "Play the process"} onClick={play}><Icon name={playing ? "pause" : "play"} size={12} /></button>
         <input type="range" aria-label="Execution progress" min={from} max={to} step={.001} value={Math.min(to, Math.max(from, frame.progress))} onChange={e => { setPlaying(false); onProgress(e.currentTarget.valueAsNumber); }} />
         <output>{Math.round((frame.progress - from) / Math.max(.001, to - from) * 100)}%</output>
       </div>}
-      {result && !execution && tried.length > 0 && <div className="explore-values">{tried.map(([key, value]) => <span key={key}>{isRuntimeKey(key) ? <>{key.startsWith(INPUT_KEY) ? "Moved input path" : "Changed run state"} <b>{typeof value === "number" ? formatScalar(value) : `${String(value).replace(",", ", ")}px`}</b></>
-          : <>{labelOf(key)} <b>{typeof value === "number" ? formatScalar(value) : String(value)}</b></>}
-        <button aria-label={`Reset ${labelOf(key)}`} title="Back to the start value" onClick={() => onValue(key, null)}><Icon name="close" size={9} /></button></span>)}</div>}
-      {/* Show how it should come out at this moment, and get a recommendation from it. */}
-      {showing && !recommendOpen && <button className="explore-recommend-open" onClick={() => setRecommendOpen(true)}><Icon name="spark" size={12} />Show how it should be at this moment → recommendation</button>}
-      {showing && recommendOpen && <div className="fork-slot-revise explore-recommend">
-        <button className="explore-recommend-close" aria-label="Fold" title="Fold" onClick={() => setRecommendOpen(false)}><Icon name="close" size={10} /></button>
-        <span className="section-kicker">Show it at this execution moment and make a RECOMMENDATION · crop to move, scale, rotate, annotation</span>
-        {here ? <EditTools edit={edit} onEdit={editHere} editable={!edit.making} busy={edit.making} selected={selected} onSelect={setSelected} run="Execution handles" />
-          : <span className="explore-status">There are marks made at {where(edit.at!)} (drawn only at that moment).
-            <button onClick={() => { setPlaying(false); onProgress(edit.at!.progress); }}>Go to that moment</button>
-            <button disabled={edit.making} onClick={() => { setSelected(null); editHere({ marks: [], manipulations: [], image: "" }); }}>Clear</button></span>}
-        <textarea value={edit.note} rows={2} maxLength={2000} placeholder="What should happen at this moment (optional) · e.g. this size at the overlapping step, rotated along the stroke" disabled={edit.making}
-          onChange={e => onEdit!({ note: e.target.value })}
-          onKeyDown={e => { e.stopPropagation(); if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && pictureEdited(edit)) onRecommend?.(edit.image || shot || latestShot.current, edit.at?.moment ?? moment); }} />
+      {/* Draw the state wanted at this moment with the tools AI makes for the concern, then fix the brush to it. */}
+      {showing && !alignOpen && <button className="explore-recommend-open" onClick={openAlign}><Icon name="spark" size={12} />Draw the state you want at this moment</button>}
+      {showing && alignOpen && <div className="explore-recommend explore-align">
+        <button className="explore-recommend-close" aria-label="Fold" title="Fold" onClick={() => setAlignOpen(false)}><Icon name="close" size={10} /></button>
+        <span className="section-kicker">THE STATE YOU WANT · draw it at this moment of execution</span>
+        {/* The tools stay: elsewhere than the drawing's moment they only inspect (drawing waits until it is gone back to or cleared). */}
+        {!here && <span className="explore-status">There is a drawing made at {where(edit.at!)} · go there to draw on, or clear it to draw at this moment.
+          <button onClick={() => { setPlaying(false); onProgress(edit.at!.progress); }}>Go to that moment</button>
+          <button disabled={edit.making} onClick={() => { setSelected([]); editHere({ ideal: { objects: [], merges: [] }, marks: [], preset: "" }); }}>Clear</button></span>}
+        <IdealTools state={edit.ideal} onState={ideal => editHere({ ideal })} kit={edit.kit} mode={edit.mode} onMode={mode => onEdit?.({ mode })} selected={here ? selected : []} onSelect={setSelected}
+          changes={changes} onStateValues={values => onStateValues?.(values)}
+          marks={edit.marks} onMarks={marks => editHere({ marks })} editable={here && !edit.making} busy={edit.making} preset={edit.preset} onPreset={preset => onEdit?.({ preset })} making={edit.kitting} onMake={makeKit}
+          presetsElsewhere={Boolean(edit.kitAt && edit.kitAt !== restoreId)} objects={objects} current={holding} read={read} variables={readings} inspecting={inspecting} onInspect={setInspecting}
+          dead={dead} behaving={behaving} />
+        {edit.kitError && <span className="fork-slot-message error" role="alert">{edit.kitError}</span>}
+        <RefInput multiline value={edit.note} onValue={note => onEdit!({ note })} refs={refChoices(readings)} rows={2} maxLength={2000} disabled={edit.making}
+          placeholder={`Say it in words too (optional) · e.g. they become one where they touch${readings.length ? " · @ refers to runtime state" : ""}`}
+          onKeyDown={e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && sketched) fix(); }} />
         <div className="fork-slot-actions">
-          {edit.making ? <><span className="fork-slot-message waiting"><span className="loading-spinner" />The AI is making a recommendation and preview from what you showed…</span><button onClick={onCancelRecommend}>Cancel</button></>
-            : <button className="primary" disabled={!pictureEdited(edit)} onClick={() => onRecommend?.(edit.image || shot || latestShot.current, edit.at?.moment ?? moment)}><Icon name="spark" size={13} />Make recommendation</button>}
+          {edit.making ? <><span className="fork-slot-message waiting"><span className="loading-spinner" />The AI is reading what you drew and fixing a fork of the brush to it…</span><button onClick={onCancel}>Cancel</button></>
+            : <button className="primary" disabled={!sketched || edit.kitting} title="AI reads the state you drew and changes a fork of the brush so it does that (the brush stays as it is)"
+              onClick={fix}><Icon name="spark" size={13} />Fix the brush to this</button>}
+          {edit.kitting && <button onClick={onCancel}>Stop making tools</button>}
         </div>
-        {edit.reply && <span className="fork-slot-message">{edit.reply}</span>}
+        {edit.reply && <span className="fork-slot-message">{edit.reply}{edit.forkId && onOpenFork && <button onClick={() => onOpenFork(edit.forkId)}>Go to the fork<Icon name="arrow" size={11} /></button>}</span>}
         {edit.error && <span className="fork-slot-message error" role="alert">{edit.error}</span>}
       </div>}
     </div>

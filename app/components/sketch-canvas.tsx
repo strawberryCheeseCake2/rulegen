@@ -102,7 +102,7 @@ export const SketchCanvas = forwardRef<CanvasHandle, Props>(function SketchCanva
     if (mode === "gesture") { const at = world(point); gestureStart.current = performance.now(); gesture.current = [{ ...at, t: 0 }]; setGesturePath([at]); pointer.current = { mode, last: point }; props.onGestureStep?.(props.tool, at, "start"); return; }
     pointer.current = { mode, last: point };
     if (mode === "lasso") { lasso.current = [world(point)]; setSelection([...lasso.current]); }
-    else if (mode !== "hand" && mode !== "select") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
+    else if (mode !== "hand" && mode !== "select" && mode !== "adjust") draft.current = { points: [world(point)], tool: mode === "eraser" ? "eraser" : "pen", color: mode === "semantic" && props.semanticPen ? props.semanticPen.color : props.color, width: mode === "eraser" ? props.width * 5 : props.width, opacity: mode === "eraser" ? 1 : props.opacity / 100, ...(mode === "semantic" && props.semanticPen ? { semanticPen: structuredClone(props.semanticPen) } : {}) };
     instance.current?.redraw();
   }} onPointerMove={e => {
     const active = pointer.current; if (!active) return; const point = coordinate(e);

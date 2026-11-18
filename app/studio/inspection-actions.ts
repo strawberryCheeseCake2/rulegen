@@ -1,6 +1,7 @@
+import { z } from "zod";
 import type { Brush } from "../lib/brushes";
 import { brushNodeIds } from "../lib/brushes";
-import { concernSuggestionsSchema, constraintRows, revisedRecommendationSchema, type PreviewManipulation, type RevisedRecommendation, type Scalar, emptyInspection, heldIndex, inspectPreviewResultSchema, inspectResultSchema, markStyleAt, MAX_MARKS, recommendationTransformations, runtimeForAI, stepValues, type InspectResult, type InspectionState, type MarkStyle, type Recommendation } from "../lib/inspection";
+import { concernSuggestionsSchema, paramRows, type Scalar, emptyInspection, fixConstraints, heldIndex, inspectResultSchema, markStyleAt, MAX_MARKS, runtimeForAI, stepValues, type Fix, type InspectResult, type InspectionState, type MarkStyle } from "../lib/inspection";
 import { exposeParameter, moduleKeyOf, recordFields, recordingApplied, type ParameterSuggestion, type Recording } from "../lib/hidden-parameters";
 import type { GeneratedCode } from "../lib/schema";
 import type { Scene } from "../lib/scene/schema";
@@ -14,7 +15,8 @@ import type { InspectionInput } from "../lib/schema";
 import { sceneBindings } from "../lib/scene/values";
 import type { AppliedSnapshot, SketchPanel } from "../lib/sketch-panels";
 import { sceneAI } from "./scene-actions";
-import { annotatedImage, compactMarks, manipulatedImage } from "./annotated-image";
+import { annotatedImage, compactMarks, idealImage } from "./annotated-image";
+import { alignFixSchema, alignKitSchema, tagWidgetSchema, type AlignFix, type AlignKit, type AlignRefs, type AlignTool, type IdealState, type RuntimeVar, type StateChange, type TagWidgetSpec } from "../lib/alignment";
 import type { ExecutionMoment } from "../lib/explore";
 import { hookField, type FieldHook } from "../lib/fields";
 import type { StudioDeps } from "./deps";
@@ -25,6 +27,8 @@ type Change = { key: string; stateId: string; value: number | string | boolean }
 export const inspectionFor = (panel: SketchPanel, brushId: string): InspectionState => panel.inspections[brushId] ?? emptyInspection(brushId);
 /** Panel patch storing one brush's inspection. */
 export const withInspection = (panel: SketchPanel, state: InspectionState) => ({ inspections: { ...panel.inspections, [state.brushId]: state } });
+/** Panel patch deleting every brush's recorded history in the frame (as Reset history does): run again from the start, it is recorded anew. */
+export const withoutHistory = (panel: SketchPanel) => ({ inspections: Object.fromEntries(Object.entries(panel.inspections).map(([id, state]) => [id, { ...state, steps: [], cursor: null, focus: null }])) });
 
 /** Set scalar values (base or a state's) in one undo step. Values of the wrong type are skipped. */
 export function applyChanges(deps: StudioDeps, owner: string, changes: Change[]) {
@@ -39,7 +43,7 @@ export function applyChanges(deps: StudioDeps, owner: string, changes: Change[])
       if (value === null) continue;
       const editingStates = { ...panel.editingStates };
       if (change.stateId && findNode(scene, binding.nodeId)?.machine?.states.some(state => state.id === change.stateId)) editingStates[binding.nodeId] = change.stateId; else delete editingStates[binding.nodeId];
-      const patch = ops.setPropertyScalar({ ...panel, scene, editingStates }, binding.nodeId, binding.path[0], binding.path.slice(1), value);
+      const patch = ops.setParamScalar({ ...panel, scene, editingStates }, binding.nodeId, binding.path[0], binding.path.slice(1), value);
       if (patch.scene) { scene = patch.scene; applied++; }
     }
     return applied ? ops.commitScene(panel, scene) : { error: "There are no values that can be applied." };
@@ -48,26 +52,26 @@ export function applyChanges(deps: StudioDeps, owner: string, changes: Change[])
 
 /**
  * Targeted inspection: AI builds overlays for the concern (marked with the
- * inspection annotation and/or written) and suggests fixes. Returns the result.
- * With `update`, a recommendation just added a transformation and the overlays are rebuilt to show it.
+ * inspection annotation and/or written). Returns the result.
+ * With `update`, a fix was just applied and the overlays are rebuilt to show it.
  */
 export async function inspectConcern(deps: StudioDeps, owner: string, brush: Brush, draft: { concern: string; marks: InspectionState["marks"]; markStyles?: MarkStyle[] }, update: InspectionInput["update"] = null,
-  /** `previews`: also write a quick visual preview for each recommendation; `onTimed`: how long the AI took (ms). */
-  options: { previews?: boolean; onTimed?: (ms: number) => void } = {}) {
+  /** `onTimed`: how long the AI took (ms). */
+  options: { onTimed?: (ms: number) => void } = {}) {
   const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner);
   if (!nodeIds.length) { deps.updatePanel(owner, { error: `This frame has no ${brush.name} brush.` }); return null; }
   const snapshot = JSON.stringify(panel.scene), out: { result?: InspectResult } = {};
-  await deps.task(update ? "AI is updating the targeted inspection overlay to show the added transformation…" : "AI is creating a targeted inspection for this concern…", async () => {
+  await deps.task(update ? "AI is updating the targeted inspection overlay to show the fix…" : "AI is creating a targeted inspection for this concern…", async () => {
     // The result is held at the selected step, so the live capture shows that moment.
     const styles = draft.marks.map((_, i) => markStyleAt(draft.markStyles, i));
     const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
-    const rows = constraintRows(panel.scene, nodeIds), started = performance.now();
+    const rows = paramRows(panel.scene, nodeIds), started = performance.now();
     // The code, so hard-coded constants the concern depends on can be suggested as parameters.
-    const result: InspectResult = (options.previews && !update ? inspectPreviewResultSchema : inspectResultSchema).parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
+    const result: InspectResult = inspectResultSchema.parse(await deps.request("inspect", { scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.trim(), image, previous: panel.generated?.code ?? "",
       inspection: { brushName: brush.name, nodeIds, cursor: heldIndex(state),
-        constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+        params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
         steps: state.steps.map(item => ({ id: item.id, nodeId: item.nodeId, from: item.from, to: item.to, transitionId: item.transitionId, values: stepValues(item)!, runtime: runtimeForAI(item, nodeIds) })),
-        marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update, previews: Boolean(options.previews) } }, owner));
+        marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS), update } }, owner));
     options.onTimed?.(performance.now() - started);
     if (snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The scene changed during inspection. Please try again.");
     out.result = result;
@@ -94,59 +98,62 @@ export async function suggestConcerns(deps: StudioDeps, owner: string, brush: Br
   const image = await annotatedImage((await deps.capture(owner, true)).image, draft.marks, undefined, styles);
   if (signal.aborted) return [];
   const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "concern", scene: panel.scene, targetNodeId: nodeIds[0], instruction: draft.concern.slice(0, 2000), image,
-    inspection: { brushName: brush.name, nodeIds, constraints: [], steps: [], cursor: null, marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS) } }) });
+    inspection: { brushName: brush.name, nodeIds, params: [], steps: [], cursor: null, marks: compactMarks(draft.marks, MAX_MARKS), markStyles: styles.slice(-MAX_MARKS) } }) });
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error || "Could not suggest concerns.");
   return concernSuggestionsSchema.parse(result).suggestions;
 }
 
-/**
- * Revise one recommendation at its preview: AI reads what the user did on the preview (`image`, the preview as drawn
- * then; annotation `marks` drawn on it, objects moved, scaled or rotated, a note) and returns the recommendation
- * changed, with a preview that runs. Nothing in the frame changes.
- */
-export async function reviseRecommendation(deps: StudioDeps, owner: string, brush: Brush, context: { concern: string; summary: string; recommendation: Recommendation },
-  edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string; adjusted: { key: string; label: string; from: Scalar; to: Scalar }[] }, signal: AbortSignal): Promise<RevisedRecommendation> {
-  const panel = deps.panel(owner), state = inspectionFor(panel, brush.id), nodeIds = brushNodeIds(panel.scene, brush, owner), at = heldIndex(state);
-  if (!nodeIds.length || at === null) throw new Error("This frame's brush and recorded steps are needed.");
-  const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
-  const rows = constraintRows(panel.scene, nodeIds), item = context.recommendation;
-  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "revise-recommendation", scene: panel.scene, targetNodeId: nodeIds[0], instruction: edit.note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
-    inspection: { brushName: brush.name, nodeIds, cursor: at, marks: compactMarks(edit.marks, MAX_MARKS), markStyles: [],
-      constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
-      steps: state.steps.map(step => ({ id: step.id, nodeId: step.nodeId, from: step.from, to: step.to, transitionId: step.transitionId, values: stepValues(step)!, runtime: runtimeForAI(step, nodeIds) })),
-      revise: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500), manipulations: edit.manipulations.slice(0, 12), adjusted: edit.adjusted.slice(0, 12),
-        recommendation: { kind: item.kind, nodeId: item.nodeId, targetId: item.targetId, targetIds: item.targetIds, title: item.title, detail: item.detail, changes: item.changes, preview: item.preview ? { ...item.preview, marks: item.preview.marks ?? [], handles: item.preview.handles ?? [] } : null } } } }) });
-  const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "Could not revise the recommendation.");
-  return revisedRecommendationSchema.parse(result);
-}
-
-/**
- * Ask AI for a new recommendation from what the user did on an Execution frame (annotation, crops moved, scaled or
- * rotated, a note) at one moment of execution; the frame's brush marks (its held step) are what it is drawn on.
- */
-export async function recommendFromExecution(deps: StudioDeps, owner: string, brush: Brush,
-  context: { concern: string; summary: string; moment: ExecutionMoment; base: (Recommendation & { applied: boolean }) | null; listed: Recommendation[]; step: { runtime: unknown; values: Record<string, Scalar> } },
-  edit: { image: string; marks: InspectionState["marks"]; manipulations: PreviewManipulation[]; note: string }, signal: AbortSignal): Promise<RevisedRecommendation> {
+/** Where alignment happens: the concern, the inspection's summary, the moment of execution, and that moment's brush marks (values and run state). */
+export type AlignContext = { concern: string; summary: string; moment: ExecutionMoment; step: { runtime: unknown; values: Record<string, Scalar> } };
+/** The request both alignment steps send: the brush, its params, and the moment as one step. */
+function alignRequest(deps: StudioDeps, owner: string, brush: Brush, intent: "align-kit" | "align" | "tag-widget", context: AlignContext, image: string, note: string, marks: InspectionState["marks"], align: Record<string, unknown>) {
   const panel = deps.panel(owner), nodeIds = brushNodeIds(panel.scene, brush, owner);
   if (!nodeIds.length) throw new Error("This frame's brush is needed.");
-  const image = await annotatedImage(await manipulatedImage(edit.image, edit.manipulations), edit.marks);
-  const rows = constraintRows(panel.scene, nodeIds), base = context.base;
+  const rows = paramRows(panel.scene, nodeIds), moment = context.moment;
   const step = { id: 1, at: 0, nodeId: null, from: null, to: null, transitionId: null, values: context.step.values, runtime: context.step.runtime };
-  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify({ intent: "execution-recommendation", scene: panel.scene, targetNodeId: nodeIds[0], instruction: edit.note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
-    inspection: { brushName: brush.name, nodeIds, cursor: 0, marks: compactMarks(edit.marks, MAX_MARKS), markStyles: [],
-      constraints: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, transformationId: row.transformationId, transformation: row.transformation, propertyId: row.binding.path[0], property: row.property, path: row.path, type: row.binding.type })),
+  return { intent, scene: panel.scene, targetNodeId: nodeIds[0], instruction: note.trim().slice(0, 2000), image, previous: panel.generated?.code ?? "",
+    inspection: { brushName: brush.name, nodeIds, cursor: 0, marks: compactMarks(marks, MAX_MARKS), markStyles: [],
+      params: rows.map(row => ({ key: row.key, nodeId: row.binding.nodeId, constraintId: row.constraintId, constraint: row.constraint, paramId: row.binding.path[0], param: row.param, path: row.path, type: row.binding.type })),
       steps: [{ id: step.id, nodeId: null, from: null, to: null, transitionId: null, values: step.values, runtime: runtimeForAI(step, nodeIds) }],
-      fromExecution: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500), manipulations: edit.manipulations.slice(0, 12),
-        execution: { ...context.moment, summary: context.moment.summary.slice(0, 1200), last: context.moment.last.slice(0, 200), next: context.moment.next.slice(0, 200),
-          stage: context.moment.stage && { name: context.moment.stage.name.slice(0, 40), explain: context.moment.stage.explain.slice(0, 300) } },
-        base: base && { kind: base.kind, nodeId: base.nodeId, targetId: base.targetId, targetIds: base.targetIds, title: base.title, detail: base.detail, changes: base.changes,
-          preview: base.preview ? { ...base.preview, marks: base.preview.marks ?? [], handles: base.preview.handles ?? [] } : null },
-        applied: Boolean(base?.applied), listed: context.listed.map(item => item.title.slice(0, 160)).slice(0, 12) } } }) });
+      align: { concern: context.concern.slice(0, 2000), summary: context.summary.slice(0, 1500),
+        execution: { ...moment, summary: moment.summary.slice(0, 1200), last: moment.last.slice(0, 200), next: moment.next.slice(0, 200), stage: moment.stage && { name: moment.stage.name.slice(0, 40), explain: moment.stage.explain.slice(0, 300) } },
+        ...align } } };
+}
+async function post<T>(body: unknown, signal: AbortSignal, parse: (value: unknown) => T, fallback: string) {
+  const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, signal, body: JSON.stringify(body) });
   const result = await response.json();
-  if (!response.ok || result.error) throw new Error(result.error || "Could not create the recommendation.");
-  return revisedRecommendationSchema.parse(result);
+  if (!response.ok || result.error) throw new Error(result.error || fallback);
+  return parse(result);
+}
+/**
+ * Debugging intent alignment, first half: AI reads the concern at the moment the Execution frame shows (`image`, as
+ * drawn there) and makes the micro direct manipulation tools to draw the state wanted, and presets made with them.
+ */
+export async function requestAlignKit(deps: StudioDeps, owner: string, brush: Brush, context: AlignContext, image: string, signal: AbortSignal, request = "", tools: AlignTool[] = [], variables: RuntimeVar[] = []): Promise<AlignKit> {
+  // A tool asked for in words: AI makes it beside the tools (and the runtime state referred to) there are.
+  return post(alignRequest(deps, owner, brush, "align-kit", context, image, request, [], request ? { tools, variables } : {}), signal, value => alignKitSchema.parse(value), "Could not make the tools.");
+}
+/**
+ * A widget on the tag of a drawn object: AI reads what the rules written there mean (with the moment's picture as drawn,
+ * the drawing, the runtime state as it reads now) and makes a direct manipulation interface on the picture for trying what
+ * they could be instead; `request`: how to change the one it has.
+ */
+export async function requestTagWidget(deps: StudioDeps, owner: string, brush: Brush, context: AlignContext, image: string,
+  drawn: { ideal: IdealState; tools: AlignTool[]; reading: string; refs: AlignRefs; widget: { object: string; box: { x: number; y: number; w: number; h: number }; rules: { aspect: string; expr: string; now: number | null }[]; current: TagWidgetSpec | null } },
+  request: string, signal: AbortSignal): Promise<TagWidgetSpec & { prepared: string }> {
+  return post(alignRequest(deps, owner, brush, "tag-widget", context, image, request, [], drawn), signal, value => tagWidgetSchema.extend({ prepared: z.string().min(1).max(200000) }).parse(value), "Could not make the widget.");
+}
+/**
+ * Debugging intent alignment, second half: AI reads the state the user drew at that moment (objects made with the
+ * kit's tools, notes, a note in words, the execution state set by hand; `image` is the moment's picture as drawn now) and
+ * returns the change of the brush that makes it so.
+ */
+export async function requestAlignFix(deps: StudioDeps, owner: string, brush: Brush, context: AlignContext,
+  drawn: { image: string; ideal: IdealState; marks: InspectionState["marks"]; note: string; kit: AlignKit | null; preset: { title: string; detail: string } | null; state: StateChange[]; refs: AlignRefs }, signal: AbortSignal): Promise<AlignFix> {
+  const image = await annotatedImage(await idealImage(drawn.image, drawn.ideal), drawn.marks);
+  return post(alignRequest(deps, owner, brush, "align", context, image, drawn.note, drawn.marks,
+    { reading: drawn.kit?.reading ?? "", tools: drawn.kit?.tools ?? [], preset: drawn.preset, ideal: drawn.ideal, state: drawn.state, refs: drawn.refs }), signal, value => alignFixSchema.parse(value), "Could not fix the brush.");
 }
 
 /** A name for a new targeted tool: the start of its concern. */
@@ -156,10 +163,10 @@ export function targetedName(concern: string, count: number) {
 }
 
 const snapshot = (panel: SketchPanel): AppliedSnapshot => ({ scene: panel.scene, generated: panel.generated, codeDraft: panel.codeDraft, executable: panel.executable, preparedCode: panel.preparedCode, composePrompt: panel.composePrompt, dirtyNodeIds: panel.dirtyNodeIds });
-/** Same scene, code and prompt (what an applied recommendation changes). */
+/** Same scene, code and prompt (what an applied fix changes). */
 export const sameSnapshot = (a: AppliedSnapshot, b: AppliedSnapshot) => (a.scene === b.scene || JSON.stringify(a.scene) === JSON.stringify(b.scene)) && (a.generated?.code ?? "") === (b.generated?.code ?? "") && a.composePrompt === b.composePrompt;
-/** Which recommendation an entry applied (to mark it in the list). */
-export const recommendationKey = (item: Recommendation) => `${item.kind}:${item.nodeId}:${item.targetId}:${item.title}`;
+/** Which fix an applied entry is. */
+export const fixKey = (item: Fix) => `${item.kind}:${item.nodeId}:${item.targetId}:${item.title}`;
 /** The frame now is what an applied entry left (else undo/redo would also drop later edits). */
 export const appliedCurrent = (panel: SketchPanel, direction: "undo" | "redo") => {
   const entry = direction === "undo" ? panel.applied.past.at(-1) : panel.applied.future.at(-1);
@@ -167,32 +174,33 @@ export const appliedCurrent = (panel: SketchPanel, direction: "undo" | "redo") =
 };
 
 /**
- * Apply a recommendation: values directly, a transformation/state/transition
- * through AI (with the code rewritten after a transformation). The frame before
- * and after is kept, so the whole application can be undone and redone (marked
- * with `key`, the recommendation as listed). Returns the transformation it added, if any.
+ * Apply a fix: values directly, a constraint/state/transition through AI
+ * (with the code rewritten after a constraint). The frame before and after is
+ * kept, so the whole application can be undone and redone (marked with `key`).
+ * Returns the constraint it added, if any.
  */
-export async function applyRecommendation(deps: StudioDeps, owner: string, recommendation: Recommendation, key = recommendationKey(recommendation)) {
-  const instruction = `${recommendation.title}\n${recommendation.detail}`.slice(0, 2000), before = snapshot(deps.panel(owner));
-  const existing = new Set(findNode(before.scene, recommendation.nodeId)?.transformations.map(item => item.id));
-  if (recommendation.kind === "value") applyChanges(deps, owner, recommendation.changes);
+export async function applyFix(deps: StudioDeps, owner: string, fix: Fix, key = fixKey(fix)) {
+  const instruction = `${fix.title}\n${fix.detail}`.slice(0, 2000), before = snapshot(deps.panel(owner));
+  const existing = new Set(findNode(before.scene, fix.nodeId)?.constraints.map(item => item.id));
+  if (fix.kind === "value") applyChanges(deps, owner, fix.changes);
   else {
     const ai = sceneAI(deps, owner);
-    // Every transformation the fix changes, in turn; the code is rewritten once at the end (and undo apply takes all of it back).
-    if (recommendation.kind === "transformation") await ai.regenerateAll(recommendation.nodeId, recommendationTransformations(recommendation), instruction);
-    // Nothing existing was related: a new semantic transformation is stacked on the node (then the code follows).
-    else if (recommendation.kind === "add-transformation") await ai.regenerate(recommendation.nodeId, {}, instruction);
-    else await ai.refineMachine(recommendation.nodeId, { target: { kind: recommendation.kind, id: recommendation.targetId }, instruction, marks: [] });
+    // Every constraint the fix changes, in turn; the code is rewritten once at the end (and undo apply takes all of it back).
+    if (fix.kind === "constraint") await ai.regenerateAll(fix.nodeId, fixConstraints(fix), instruction);
+    // Nothing existing was related: a new constraint is stacked on the node (then the code follows).
+    else if (fix.kind === "add-constraint") await ai.regenerate(fix.nodeId, {}, instruction);
+    // A state or transition refined: the code is rewritten to it too (else the frame would draw as before).
+    else await ai.refineMachine(fix.nodeId, { target: { kind: fix.kind, id: fix.targetId }, instruction, marks: [], code: true });
   }
   const after = snapshot(deps.panel(owner));
   if (sameSnapshot(before, after)) return null;
-  deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: recommendation.title, key, before, after: snapshot(panel) }].slice(-20), future: [] } }));
-  return recommendation.kind === "add-transformation" ? findNode(after.scene, recommendation.nodeId)?.transformations.find(item => !existing.has(item.id)) ?? null : null;
+  deps.updatePanel(owner, panel => ({ applied: { past: [...panel.applied.past, { id: crypto.randomUUID(), title: fix.title, key, before, after: snapshot(panel) }].slice(-20), future: [] } }));
+  return fix.kind === "add-constraint" ? findNode(after.scene, fix.nodeId)?.constraints.find(item => !existing.has(item.id)) ?? null : null;
 }
 
 /**
- * Accept a suggested hidden parameter: the constant becomes a property of its
- * transformation and the module reads it, with no regeneration. The new program
+ * Accept a suggested hidden parameter: the constant becomes a param of its
+ * constraint and the module reads it, with no regeneration. The new program
  * is prepared first and the module is swapped into the running result in place
  * (nothing drawn is lost); scene and code are then committed together as one
  * applied entry, so Undo apply takes both back. Returns whether it was added.
@@ -252,7 +260,7 @@ async function swapModule(deps: StudioDeps, owner: string, next: { scene: Scene;
   return true;
 }
 
-/** Undo (or redo) the last applied recommendation: the frame's scene, code and prompt go back (or forward) together. */
+/** Undo (or redo) the last applied entry: the frame's scene, code and prompt go back (or forward) together. */
 export function stepApplied(deps: StudioDeps, owner: string, direction: "undo" | "redo") {
   const panel = deps.panel(owner), entry = direction === "undo" ? panel.applied.past.at(-1) : panel.applied.future.at(-1);
   if (!entry || panel.loading) return null;

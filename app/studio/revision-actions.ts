@@ -43,7 +43,7 @@ export function revisionActions(deps: StudioDeps, owner: string) {
       const panel = current();
       if (!panel.generated || !panel.annotationImage || !panel.annotationHistory.present.length || !panel.revisionInstruction.trim()) return;
       const snapshot = revisionSnapshot(panel);
-      await deps.task("Drafting collection and property changes from the sketch and clarification…", async () => {
+      await deps.task("Drafting collection and param changes from the sketch and clarification…", async () => {
         const number = deps.requestId(owner), annotations = panel.annotationHistory.present;
         const image = await annotatedResultImage(panel.annotationImage, annotations);
         if (!unchanged(number, snapshot)) return;
@@ -65,7 +65,7 @@ export function revisionActions(deps: StudioDeps, owner: string) {
         await deps.request("prepare", { code: result.code }, owner);
         if (!unchanged(number, review.snapshot)) return;
         deps.updatePanel(owner, latest => ({ ...ops.commitScene(latest, review.proposal.scene), generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [], hovered: null, ...clearedResultAnnotations() }));
-        deps.toast("Applied the confirmed collection and property changes and updated the result.");
+        deps.toast("Applied the confirmed collection and param changes and updated the result.");
       }, owner);
     },
   };
