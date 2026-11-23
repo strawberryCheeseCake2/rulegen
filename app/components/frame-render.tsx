@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { CodePreview, type CodePreviewHandle, type ExecutionRun, type RestorePoint, type TraceStep } from "./code-preview";
 import { ResultAnnotations } from "./result-annotations";
 import { liveSceneSource } from "../lib/scene/live";
-import { syncScene } from "../lib/scene/machines";
+import { syncScene, withBlockParams } from "../lib/scene/machines";
 import { annotationHistoryReducer } from "../lib/annotation-history";
 import { clearedResultAnnotations, type SketchPanel } from "../lib/sketch-panels";
 import { markLogged } from "../lib/error-report";
@@ -13,7 +13,8 @@ type Props = { owner: string; panel: SketchPanel; interacting?: boolean;
   /** Show the running result itself (not its last capture) without taking input: a brush gesture is being fed to it. */
   live?: boolean;
   onEscape?: () => void; tracing?: boolean; onTrace?: (step: TraceStep) => void; onCycle?: (cycle: unknown) => void;
-  /** Drawn over the result (the execution overlay). */ overlay?: ReactNode; restore?: RestorePoint; onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
+  /** Drawn over the result (the execution overlay). */ overlay?: ReactNode;
+  /** Extra host values pushed into the running result live (a temporary fork's demonstration values, m.demo). */ hostValues?: Record<string, unknown>; restore?: RestorePoint; onDrawn?: (restoreId: string, stores: Record<string, unknown>, run?: ExecutionRun) => void; documentRevision: number; onPatch: (patch: Patch) => void; onPreview: (preview: CodePreviewHandle | null) => void };
 
 /**
  * The generated result of a sketch frame, rendered *inside* that frame beneath
@@ -24,7 +25,8 @@ export function FrameRender(props: Props) {
   const { panel, owner } = props;
   const source = liveSceneSource(panel.generated, panel.scene);
   // Widget edits patch only the host block, so the prepared executable is reused.
-  const executable = panel.generated && panel.executable ? syncScene(panel.executable, panel.scene) : "";
+  const synced = panel.generated && panel.executable ? syncScene(panel.executable, panel.scene) : "";
+  const executable = synced && props.hostValues && Object.keys(props.hostValues).length ? withBlockParams(synced, props.hostValues) ?? synced : synced;
   const machineEnabled = Boolean(panel.generated?.machineSignature && panel.generated.machineSignature !== "[]");
   useEffect(() => {
     const code = panel.generated?.code;

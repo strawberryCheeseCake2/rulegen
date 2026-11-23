@@ -23,7 +23,17 @@ type Props = {
   onBrushChange?: (brush: Brush) => void; onBrushRemove?: (brush: Brush) => void;
   /** The frame holding a brush's master (null when gone), and showing it. */
   brushMaster?: (brush: Brush) => string | null; onBrushMaster?: (brush: Brush) => void;
+  /** Tools kept with a brush's frame (from a kept fork, made by inspection): each set's tools, used on that frame. */
+  keptTools?: (brush: Brush) => { frameId: string; sets: KeptRailSet[] } | null;
+  keptActive?: { setId: string; tool: KeptRailTool } | null; keptSelected?: boolean; keptStatus?: string;
+  /** The marks shown with the active set are hidden for now, and toggling that. */ keptHidden?: boolean; onKeptToggleMarks?: () => void;
+  onKeptTool?: (frameId: string, setId: string, tool: KeptRailTool) => void; onKeptClear?: (frameId: string, setId: string) => void;
+  onKeptRemove?: (frameId: string, setId: string) => void; onKeptRemoveSelected?: () => void;
+  /** Make what is shown with a set the brush's own rule (asked with previews below the frame). */ onKeptGeneralize?: (frameId: string, setId: string) => void;
 };
+export type KeptRailTool = "brush" | "pencil" | "select" | "inspect";
+export type KeptRailSet = { id: string; concern: string; rule: string; tools: { kind: "brush" | "pencil" | "select"; purpose: string }[]; shown: number };
+const KEPT_TOOL: Record<KeptRailTool, { icon: IconName; label: string }> = { brush: { icon: "brush", label: "Brush" }, pencil: { icon: "pen", label: "Pencil" }, select: { icon: "select", label: "Select" }, inspect: { icon: "inspect", label: "Inspect" } };
 
 export const BRUSH_TOOL_INFO: Record<BrushToolKind, { icon: IconName; label: string; hint: string }> = {
   brush: { icon: "brush", label: "Brush", hint: "Brush on a frame: adds this brush where you start if the frame doesn't have it yet; on a frame that has it, you play with it (the result takes your input, Esc to stop)." },
@@ -111,6 +121,27 @@ export function ToolRail(props: Props) {
                     return <button key={tool} className={active ? "active" : ""} aria-pressed={active} aria-label={`${item.name} ${BRUSH_TOOL_INFO[tool].label}`} title={`${item.name} · ${BRUSH_TOOL_INFO[tool].label}`} onClick={() => props.onBrushTool?.(brush.id, brushTool(tool, item.id))}>
                       <Icon name={BRUSH_TOOL_INFO[tool].icon} size={14} />{tool === "brush" && <span>{item.name}</span>}</button>; })}
                   {props.onBrushRemove && <button className="brush-targeted-remove" aria-label={`Remove sub brush ${item.name}`} title="Remove this sub brush" onClick={() => props.onBrushRemove!(item)}><Icon name="close" size={11} /></button>}</div>; })}</div>}
+            {/* Tools made by inspection for this brush's frame, kept with it: showing with them changes the frame at once. */}
+            {(() => { const kept = props.keptTools?.(brush);
+              if (!kept?.sets.length) return null;
+              return <div className="brush-sub-list kept-tool-list" role="group" aria-label={`${brush.name} inspection tools`}><span className="left-setting-title">INSPECTION TOOLS</span>
+                {kept.sets.map(set => <div key={set.id} className="kept-tool-set">
+                  <div className="kept-tool-head" title={[set.concern, set.rule].filter(Boolean).join(" · ")}><span>{set.concern}</span>
+                    {props.onKeptGeneralize && set.shown > 0 && <button title="Make what is shown with these tools the brush's own behavior, everywhere it draws: pick the rule it means (with previews below the frame)" onClick={() => props.onKeptGeneralize!(kept.frameId, set.id)}>Make rule</button>}
+                    {props.onKeptClear && set.shown > 0 && <button title="Clear what is shown with these tools" onClick={() => props.onKeptClear!(kept.frameId, set.id)}>Clear</button>}
+                    {props.onKeptRemove && <button className="brush-targeted-remove" aria-label="Remove these tools" title="Remove these tools (the frame reads what they showed as nothing)" onClick={() => props.onKeptRemove!(kept.frameId, set.id)}><Icon name="close" size={11} /></button>}</div>
+                  <div className="kept-tool-buttons">{[...set.tools.map(item => item.kind), "inspect" as const].map(kind => {
+                    const purpose = set.tools.find(item => item.kind === kind)?.purpose ?? "Show the values these tools set on the frame";
+                    const active = props.keptActive?.setId === set.id && props.keptActive.tool === kind;
+                    return <button key={kind} className={active ? "active" : ""} aria-pressed={active} title={`${KEPT_TOOL[kind].label} · ${purpose}`} onClick={() => props.onKeptTool?.(kept.frameId, set.id, kind)}>
+                      <Icon name={KEPT_TOOL[kind].icon} size={14} /><span>{KEPT_TOOL[kind].label}</span></button>; })}
+                    {props.keptActive?.setId === set.id && props.onKeptToggleMarks && set.tools.some(item => item.kind !== "select") && <button aria-pressed={Boolean(props.keptHidden)} disabled={!set.shown}
+                      title={props.keptHidden ? "Show the brush / pencil marks" : "Hide the brush / pencil marks (what they show still applies)"} onClick={props.onKeptToggleMarks}>
+                      <Icon name={props.keptHidden ? "eye-off" : "eye"} size={14} /><span>{props.keptHidden ? "Marks off" : "Marks on"}</span></button>}
+                    {props.keptActive?.setId === set.id && props.keptSelected && props.onKeptRemoveSelected && <button title="Remove the selected stroke" onClick={props.onKeptRemoveSelected}><Icon name="trash" size={13} /></button>}</div>
+                  {props.keptActive?.setId === set.id && props.keptActive.tool !== "inspect" && <small className="kept-tool-purpose">{set.tools.find(item => item.kind === props.keptActive!.tool)?.purpose}</small>}
+                  {props.keptActive?.setId === set.id && props.keptStatus && <small className="kept-tool-purpose">{props.keptStatus}</small>}
+                </div>)}</div>; })()}
             {props.brushMaster && (() => { const master = props.brushMaster(brush);
               return <div className="brush-master-row"><span className="left-setting-title">MASTER</span>
                 {master ? <button title="Show the master of this brush" onClick={() => props.onBrushMaster?.(brush)}>◆ {master}<Icon name="arrow" size={12} /></button> : <span className="brush-targeted-hint">The frame that held the master was deleted. You can set one with Make master on an instance.</span>}</div>; })()}

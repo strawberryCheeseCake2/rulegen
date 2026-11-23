@@ -14,7 +14,7 @@ export const MAX_CYCLE_STEPS = 1500;
 export const MAX_TRACE_BYTES = 24_000_000;
 
 /** The FSM values every step has besides the code's variables. */
-export const FSM_VARIABLES = { $data: "data", $state: "state", $value: "value", $event: "event" } as const;
+export const FSM_VARIABLES = { $data: "data", $state: "state", $value: "value", $event: "event", $demo: "shown live" } as const;
 
 export type StepKind = "state" | "constraint" | "transition";
 export type ExecStep = {

@@ -6,6 +6,7 @@ import { addCycle, analysisSchema, emptyTrace, matchSteps, nextIds, readCycle, s
 import { checkedPlans, overlayPlanSchema, stepRecord, type SitePlan } from "../lib/execution/overlay";
 import { liveSceneSource } from "../lib/scene/live";
 import { annotatedImage, type Marks } from "./annotated-image";
+import { sceneAI } from "./scene-actions";
 
 /** The color of inspection annotation marks (on the picture and in the image AI sees). */
 export const MARK_COLOR = "#e8590c";
@@ -52,8 +53,31 @@ function compact(variables: Record<string, unknown>, keep: Set<string>, budget =
   return out;
 }
 
-/** What a concern's analysis hands on to direct manipulation. */
-export type Analyzed = { frameId: string; concern: string; picture: string; image: string; marks: { x: number; y: number }[][]; analysis: Analysis; cycleIds: number[] };
+/** What a concern hands on to direct manipulation: with its analysis (execution stepping), or without (straight to a fork with tools). */
+/** How a recorded step is drawn again: its cycle's state put back and drawn up to the step (steps before the drawing: the whole drawing). */
+export function restorePoint(trace: ExecTrace, step: ExecStep, prefix = "exec"): RestorePoint | null {
+  const cycle = trace.cycles.find(item => item.id === step.cycle);
+  if (!cycle?.runtime) return null;
+  return { id: `${prefix}-${step.cycle}-${step.index}`, runtime: cycle.runtime, params: cycle.params, run: { budget: step.index >= 0 ? step.index + 1 : null } };
+}
+
+export type Analyzed = { frameId: string; concern: string; picture: string; image: string; marks: { x: number; y: number }[][]; analysis: Analysis | null; cycleIds: number[];
+  /** No tools: the fork's code is changed from the concern at once. */ direct?: boolean };
+
+/** Where the chosen variables go on the picture: code per chosen site, written from samples of its steps (the newest, the first, one between). */
+export async function placeAnalysis(deps: StudioDeps, frameId: string, input: { base: Record<string, unknown>; trace: ExecTrace; concern: string; nodeIds: string[]; marks: { x: number; y: number }[][]; analysis: Analysis }) {
+  const { trace, analysis } = input, matches = matchSteps(trace, analysis);
+  const sites = analysis.sites.map(site => {
+    const own = matches.filter(item => siteOf(item) === site.site), keep = new Set([...site.show, ...site.locate].map(path => path.replace(/^@/, "").split(".")[0]));
+    const samples = [...new Set([own.at(-1), own[0], own[Math.floor(own.length / 2)]])].filter((item): item is ExecStep => Boolean(item))
+      .map(item => ({ ...stepRecord(item), variables: compact(item.variables, keep) }));
+    return { site: site.site, note: site.note, show: site.show, locate: site.locate, samples };
+  });
+  const plan = overlayPlanSchema.parse(await deps.request("trace-overlay", { ...input.base, trace: { concern: input.concern, nodeIds: input.nodeIds, cycles: trace.cycles.length, sites, marks: input.marks, analysis } }, frameId));
+  return checkedPlans(plan, analysis.sites.map(site => site.site));
+}
+/** The inspection annotation marks in canvas pixels (as AI gets them). */
+const markPixels = (marks: Marks) => marks.slice(-24).map(mark => mark.slice(0, 400).map(point => ({ x: Math.round(point.x * 900), y: Math.round(point.y * 600) })));
 
 export function useExecution(deps: StudioDeps, onFramed?: (frameId: string) => void, onAnalyzed?: (analyzed: Analyzed) => void) {
   const [view, setView] = useState<ExecutionView | null>(null);
@@ -92,12 +116,7 @@ export function useExecution(deps: StudioDeps, onFramed?: (frameId: string) => v
   const step = useMemo(() => !view ? null : view.stepId === null ? (view.framed ? steps.at(-1) ?? null : null)
     : all.find(item => item.id === view.stepId) ?? steps.find(item => item.id === view.stepId) ?? null, [view?.stepId, view?.framed, all, steps]);
   /** The held step: its cycle's state put back and drawn up to the step (steps before the drawing: the whole drawing). */
-  const restore: RestorePoint | null = useMemo(() => {
-    if (!step || !view) return null;
-    const cycle = view.trace.cycles.find(item => item.id === step.cycle);
-    if (!cycle?.runtime) return null;
-    return { id: `exec-${step.cycle}-${step.index}`, runtime: cycle.runtime, params: cycle.params, run: { budget: step.index >= 0 ? step.index + 1 : null } };
-  }, [step, view?.trace]);
+  const restore: RestorePoint | null = useMemo(() => step && view ? restorePoint(view.trace, step) : null, [step, view?.trace]);
   const machine = (nodeId: string | null): MachineInspection | null => {
     if (!step || !nodeId || step.nodeId !== nodeId) return null;
     const sites = view?.analysis?.sites.map(site => site.site) ?? [];
@@ -117,7 +136,7 @@ export function useExecution(deps: StudioDeps, onFramed?: (frameId: string) => v
       const nodeIds = panel.scene.nodes.map(node => node.id).slice(0, 64);
       const marks = current.marks, picture = (await deps.capture(frameId, true)).image, image = await annotatedImage(picture, marks, MARK_COLOR);
       const base = { scene: panel.scene, previous: liveSceneSource(panel.generated, panel.scene), image };
-      const pixels = marks.slice(-24).map(mark => mark.slice(0, 400).map(point => ({ x: Math.round(point.x * 900), y: Math.round(point.y * 600) })));
+      const pixels = markPixels(marks);
       const catalog = variableCatalog(trace).slice(-200);
       const cycleIds = trace.cycles.map(cycle => cycle.id);
       const analysis = analysisSchema.parse(await deps.request("trace-analyze", { ...base, trace: { concern, nodeIds, cycles: trace.cycles.length, sites: catalog, marks: pixels, analysis: null } }, frameId));
@@ -126,30 +145,52 @@ export function useExecution(deps: StudioDeps, onFramed?: (frameId: string) => v
       patch(frameId, { analysis, cycleIds, plans: {}, stepId: matches.at(-1)?.id ?? null, framed: true, status: "Placing them on the picture…" });
       onFramed?.(frameId);
       onAnalyzed?.({ frameId, concern, picture, image, marks: pixels, analysis, cycleIds });
-      // Samples of each chosen site: the newest, the first and one between.
-      const sites = analysis.sites.map(site => {
-        const own = matches.filter(item => siteOf(item) === site.site), keep = new Set([...site.show, ...site.locate].map(path => path.replace(/^@/, "").split(".")[0]));
-        const samples = [...new Set([own.at(-1), own[0], own[Math.floor(own.length / 2)]])].filter((item): item is ExecStep => Boolean(item))
-          .map(item => ({ ...stepRecord(item), variables: compact(item.variables, keep) }));
-        return { site: site.site, note: site.note, show: site.show, locate: site.locate, samples };
-      });
-      const plan = overlayPlanSchema.parse(await deps.request("trace-overlay", { ...base, trace: { concern, nodeIds, cycles: trace.cycles.length, sites, marks: pixels, analysis } }, frameId));
-      const plans = checkedPlans(plan, analysis.sites.map(site => site.site));
+      const plans = await placeAnalysis(deps, frameId, { base, trace, concern, nodeIds, marks: pixels, analysis });
       const missing = analysis.sites.filter(site => !plans[site.site]).length;
       patch(frameId, { plans, busy: false, status: missing ? `${missing} of the chosen steps could not be placed on the picture.` : "" });
     } catch (error) {
       patch(frameId, { busy: false, status: error instanceof Error ? error.message : "The inspection failed." });
     }
   }
+  /** Without execution stepping: the concern goes straight to direct manipulation (a temporary fork with tools for it). */
+  async function direct(concern: string, tools = true) {
+    const current = viewRef.current;
+    if (!current || current.busy) return;
+    const frameId = current.frameId, panel = deps.panel(frameId), trace = current.trace;
+    if (!panel.generated) { patch(frameId, { status: "Generate this frame's result first." }); return; }
+    const cycleIds = trace.cycles.map(cycle => cycle.id);
+    patch(frameId, { concern, analysis: null, plans: {}, framed: false, stepId: null, cycleIds: null, status: "", overlayStatus: "" });
+    try {
+      const marks = current.marks, picture = (await deps.capture(frameId, true)).image, image = await annotatedImage(picture, marks, MARK_COLOR);
+      onAnalyzed?.({ frameId, concern, picture, image, marks: markPixels(marks), analysis: null, cycleIds, direct: !tools });
+    } catch (error) {
+      patch(frameId, { status: error instanceof Error ? error.message : "Could not capture the frame." });
+    }
+  }
+  /** A mini sandbox of the part of the brush the concern is about (a part frame with handles), beside the inspection. */
+  async function sandbox(concern: string) {
+    const current = viewRef.current;
+    if (!current) return;
+    const frameId = current.frameId;
+    if (!deps.panel(frameId).generated) { patch(frameId, { status: "Generate this frame's result first." }); return; }
+    try {
+      const image = await annotatedImage((await deps.capture(frameId, true)).image, current.marks, MARK_COLOR);
+      await sceneAI(deps, frameId).concernSandbox(concern, image, markPixels(current.marks));
+    } catch (error) {
+      patch(frameId, { status: error instanceof Error ? error.message : "Could not make the sandbox." });
+    }
+  }
   const shown = useMemo(() => shownPaths(view?.analysis ?? null), [view?.analysis]);
   const skipped = view ? Object.fromEntries(Object.entries(view.plans).filter(([, plan]) => !plan.code).map(([site, plan]) => [site, plan.skipReason])) : {};
 
   return {
-    view, steps, step, restore, machine, skipped, onCycle, inspect,
+    view, steps, step, restore, machine, skipped, onCycle, inspect, direct, sandbox,
     plan: step && view ? view.plans[siteOf(step)] : undefined,
     /** The variables shown on the picture at each chosen site (nothing else is labeled). */
     shown,
     open: (frameId: string) => setView(current => current?.frameId === frameId ? null : fresh(frameId)),
+    /** Inspect this frame (kept as it is when it already is), with this concern. */
+    ensure: (frameId: string, concern: string) => setView(current => ({ ...(current?.frameId === frameId ? current : fresh(frameId)), concern })),
     close: () => setView(null),
     select: (stepId: number | null) => setView(current => current ? { ...current, stepId } : current),
     clearAnalysis: () => setView(current => current ? { ...current, analysis: null, cycleIds: null, plans: {}, status: "", overlayStatus: "" } : current),
@@ -157,7 +198,9 @@ export function useExecution(deps: StudioDeps, onFramed?: (frameId: string) => v
     follow: () => setView(current => current ? { ...current, cycleIds: null, stepId: null } : current),
     /** The Execution frame was closed: steps are held on the inspected frame again. */
     unframe: () => setView(current => current ? { ...current, framed: false, stepId: null } : current),
-    clearTrace: () => setView(current => current ? { ...current, trace: emptyTrace(), analysis: null, plans: {}, stepId: null, status: "" } : current),
+    /** Forget the recorded steps (and cycles not yet added), e.g. when the result is re-rendered from the start. */
+    clearTrace: () => { pending.current = { frameId: pending.current.frameId, raw: [] };
+      setView(current => current ? { ...current, trace: emptyTrace(), analysis: null, cycleIds: null, plans: {}, stepId: null, status: "" } : current); },
     addMark: (points: { x: number; y: number }[]) => setView(current => current && points.length > 1 ? { ...current, marks: [...current.marks, points].slice(-24) } : current),
     clearMarks: () => setView(current => current ? { ...current, marks: [] } : current),
     setOverlayStatus: (message: string) => setView(current => current && current.overlayStatus !== message ? { ...current, overlayStatus: message } : current),

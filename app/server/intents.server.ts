@@ -10,12 +10,15 @@ import { validateScene } from "../lib/scene/validate";
 import { bindingKey, sceneBindings, sceneValues } from "../lib/scene/values";
 import { nodeParams } from "../lib/scene/constraints";
 import { clarifySchema, settleClarify, type Clarify } from "../lib/execution/manipulate";
+import { generalizeSchema, settleGeneralize, type Generalize } from "../lib/execution/generalize";
 import { connectScene } from "./scene-code.server";
 import { aiCompositionPromptSchema, aiTagRevisionSchema, settleComposeTags, settleConstraint, tagRevisionSchema, tagsForAI, tagsForCompose } from "../lib/compose-tags";
 import { aiHandlesSchema, CELL_HEADER, handleTargets, keepHandles, proxySections, settleHandles, type AIHandles } from "../lib/scene/handles";
 import { prepareCode, prepareHandle } from "./code.server";
 import { analysisSchema, MAX_ANALYSIS_PATHS } from "../lib/execution/trace";
 import { overlayPlanSchema } from "../lib/execution/overlay";
+import { aiSandboxSchema, settleSandbox, type AISandbox } from "../lib/execution/concern-sandbox";
+import { aiSketchClarifySchema, MAX_CLARIFY_STAGES, settleSketchClarify, type SketchClarifyResult } from "../lib/sketch-clarify";
 
 // One entry per AI intent: its structured output schema, prompt file, budget,
 // preconditions, the request context and how the model output is finalized.
@@ -61,7 +64,7 @@ const needsTarget = (input: AIInput) => !targetNode(input) ? "Could not find the
 const codeModules = (scene: NonNullable<AIInput["scene"]>) => scene.nodes.filter(node => !node.parentId).map(root => ({ key: root.id, nodes: [root.id, ...descendantIds(scene, root.id)] }));
 const needsScene = (input: AIInput) => !input.scene?.nodes.length ? "Extract collections and objects from the sketch first." : undefined;
 
-export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "handles" | "code" | "compose-prompt" | "clarification" | "revision" | "split" | "tag-revise" | "trace-analyze" | "trace-overlay" | "trace-clarify", Intent> = {
+export const intents: Record<"extract" | "compose" | "transform" | "state-machine" | "machine-refine" | "handles" | "code" | "compose-prompt" | "clarification" | "revision" | "split" | "tag-revise" | "trace-analyze" | "trace-overlay" | "trace-clarify" | "trace-part" | "sketch-clarify" | "trace-generalize", Intent> = {
   /** Inspection: the recorded steps (sites) and variables that explain a concern about a brush's execution. */
   "trace-analyze": {
     schema: analysisSchema, maxTokens: () => 8000, effort: "medium",
@@ -96,6 +99,32 @@ export const intents: Record<"extract" | "compose" | "transform" | "state-machin
     finalize: (input, output: Clarify) => settleClarify(output,
       input.trace!.sites.map(site => ({ site: String(site.site), variables: Object.keys((site.variables ?? {}) as Record<string, unknown>) })),
       traceParams(input), Boolean(input.trace!.choice)),
+  },
+  /** A demonstration made the brush's own rule: the rules what was shown could be, each with a preview, to pick one. */
+  "trace-generalize": {
+    schema: generalizeSchema, maxTokens: () => 20000, effort: "medium",
+    check: input => !input.trace || !input.previous || !input.image || !input.instruction.trim() ? "Show something with the tools first." : undefined,
+    context: input => ({ demonstration: input.instruction, annotations: input.annotations, code: traceModules(input), brush: traceBrush(input), params: traceParams(input), sites: input.trace!.sites, canvas }),
+    finalize: (_input, output: Generalize) => settleGeneralize(output),
+  },
+  /** Inspection: the one part of the brush a concern is about, for a mini sandbox of it (a part frame with handles). */
+  "trace-part": {
+    schema: aiSandboxSchema, maxTokens: () => 12000, effort: "medium",
+    check: input => !input.trace ? "Say what to look into first." : !input.scene?.nodes.length ? "Generate this frame's result first." : undefined,
+    context: input => { const ids = new Set(input.trace!.nodeIds);
+      return { concern: input.trace!.concern, marks: input.trace!.marks, code: traceModules(input), canvas,
+        brush: input.scene!.nodes.filter(node => ids.has(node.id)).map(node => ({ id: node.id, name: node.name, kind: node.kind, parentId: node.parentId, description: node.description,
+          constraints: node.constraints.map(item => ({ id: item.id, property: item.property, description: item.description, params: item.params.map(param => ({ id: param.id, label: param.label, ...param.value })) })) })) }; },
+    finalize: (input, output: AISandbox) => settleSandbox(input.scene!, input.trace!.nodeIds, output),
+  },
+  /** Before Extract / Compose: the next stage of questions about what is still ambiguous (or that it is clear enough). */
+  "sketch-clarify": {
+    schema: aiSketchClarifySchema, maxTokens: () => 16000, strokes: true,
+    check: input => !input.image ? "A sketch image is needed to clarify it." : !input.sketchClarify ? "Nothing to clarify." : undefined,
+    context: input => { const ask = input.sketchClarify!;
+      return { mode: ask.mode, instruction: input.instruction, ...(input.composeTags.length ? { tags: tagsForCompose(input.composeTags) } : {}),
+        stage: ask.stages.length + 1, maxStages: MAX_CLARIFY_STAGES, mustAsk: ask.askAnyway || !ask.stages.length, answered: ask.stages.map((questions, k) => ({ stage: k + 1, questions })), canvas }; },
+    finalize: (input, output: SketchClarifyResult) => settleSketchClarify(output, input.sketchClarify!.stages.length),
   },
   "tag-revise": {
     schema: aiTagRevisionSchema, maxTokens: () => 3000, strokes: true,

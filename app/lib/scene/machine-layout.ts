@@ -8,7 +8,9 @@ export const STATE_WIDTH = 154, STATE_HEIGHT = 72;
 type Point = { x: number; y: number };
 export type GraphStroke = Point[];
 export type StateBox = { id: string; label: string; x: number; y: number; initial: boolean };
-export type EdgeLayout = { id: string; label: string; fullLabel: string; event: string; from: string; to: string;
+export type EdgeLayout = { id: string; label: string; fullLabel: string;
+  /** The label wrapped to fit its box (never cut), and the box's height. */
+  lines: string[]; labelHeight: number; event: string; from: string; to: string;
   /** Cubic Bézier: start, control 1, control 2, end. */
   curve: [Point, Point, Point, Point]; labelPoint: Point; labelWidth: number; description: string };
 export type MachineLayout = { width: number; height: number; states: StateBox[]; edges: EdgeLayout[] };
@@ -65,16 +67,36 @@ export function machineLayout(machine: NodeMachine, override: LayoutOverride = e
         curve = [s, { x: s.x + (e.x - s.x) * .25 + lift.x, y: s.y + (e.y - s.y) * .25 + lift.y }, { x: s.x + (e.x - s.x) * .75 + lift.x, y: s.y + (e.y - s.y) * .75 + lift.y }, e];
       }
     }
-    const chars = Array.from(transition.label), label = chars.length > 20 ? `${chars.slice(0, 19).join("")}…` : transition.label;
-    const labelWidth = Math.min(180, Math.max(60, Array.from(label).reduce((sum, char) => sum + (char.charCodeAt(0) > 127 ? 10 : 5.5), 16)));
+    const label = transition.label, lines = wrapLabel(label);
+    const labelWidth = Math.max(60, ...lines.map(line => textWidth(line) + 16)), labelHeight = lines.length * LINE_HEIGHT + 8;
     const name = (id: string) => machine.states.find(item => item.id === id)?.label;
-    return { id: transition.id, label, fullLabel: transition.label, event: transition.event, from: transition.from, to: transition.to, curve,
+    return { id: transition.id, label, fullLabel: transition.label, lines, labelHeight, event: transition.event, from: transition.from, to: transition.to, curve,
       labelPoint: middle, labelWidth, description: `${name(transition.from)} → ${name(transition.to)}: ${transition.label} (event “${transition.event}”)` };
   });
   const width = Math.max(320, ...states.map(state => state.x + STATE_WIDTH + 24), ...edges.map(edge => edge.labelPoint.x + edge.labelWidth / 2 + 24));
-  const height = Math.max(160, ...states.map(state => state.y + STATE_HEIGHT + 32), ...edges.map(edge => edge.labelPoint.y + 32));
+  const height = Math.max(160, ...states.map(state => state.y + STATE_HEIGHT + 32), ...edges.map(edge => edge.labelPoint.y + edge.labelHeight / 2 + 22));
   return { width, height, states, edges };
 }
+
+/** Transition labels: wrapped (at spaces, or anywhere in words without them) to at most LABEL_MAX wide, never cut. */
+const LABEL_MAX = 180, LINE_HEIGHT = 13;
+const charWidth = (char: string) => char.charCodeAt(0) > 127 ? 10 : 5.5;
+const textWidth = (text: string) => Array.from(text).reduce((sum, char) => sum + charWidth(char), 0);
+export function wrapLabel(text: string, max = LABEL_MAX - 16) {
+  const lines: string[] = [];
+  let line = "";
+  for (const word of text.trim().split(/(\s+)/).filter(Boolean)) {
+    if (/^\s+$/.test(word)) { if (line) line += " "; continue; }
+    if (textWidth(line + word) <= max) { line += word; continue; }
+    if (line.trim()) { lines.push(line.trim()); line = ""; }
+    // A word wider than a line is broken by characters.
+    for (const char of Array.from(word)) { if (line && textWidth(line + char) > max) { lines.push(line); line = ""; } line += char; }
+  }
+  if (line.trim()) lines.push(line.trim());
+  return lines.length ? lines : [""];
+}
+/** The baseline of line i of a label, centered in its box. */
+export const lineY = (edge: Pick<EdgeLayout, "lines">, i: number) => (i - (edge.lines.length - 1) / 2) * LINE_HEIGHT;
 
 export const bezier = ([a, b, c, d]: EdgeLayout["curve"], t: number) => {
   const u = 1 - t, k = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
@@ -88,7 +110,7 @@ export function strokeTargets(layout: MachineLayout, stroke: GraphStroke) {
   for (const state of layout.states) if (stroke.some(p => near(p, { x: state.x, y: state.y, w: STATE_WIDTH, h: STATE_HEIGHT }, 16))) hits.push(`state ${state.id} “${state.label}”`);
   for (const edge of layout.edges) {
     const samples = Array.from({ length: 21 }, (_, i) => bezier(edge.curve, i / 20));
-    const label = { x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - 10, w: edge.labelWidth, h: 20 };
+    const label = { x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - edge.labelHeight / 2, w: edge.labelWidth, h: edge.labelHeight };
     if (stroke.some(p => near(p, label, 10) || samples.some(s => Math.hypot(s.x - p.x, s.y - p.y) < 14))) hits.push(`transition ${edge.id} “${edge.fullLabel}”`);
   }
   return hits.slice(0, 16);
@@ -97,7 +119,8 @@ export function strokeTargets(layout: MachineLayout, stroke: GraphStroke) {
 /** Bounds of the graph plus every annotation stroke (strokes may go past the grid). */
 export function snapshotBounds(layout: MachineLayout, strokes: GraphStroke[]) {
   // Labels can be dragged above/left of the grid, and self loops rise above their state.
-  const points = [...strokes.flat(), ...layout.edges.flatMap(edge => [{ x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - 10 }, ...edge.curve])];
+  const points = [...strokes.flat(), ...layout.edges.flatMap(edge => [{ x: edge.labelPoint.x - edge.labelWidth / 2, y: edge.labelPoint.y - edge.labelHeight / 2 },
+    { x: edge.labelPoint.x + edge.labelWidth / 2, y: edge.labelPoint.y + edge.labelHeight / 2 }, ...edge.curve])];
   const x = Math.min(0, ...points.map(p => p.x - 12)), y = Math.min(0, ...points.map(p => p.y - 12));
   const right = Math.max(layout.width, ...points.map(p => p.x + 12)), bottom = Math.max(layout.height, ...points.map(p => p.y + 12));
   return { x, y, w: right - x, h: bottom - y };
@@ -122,8 +145,8 @@ export function machineSnapshotSvg(layout: MachineLayout, strokes: GraphStroke[]
   const edges = layout.edges.map(edge => {
     const on = picked("transition", edge.id), color = on ? "#e07b00" : "#8fa79a";
     return `<path d="${curvePath(edge.curve)}" fill="none" stroke="${color}" stroke-width="${on ? 3 : 1.4}" marker-end="url(#${on ? "arrow-on" : "arrow"})"/>`
-      + `<g transform="translate(${edge.labelPoint.x},${edge.labelPoint.y})"><rect x="${-edge.labelWidth / 2}" y="-10" width="${edge.labelWidth}" height="20" rx="4" fill="#fffefa" stroke="${on ? "#e07b00" : "#c9d6cd"}" stroke-width="${on ? 2.5 : .8}"/>`
-      + `<text text-anchor="middle" dominant-baseline="central" font-size="10" fill="#4f6b5c" ${font}>${escape(edge.label)}</text></g>`;
+      + `<g transform="translate(${edge.labelPoint.x},${edge.labelPoint.y})"><rect x="${-edge.labelWidth / 2}" y="${-edge.labelHeight / 2}" width="${edge.labelWidth}" height="${edge.labelHeight}" rx="4" fill="#fffefa" stroke="${on ? "#e07b00" : "#c9d6cd"}" stroke-width="${on ? 2.5 : .8}"/>`
+      + `<text text-anchor="middle" dominant-baseline="central" font-size="10" fill="#4f6b5c" ${font}>${edge.lines.map((line, i) => `<tspan x="0" y="${lineY(edge, i)}">${escape(line)}</tspan>`).join("")}</text></g>`;
   }).join("");
   const states = layout.states.map(state => {
     const on = picked("state", state.id);

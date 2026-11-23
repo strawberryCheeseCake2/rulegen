@@ -7,9 +7,9 @@ import { RECORDER } from "../scene/instrument";
 //  - the variables visible at the returns of the constraint's compute function and the helpers it called (`ret`),
 //  - those visible where evaluate/dispatch was called (`call`: the item loop around it),
 //  - the module's top-level variables (`bind`, per module instance),
-//  - the owner's $data, $state, $value (constraint) and $event (transition).
-// Inner variables win over outer ones of the same name. Values are previews: plain data, at most 3 levels, 16 items
-// or keys each, long text cut; functions, the p5 instance and owners' methods are left out.
+//  - the owner's $data, $state, $value (constraint) and $event (transition); $demo: the m.demo values a constraint read.
+// Inner variables win over outer ones of the same name. Values are previews: plain data, at most 3 levels, 64 items
+// (16 when too long) or 16 keys each, long text cut; functions, the p5 instance and owners' methods are left out.
 // Steps taken by input handlers (between frames) are kept for the next recorded cycle, marked `pre`.
 
 export const RECORDER_RUNTIME = `
@@ -17,7 +17,7 @@ const ${RECORDER} = (() => {
   let recording = false, drawing = false, armed = false, steps = [], pending = [], truncated = false, caller = null, scope = null, creating = null;
   const SKIP = {}, MAX_STEPS = ${MAX_CYCLE_STEPS};
   const collecting = () => recording || (armed && !drawing);
-  function preview(value, depth, seen) {
+  function preview(value, depth, seen, items = 16) {
     if (value === null || typeof value === 'boolean') return value;
     if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value * 1000) / 1000 : String(value);
     if (typeof value === 'string') return value.length > 200 ? value.slice(0, 199) + '…' : value;
@@ -32,30 +32,37 @@ const ${RECORDER} = (() => {
     try {
       if (Array.isArray(value) || ArrayBuffer.isView(value)) {
         const out = []; const n = value.length;
-        for (let i = 0; i < Math.min(n, 16); i++) { const v = preview(value[i], depth + 1, seen); out.push(v === SKIP ? null : v); }
-        if (n > 16) out.push('… (' + n + ' items)');
+        for (let i = 0; i < Math.min(n, items); i++) { const v = preview(value[i], depth + 1, seen, items); out.push(v === SKIP ? null : v); }
+        if (n > items) out.push('… (' + n + ' items)');
         return out;
       }
-      if (value instanceof Map) return preview(Object.fromEntries([...value.entries()].slice(0, 16).map(([k, v]) => [String(k), v])), depth, seen);
-      if (value instanceof Set) return preview([...value].slice(0, 17), depth, seen);
+      if (value instanceof Map) return preview(Object.fromEntries([...value.entries()].slice(0, 16).map(([k, v]) => [String(k), v])), depth, seen, items);
+      if (value instanceof Set) return preview([...value].slice(0, items + 1), depth, seen, items);
       const out = {}, keys = Object.keys(value);
       let shown = 0;
       for (const key of keys) {
         if (shown >= 16) { out['…'] = keys.length + ' keys'; break; }
         const d = Object.getOwnPropertyDescriptor(value, key); if (!d || !('value' in d)) continue;
-        const v = preview(d.value, depth + 1, seen); if (v === SKIP) continue;
+        const v = preview(d.value, depth + 1, seen, items); if (v === SKIP) continue;
         out[key] = v; shown++;
       }
       return out;
     } finally { seen.delete(value); }
+  }
+  // A variable as recorded: lists keep up to 64 items (one value per item of a step that computes many, e.g. per
+  // stripe), 16 when that is too long; still too long, a local is cut as text (the FSM values are kept as they are).
+  function record(value, cut = true) {
+    let v = preview(value, 0, new Set(), 64); if (v === SKIP) return SKIP;
+    let text = JSON.stringify(v);
+    if (text && text.length > 4000) { v = preview(value, 0, new Set()); text = JSON.stringify(v); }
+    return cut && text && text.length > 4000 ? text.slice(0, 3999) + '…' : v;
   }
   function add(out, read) {
     if (typeof read !== 'function') return;
     let list; try { list = read(); } catch (error) { return; }
     for (const entry of list) {
       let value; try { value = entry[1](); } catch (error) { continue; } // declared but not initialized yet
-      const v = preview(value, 0, new Set()); if (v === SKIP) continue;
-      const text = JSON.stringify(v); out[entry[0]] = text && text.length > 4000 ? text.slice(0, 3999) + '…' : v;
+      const v = record(value); if (v !== SKIP) out[entry[0]] = v;
     }
   }
   const instOf = root => typeof rulegenLive !== 'undefined' ? rulegenLive.find(inst => inst.entry.root === root) : null;
@@ -88,9 +95,11 @@ const ${RECORDER} = (() => {
       if (inst) add(variables, inst.recordVars);
       add(variables, caller);
       for (const read of info.locals || []) add(variables, read);
-      const fsm = (name, value) => { const v = preview(value, 0, new Set()); if (v !== SKIP) variables[name] = v; };
+      const fsm = (name, value) => { const v = record(value, false); if (v !== SKIP) variables[name] = v; };
       fsm('$state', info.state); fsm('$data', info.data);
       if (kind === 'constraint') fsm('$value', info.value);
+      // Values a temporary fork was shown live (m.demo) that this constraint read.
+      if (kind === 'constraint' && info.reads) { const demo = {}; for (const k of Object.keys(info.reads)) if (k.indexOf('demo:') === 0) demo[k.slice(5)] = info.reads[k]; if (Object.keys(demo).length) fsm('$demo', demo); }
       if (kind === 'transition') fsm('$event', info.event);
       list.push(Object.assign({ kind, nodeId, root: root || '', key: key || '', state: info.state, label, index: recording ? index : -1, variables },
         kind === 'constraint' ? { constraintId: info.constraintId, property: info.property } : {},

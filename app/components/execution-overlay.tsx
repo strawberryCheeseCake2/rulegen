@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CANVAS, fieldColors, nearestEdge, occurrences, OVERLAY_HOST, overlayContext, packLabels, placeLabels, resolveMarks, stepRecord, type Guide, type Mark, type ResolvedMark, type SitePlan } from "../lib/execution/overlay";
-import type { ExecStep } from "../lib/execution/trace";
+import { siteOf, type ExecStep } from "../lib/execution/trace";
+import { probedItems, type Point } from "../lib/execution/strokes";
 
 // The chosen variables of the step looked at, drawn over the frame's picture (which spans this layer, 900×600):
 // guides in canvas coordinates, labels placed next to their marks with leader lines.
 
 const MAX_RUNS = 40;
+/** Items placed per request when only those under the strokes are shown. */
+const WITHIN_BATCH = 40;
 
 function GuideShape({ guide, color, faint }: { guide: Guide; color: string; faint?: boolean }) {
   const [[x, y]] = guide.points;
@@ -26,7 +29,10 @@ function GuideShape({ guide, color, faint }: { guide: Guide; color: string; fain
 
 type Placed = { left: number; top: number; width?: number; height?: number; scroll: boolean };
 
-export function ExecutionOverlay({ steps, step, plan, shown, onStatus }: { steps: ExecStep[]; step: ExecStep | null; plan: SitePlan | undefined; shown: Record<string, string[]>; onStatus?: (message: string) => void }) {
+/** probes: only the items nearest to these points clicked on the picture, each labeled (every visit of the step's site
+ *  is placed to find them; none while no point is clicked). */
+export function ExecutionOverlay({ steps, step, plan, shown, onStatus, probes: within, onFail }: { steps: ExecStep[]; step: ExecStep | null; plan: SitePlan | undefined; shown: Record<string, string[]>; onStatus?: (message: string) => void; probes?: Point[];
+  /** Why the overlay code could not place anything (null: it works), so it can be made again. */ onFail?: (message: string | null) => void }) {
   const frame = useRef<HTMLIFrameElement>(null), layer = useRef<HTMLDivElement>(null);
   const [port, setPort] = useState<MessagePort | null>(null);
   const [marks, setMarks] = useState<ResolvedMark[]>([]);
@@ -34,19 +40,42 @@ export function ExecutionOverlay({ steps, step, plan, shown, onStatus }: { steps
   const [placed, setPlaced] = useState<Placed[]>([]);
   const [leaders, setLeaders] = useState<{ x1: number; y1: number; x2: number; y2: number }[]>([]);
   const status = useRef(onStatus); status.current = onStatus;
+  const fail = useRef(onFail); fail.current = onFail;
   const request = useRef(0);
 
   useEffect(() => () => port?.close(), [port]);
   useEffect(() => {
     setMarks([]); setEarlier([]);
-    if (!port || !step || !plan?.code) { status.current?.(plan && !plan.code ? plan.skipReason : ""); return; }
-    const targets = occurrences(steps, step, plan.accumulate).slice(0, MAX_RUNS);
-    const inputs = targets.map(target => ({ step: stepRecord(target), context: overlayContext(steps, target), width: CANVAS.width, height: CANVAS.height }));
-    const id = ++request.current;
+    if (plan && !plan.code) fail.current?.(plan.skipReason || "No overlay code was written for this step.");
+    if (!port || !step || !plan?.code || (within && !within.length)) { status.current?.(plan && !plan.code ? plan.skipReason : ""); return; }
+    const targets = within ? steps.filter(item => siteOf(item) === siteOf(step)) : occurrences(steps, step, plan.accumulate).slice(0, MAX_RUNS);
+    // Every item is placed to find those at the points clicked: sent in batches (each within the worker's time), with
+    // little context each, so many items with large variables do not time out.
+    const inputs = targets.map(target => ({ step: stepRecord(target), context: overlayContext(steps, target, within ? 2 : undefined), width: CANVAS.width, height: CANVAS.height, many: Boolean(within) }));
+    const batches: (typeof inputs)[] = [];
+    for (let k = 0; k < inputs.length; k += within ? WITHIN_BATCH : inputs.length) batches.push(inputs.slice(k, k + (within ? WITHIN_BATCH : inputs.length)));
+    const first = request.current + 1;
+    request.current += batches.length;
+    const collected: { marks?: Mark[]; error?: string }[] = [];
+    let errors: string[] = [];
     const receive = (event: MessageEvent) => {
       const data = event.data as { id: number; error?: string; results?: { marks?: Mark[]; error?: string }[] };
-      if (data.id !== id) return;
-      if (data.error || !data.results) { status.current?.(data.error ?? "The overlay could not be computed."); return; }
+      const batch = data.id - first;
+      if (batch < 0 || batch >= batches.length) return;
+      if (within) {
+        if (data.error || !data.results) { errors.push(data.error ?? "The overlay could not be computed."); collected.push(...batches[batch].map(() => ({}))); }
+        else collected.push(...data.results);
+        if (batch + 1 < batches.length) { port.postMessage({ id: data.id + 1, code: plan.code, inputs: batches[batch + 1] }); return; }
+        // Only marks that show a value, at the points clicked.
+        const under = probedItems(within, collected.flatMap((result, k) => resolveMarks(result.marks ?? [], targets[k], steps, shown)).filter(mark => mark.labels.length > 0));
+        setMarks(under);
+        status.current?.(under.length ? "" : "Nothing recorded near the points clicked.");
+        const failed = errors[0] ?? collected.find(result => result.error)?.error;
+        fail.current?.(!under.length && failed ? `The overlay code failed: ${failed}` : null);
+        errors = [];
+        return;
+      }
+      if (data.error || !data.results) { status.current?.(data.error ?? "The overlay could not be computed."); fail.current?.(data.error ?? "The overlay could not be computed."); return; }
       const [own, ...rest] = data.results;
       const current = resolveMarks(own?.marks ?? [], step, steps, shown);
       const colors = fieldColors(current);
@@ -55,9 +84,9 @@ export function ExecutionOverlay({ steps, step, plan, shown, onStatus }: { steps
       status.current?.(current.length ? "" : own?.error ? `The overlay code failed here: ${own.error}` : "Nothing to show at this step.");
     };
     port.addEventListener("message", receive); port.start();
-    port.postMessage({ id, code: plan.code, inputs });
+    if (batches.length) port.postMessage({ id: first, code: plan.code, inputs: batches[0] });
     return () => port.removeEventListener("message", receive);
-  }, [port, step, plan, steps, shown]);
+  }, [port, step, plan, steps, shown, within]);
 
   // Labels are laid out in the layer's own pixels, next to their marks (a mark with nothing to show has none).
   const labelled = marks.filter(mark => mark.labels.length > 0);

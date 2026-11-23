@@ -42,6 +42,10 @@ export type StudioDeps = {
   fork?: (fromId: string) => string | null;
   /** Delete a frame from the board. */
   removeFrame?: (id: string) => void;
+  /** Whether Extract / Compose ask the user to clarify the sketch first (unset: no). */
+  clarifyFirst?: () => boolean;
   /** Save the code module of each brush that comes from this frame. */
   refreshBrushCode?: (frameId: string, code: string) => void;
+  /** The brushes (tools) made from a frame. */
+  brushesOf?: (frameId: string) => Brush[];
 };

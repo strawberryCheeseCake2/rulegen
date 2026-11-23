@@ -106,3 +106,15 @@ test("moved states and labels shape the graph, follow their edges and are saved 
   const panel = { ...createSketchPanel({ scene: sampleScene() }), machineLayouts: { orb: { states: { moving: { x: 700, y: 400 } }, labels: { press: { x: 0, y: -40 } } } } };
   assert.deepEqual(JSON.parse(JSON.stringify(savedSketchPanels({ source: panel }))).source.machineLayouts.orb.states.moving, { x: 700, y: 400 });
 });
+
+test("transition labels are wrapped to fit their box, never cut", async () => {
+  const { wrapLabel } = await import("../app/lib/scene/machine-layout");
+  const long = "Pointer press allocates a fresh ribbon instance and starts painting along the drag";
+  const lines = wrapLabel(long);
+  assert.ok(lines.length > 1);
+  assert.equal(lines.join(" "), long, "every word is kept");
+  const korean = "포인터를 누르면 새 리본 인스턴스를 만들고 드래그를 따라 칠하기 시작합니다";
+  assert.equal(wrapLabel(korean).join(" "), korean);
+  assert.equal(wrapLabel("가".repeat(40)).join(""), "가".repeat(40), "a word without spaces is broken, not cut");
+  assert.deepEqual(wrapLabel("짧은 전이"), ["짧은 전이"]);
+});

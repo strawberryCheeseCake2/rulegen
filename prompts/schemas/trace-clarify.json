@@ -146,6 +146,10 @@
           "measure": {
             "type": "string",
             "maxLength": 6000
+          },
+          "at": {
+            "type": "string",
+            "maxLength": 3000
           }
         },
         "required": [
@@ -155,7 +159,8 @@
           "path",
           "param",
           "meaning",
-          "measure"
+          "measure",
+          "at"
         ],
         "additionalProperties": false
       }

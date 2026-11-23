@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "maxLength": 600
+    },
+    "question": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 300
+    },
+    "options": {
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "rule": {
+            "type": "string",
+            "maxLength": 140
+          },
+          "logic": {
+            "type": "string",
+            "maxLength": 160
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "fromShown": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "thumbnail": {
+            "type": "string",
+            "maxLength": 8000
+          }
+        },
+        "required": [
+          "id",
+          "rule",
+          "logic",
+          "detail",
+          "fromShown",
+          "thumbnail"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "summary",
+    "question",
+    "reason",
+    "options"
+  ],
+  "additionalProperties": false
+}

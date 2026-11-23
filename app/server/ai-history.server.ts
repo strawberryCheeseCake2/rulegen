@@ -4,6 +4,7 @@ import "./ai.server"; // Load the configured log destination from server env fil
 import { aiLogRoot } from "./ai-log.server";
 import { requestSchema } from "../lib/schema";
 import { recoverGeneration, recoveredGenerationSchema, recoveryContextSchema } from "../lib/generation-recovery";
+import { savedToolsSchema, type SavedTools } from "../lib/execution/manipulate";
 
 const datePattern = /^\d{4}-\d{2}-\d{2}$/;
 const idPattern = /^[a-zA-Z0-9-]{1,180}$/;
@@ -65,6 +66,14 @@ export async function readGeneration(key: string) {
   const result = await optionalJson(directory, "result.json");
   const error = await optionalJson(directory, "error.json");
   return { metadata, result, error };
+}
+export async function readTools(key: string): Promise<SavedTools> {
+  const directory = await logDirectory(key);
+  const metadata = await json(directory, "log.json");
+  if (metadata.intent !== "trace-clarify" || metadata.status !== "success") throw new Error("Only tools that were made can be used again.");
+  const request = await json(directory, "request.json"), context = await optionalJson(directory, "context.json");
+  return savedToolsSchema.parse({ owner: String(context?.owner ?? "source"), concern: String(request?.trace?.concern ?? ""), choice: request?.trace?.choice ?? null,
+    marks: Array.isArray(request?.trace?.marks) ? request.trace.marks : [], clarify: await json(directory, "result.json") });
 }
 export async function restoreGeneration(key: string) {
   const directory = await logDirectory(key);

@@ -332,6 +332,14 @@ body.panel-resizing-y, body.panel-resizing-y * { cursor: row-resize !important; 
 /* Sub brushes (minimal examples) inside a brush tool group. */
 .brush-sub-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 10px; }
 .brush-sub-row { display: flex; align-items: center; gap: 3px; }
+.kept-tool-set { display: flex; flex-direction: column; gap: 4px; padding: 6px; border: 1px solid #e3e9e5; border-radius: 5px; background: #fbfcfa; }
+.kept-tool-head { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #3e4b38; }
+.kept-tool-head > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.kept-tool-head > button:not(.brush-targeted-remove) { padding: 2px 6px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; font-size: 10px; }
+.kept-tool-buttons { display: flex; flex-wrap: wrap; gap: 3px; }
+.kept-tool-buttons > button { display: flex; align-items: center; gap: 4px; padding: 4px 7px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; font-size: 11px; }
+.kept-tool-buttons > button.active { border-color: #3f7158; background: #e8f1e3; color: #2c5a43; }
+.kept-tool-purpose { font-size: 10px; line-height: 1.4; color: #6e7b66; }
 .brush-sub-row > button:first-child { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; font-size: 11px; text-align: left; }
 .brush-sub-row > button:first-child span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .brush-sub-row > button:nth-child(2) { padding: 5px 7px; border: 1px solid #e3e9e5; border-radius: 4px; background: #fff; }
@@ -588,3 +596,55 @@ button.compose-tag-kind:hover { filter: brightness(.94); }
 .layer-paste { flex: none; padding: 1px 6px; border: 1px dashed #8a9fca; border-radius: 8px; background: #fff; font-size: 9px; color: #2f477a; cursor: pointer; opacity: 0; }
 .layer-row:hover .layer-paste, .layer-row.selected .layer-paste { opacity: 1; }
 .layer-paste:hover { background: #eef2fa; }
+
+/* Progressive clarification before Extract / Compose (right panel). */
+.empty-features label.composition-tags-toggle { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; font-size: 10px; color: #4f6b58; cursor: pointer; }
+.sketch-clarify { padding: 14px; border: 1px solid #dce5d3; background: #f8fbf3; border-radius: 7px; margin-bottom: 24px; }
+.sketch-clarify .composition-heading strong { flex: 1; }
+.clarify-stages { display: flex; gap: 4px; list-style: none; margin: 0; padding: 0; }
+.clarify-stages li { width: 14px; height: 4px; border-radius: 2px; background: #dfe6d6; }
+.clarify-stages li.done { background: #8fb39b; }
+.clarify-stages li.current { background: #3f7158; }
+.clarify-reason { font-size: 10px; line-height: 1.6; color: #6f8364; margin: 10px 0; }
+.clarify-hint { font-size: 9px; color: #9aa892; margin: 6px 0 0; }
+.clarify-answered { margin: 10px 0; font-size: 10px; color: #4f6b58; }
+.clarify-answered summary { cursor: pointer; }
+.clarify-answered ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.clarify-answered li { display: grid; gap: 1px; padding: 5px 7px; background: #fff; border: 1px solid #e3e9dc; border-radius: 4px; }
+.clarify-answered li span { color: #889d78; }
+.clarify-answered li b { font-weight: 600; overflow-wrap: anywhere; }
+.clarify-question { border: 1px solid #e3e9dc; background: #fff; border-radius: 6px; padding: 10px; margin: 10px 0 0; min-width: 0; }
+.clarify-question legend { float: left; width: 100%; padding: 0; font-size: 11px; line-height: 1.5; color: #2f4a3b; font-weight: 600; }
+.clarify-question legend small { display: block; font-size: 8px; letter-spacing: 1px; text-transform: uppercase; color: #889d78; font-weight: 500; margin-bottom: 2px; }
+.clarify-why { clear: both; font-size: 9px; color: #8b9a80; margin: 2px 0 8px; line-height: 1.5; }
+.clarify-options { clear: both; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px; }
+.clarify-options button { display: grid; gap: 4px; padding: 5px; border: 1px solid #e3e9dc; border-radius: 5px; background: #fffefa; cursor: pointer; text-align: left; font-size: 10px; color: #3d5546; }
+.clarify-options button img, .clarify-no-thumb { width: 100%; aspect-ratio: 3 / 2; object-fit: contain; background: #fff; border-radius: 3px; display: block; }
+/* An option whose logic is drawn in situ: the drawing over the faded sketch, its logic line under the label. */
+.clarify-insitu-thumb { position: relative; display: block; width: 100%; aspect-ratio: 3 / 2; border-radius: 3px; overflow: hidden; background: #fff; }
+.clarify-insitu-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* Zoomed into the part of the canvas where the sketch and the drawing are (its inline box; the whole canvas without one). */
+.clarify-insitu-zoom { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.clarify-insitu-zoom img { object-fit: fill; }
+.clarify-insitu-thumb .clarify-insitu-picture { opacity: .3; filter: grayscale(.4); }
+.clarify-insitu-thumb em { position: absolute; left: 4px; right: 4px; bottom: 4px; font-size: 9px; font-style: normal; color: #a4521c; line-height: 1.3; }
+.clarify-logic { font: 9.5px/1.35 ui-monospace, Menlo, monospace; color: #5d6d58; white-space: normal; overflow-wrap: anywhere; }
+/* The pointed (or picked) option's logic drawn over the frame itself. */
+.clarify-insitu { position: absolute; inset: 0; z-index: 6; pointer-events: none; }
+.clarify-insitu img { position: absolute; inset: 0; width: 100%; height: 100%; }
+.clarify-insitu-rule { position: absolute; left: 8px; top: 8px; display: flex; flex-direction: column; gap: 2px; max-width: 46%; padding: 5px 9px; border-radius: 6px; background: #203a2cdd; color: #fff; line-height: 1.35; }
+.clarify-insitu-rule b { font-size: 12px; font-weight: 600; }
+.clarify-insitu-rule code { font: 11px ui-monospace, Menlo, monospace; color: #cfe3c6; white-space: normal; }
+.clarify-options button.picked, .clarify-confirm button.picked { border-color: #3f7158; box-shadow: 0 0 0 2px #3f715833; background: #eef5ea; }
+.clarify-question textarea { clear: both; width: 100%; padding: 8px; border: 1px solid #dce5d3; background: #fffefa; border-radius: 5px; resize: vertical; font-size: 11px; line-height: 1.6; }
+.clarify-confirm { clear: both; display: flex; gap: 6px; }
+.clarify-confirm button { flex: 1; padding: 7px; border: 1px solid #e3e9dc; border-radius: 5px; background: #fffefa; cursor: pointer; font-size: 11px; }
+.clarify-values { clear: both; display: grid; gap: 6px; }
+.clarify-preview { width: 100%; aspect-ratio: 3 / 2; object-fit: contain; background: #fffefa; border: 1px solid #eef2e8; border-radius: 4px; }
+.clarify-values label { display: grid; grid-template-columns: minmax(60px, auto) 1fr auto; align-items: center; gap: 8px; font-size: 10px; color: #4f6b58; }
+.clarify-values output { font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+.clarify-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.clarify-actions .primary-button { font-size: 11px; min-height: 34px; padding: 8px 12px; margin: 0; }
+.clarify-actions .alternative-button { margin: 0; }
+.clarify-clear { margin: 10px 0; padding: 8px 10px; border-radius: 5px; background: #eef5ea; border: 1px solid #d3e3cc; font-size: 10px; color: #3f7158; line-height: 1.6; }
+.clarify-clear p { margin: 3px 0 0; color: #5f7a62; }

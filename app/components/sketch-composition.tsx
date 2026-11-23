@@ -3,7 +3,9 @@ import { Icon } from "./icons";
 import { Fragment, useState } from "react";
 import { draggedConstraint, MAX_COMPOSE_TAGS, TAG_CONSTRAINT_DRAG, tagTree, type ComposeTag, type TagConstraintAt } from "../lib/compose-tags";
 import { EFFECT_COLORS } from "./compose-tags";
-export function SketchComposition({ artwork, prompt, onPrompt, onDraft, onCompose, busy, drafting, tags = 0, showTags = true, onShowTags, withText = true, onWithText, tagsStale = false, tagList = [], openTag = null, onPickTag, onHoverTag, canMoveTag, onMoveTag, onDeleteTag, onAddTag, onMoveConstraint }: { artwork: Artwork; prompt: string; onPrompt: (value: string) => void; onDraft: () => void; onCompose: () => void; busy: boolean; drafting: boolean;
+export function SketchComposition({ artwork, prompt, onPrompt, onDraft, onCompose, busy, drafting, tags = 0, showTags = true, onShowTags, withText = true, onWithText, tagsStale = false, tagList = [], openTag = null, onPickTag, onHoverTag, canMoveTag, onMoveTag, onDeleteTag, onAddTag, onMoveConstraint, clarifyFirst, onClarifyFirst }: { artwork: Artwork;
+  /** Whether Compose asks the user to clarify the sketch first. */
+  clarifyFirst?: boolean; onClarifyFirst?: (on: boolean) => void; prompt: string; onPrompt: (value: string) => void; onDraft: () => void; onCompose: () => void; busy: boolean; drafting: boolean;
   /** How many tags the AI put on the sketch with the prompt, and whether they show. */
   tags?: number; showTags?: boolean; onShowTags?: (on: boolean) => void;
   /** Whether Compose uses the text prompt (off: the tags on the sketch alone), and whether the tags are older than the sketch. */
@@ -78,6 +80,8 @@ export function SketchComposition({ artwork, prompt, onPrompt, onDraft, onCompos
       {!prompt.trim() && <p>Pressing Compose sketch fills in the AI prompt automatically first.</p>}
     </> : <p className="composition-tags-only">{!tags ? "Compose reads the tags on the sketch, not text. Pressing Compose sketch tags the sketch first."
       : tagsStale ? `The sketch changed after it was tagged. Compose uses the ${tags} tag${tags === 1 ? "" : "s"} as they are; Regenerate tags to read the sketch again.` : `Compose reads the ${tags} tag${tags === 1 ? "" : "s"} on the sketch, not text.`}</p>}
+    {onClarifyFirst && <label className="composition-tags-toggle" title="Before composing, the AI asks about what is still ambiguous in the sketch (only what would change the result)">
+      <input type="checkbox" checked={Boolean(clarifyFirst)} onChange={e => onClarifyFirst(e.currentTarget.checked)} />Clarify first</label>}
     <button className="primary-button" disabled={busy || !(artwork.strokes.length || artwork.photo)} onClick={onCompose}>Compose sketch<Icon name="spark" size={15} /></button>
   </section>;
 }

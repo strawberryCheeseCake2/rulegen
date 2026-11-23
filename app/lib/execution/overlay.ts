@@ -10,6 +10,8 @@ import { formatValue, isShown, pathLabel, readPath, siteOf, type ExecStep } from
 // overlapping; AI never writes text. The code runs in a sandboxed worker, per step, against that step's record.
 
 export const CANVAS = { width: 900, height: 600 };
+/** Marks per step: a few when shown at once; one per item (up to MAX_ITEM_MARKS) when only those at points clicked are shown. */
+export const MAX_ITEM_MARKS = 64;
 export const MAX_MARKS = 8, MAX_MARK_FIELDS = 6, MAX_GUIDES = 4, MAX_GUIDE_SHAPES = 16, MAX_GUIDE_POINTS = 96;
 export const GUIDE_TYPES = ["point", "polyline", "outline", "area", "vector", "dimension"] as const;
 export type GuideType = (typeof GUIDE_TYPES)[number];
@@ -81,7 +83,7 @@ export function resolveMarks(marks: Mark[], step: ExecStep, context: ExecStep[],
 // The worker: runs a site's code for each input, with mark() and read() as described above. It is created inside a
 // sandboxed iframe (no access to the app), and a run that does not finish is stopped.
 export const OVERLAY_WORKER = `
-const MAX_MARKS=${MAX_MARKS},MAX_FIELDS=${MAX_MARK_FIELDS},MAX_GUIDES=${MAX_GUIDES},MAX_SHAPES=${MAX_GUIDE_SHAPES},MAX_POINTS=${MAX_GUIDE_POINTS},TYPES=${JSON.stringify(GUIDE_TYPES)};
+const MAX_MARKS=${MAX_MARKS},MAX_ITEM_MARKS=${MAX_ITEM_MARKS},MAX_FIELDS=${MAX_MARK_FIELDS},MAX_GUIDES=${MAX_GUIDES},MAX_SHAPES=${MAX_GUIDE_SHAPES},MAX_POINTS=${MAX_GUIDE_POINTS},TYPES=${JSON.stringify(GUIDE_TYPES)};
 function readFrom(step,path){if(!step||typeof path!=='string')return undefined;if(!path.startsWith('@'))return step[path];const parts=path.slice(1).split('.');let v=step.variables?step.variables[parts[0]]:undefined;for(const part of parts.slice(1)){if(v===null||typeof v!=='object')return undefined;v=v[part];}return v;}
 function cleanGuide(g,w,h){if(!g||typeof g!=='object'||!TYPES.includes(g.type)||!Array.isArray(g.points))return null;
   const points=g.points.slice(0,MAX_POINTS).map(q=>Array.isArray(q)?[Number(q[0]),Number(q[1])]:null).filter(q=>q&&Number.isFinite(q[0])&&Number.isFinite(q[1]));
@@ -92,7 +94,7 @@ function runOne(draw,input){
   const steps=new Map([[input.step.id,input.step],...input.context.map(s=>[s.id,s])]);const marks=[];let tries=0;
   const reader=used=>(path,id)=>{const v=readFrom(steps.get(id===undefined?input.step.id:id),path);if(v===undefined||v===null)return undefined;used.n++;return typeof v==='object'?JSON.parse(JSON.stringify(v)):v;};
   function mark(locate,fields,guides){
-    if(++tries>200||marks.length>=MAX_MARKS||typeof locate!=='function'||!Array.isArray(fields))return false;
+    if(++tries>200||marks.length>=(input.many?MAX_ITEM_MARKS:MAX_MARKS)||typeof locate!=='function'||!Array.isArray(fields))return false;
     const kept=[],index=new Map();
     fields.slice(0,MAX_FIELDS).forEach((f,i)=>{let path=f,id;if(Array.isArray(f)){path=f[0];id=f[1];}if(typeof path!=='string')return;if(readFrom(steps.get(id===undefined?input.step.id:id),path)===undefined)return;index.set(i,kept.length);kept.push(id===undefined?path:path+'#'+id);});
     if(!kept.length)return false;

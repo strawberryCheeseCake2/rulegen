@@ -98,12 +98,39 @@ export function hitStroke(strokes: ManipStroke[], p: Point, slack = 6): string |
   for (let i = strokes.length - 1; i >= 0; i--) if (distanceTo(strokes[i], p) <= strokes[i].width * strokes[i].scale / 2 + slack) return strokes[i].id;
   return null;
 }
-/** The region painted with the brush: rows × cols cells of the canvas, 1 where paint covers the cell's center. */
+/** Points along the strokes as placed, about `spacing` px apart (where what they show is read). */
+export function strokeSpots(strokes: ManipStroke[], spacing = 30, max = 80): Point[] {
+  const out: Point[] = [];
+  for (const stroke of strokes) {
+    let last: Point | null = null;
+    for (const point of placedPoints(stroke)) if (!last || Math.hypot(point.x - last.x, point.y - last.y) >= spacing) { out.push(point); last = point; }
+  }
+  return out.length > max ? out.filter((_, i) => i % Math.ceil(out.length / max) === 0) : out;
+}
+/** The items inspected at points clicked on the picture: for each point, the item placed nearest to it (within `reach` px). */
+export function probedItems<T extends Point>(points: Point[], items: T[], reach = 60): T[] {
+  const out = new Set<T>();
+  for (const point of points) {
+    let best: T | null = null, distance = reach;
+    for (const item of items) { const d = Math.hypot(item.x - point.x, item.y - point.y); if (d <= distance) { best = item; distance = d; } }
+    if (best) out.add(best);
+  }
+  return [...out];
+}
+/** Points clicked to inspect: a click near one removes it, else it is added (the newest few kept). */
+export function toggleProbe(points: Point[], at: Point, max = 8, near = 14): Point[] {
+  const kept = points.filter(point => Math.hypot(point.x - at.x, point.y - at.y) > near);
+  return kept.length < points.length ? kept : [...points, at].slice(-max);
+}
+/** Whether a point is under a stroke (within its width, and `slack` px). */
+export const underStrokes = (strokes: ManipStroke[], p: Point, slack = 12) => hitStroke(strokes, p, slack) !== null;
+/** The region painted with the brush: rows × cols cells of the canvas, how many brush strokes cover each cell's center (its coats). */
 export function paintedMask(strokes: ManipStroke[], cols = 45, rows = 30): number[][] {
   const painted = strokes.filter(stroke => stroke.tool === "brush");
   const cw = CANVAS_W / cols, ch = CANVAS_H / rows;
+  // Coats, as with paint: each brush stroke over a cell adds one (0: unpainted).
   return Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => {
     const p = { x: (c + .5) * cw, y: (r + .5) * ch };
-    return painted.some(stroke => distanceTo(stroke, p) <= stroke.width * stroke.scale / 2) ? 1 : 0;
+    return painted.filter(stroke => distanceTo(stroke, p) <= stroke.width * stroke.scale / 2).length;
   }));
 }

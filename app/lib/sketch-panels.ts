@@ -7,6 +7,10 @@ import { composeTagSchema, MAX_COMPOSE_TAGS } from "./compose-tags";
 import { refreshProgram } from "./scene/machines";
 import { liveSceneSource } from "./scene/live";
 import type { SceneProposal } from "./scene/revisions";
+import type { SketchClarifyState } from "./sketch-clarify";
+import { keptToolSetSchema, MAX_KEPT_SETS } from "./execution/kept-tools";
+import { propagationBaseSchema } from "./scene/propagation";
+import { sandboxLogicSchema } from "./execution/concern-sandbox";
 
 const point = z.object({ x: z.number().min(-5000).max(20000), y: z.number().min(-5000).max(20000) });
 export const sketchPanelSchema = z.object({
@@ -31,6 +35,12 @@ export const sketchPanelSchema = z.object({
   instruction: z.string().max(2000).default(""),
   /** Where the user moved each node's state boxes and transition labels in the State Machine panel. */
   machineLayouts: z.record(z.string().max(80), z.object({ states: z.record(z.string().max(80), point), labels: z.record(z.string().max(80), point) })).default({}),
+  /** Direct manipulation tools kept with the frame (from a kept fork): its code reads what they show (m.demo). */
+  keptTools: z.array(keptToolSetSchema).transform(sets => sets.slice(-MAX_KEPT_SETS)).default([]).catch([]),
+  /** A part frame (exampleOf) as it was last in step with the frames it came from: what changed since is offered to pass up. */
+  propagationBase: propagationBaseSchema.nullable().default(null).catch(null),
+  /** A mini sandbox (made from an inspection concern): the concern, and how its program works (shown under its proxy frames). */
+  sandboxLogic: sandboxLogicSchema.extend({ concern: z.string().max(2000) }).nullable().default(null).catch(null),
 }).transform(panel => {
   const ids = new Set(panel.scene.nodes.map(node => node.id));
   return { ...panel, codeDraft: panel.codeDraft ?? liveSceneSource(panel.generated, panel.scene),
@@ -60,6 +70,8 @@ export type SketchPanel = SavedSketchPanel & {
   transformDraft: TransformDraft | null;
   /** The runtime the frame's result starts from (once per id; not saved). */
   seed: { id: string; runtime: unknown } | null;
+  /** The open clarification before Extract / Compose (its stages, questions and answers). */
+  sketchClarify: SketchClarifyState | null;
 };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
 /** What a regeneration targets: a param, a constraint, or (neither) a new stacked constraint. */
@@ -77,7 +89,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), transformDraft: null, seed: null };
+    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), transformDraft: null, seed: null, sketchClarify: null };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

@@ -12,8 +12,8 @@ const traverse = (traverseImport as unknown as { default?: typeof traverseImport
 const HOST_NAMES = new Set(["rulegenParams", "rulegenMachines", "rulegenInstances", "rulegenState", "rulegenBase", "rulegenPlaying", "rulegenApply", "rulegenJumpState", "rulegenEmit", "rulegenOwners",
   "rulegenFrozen", "rulegenOnTransition", "rulegenTransit", "rulegenEvaluate", "rulegenRecordOf", "rulegenShown", "rulegenFsmEvent", "rulegenLocal",
   "rulegenResetStates", "rulegenSetup", "rulegenDraw", "rulegenModule", "rulegenModules", "rulegenLive", "rulegenStarted", "rulegenKey", "rulegenInstance", "rulegenSync", "rulegenDispatch", "rulegenPlain", "rulegenSnapshot", "rulegenRestore", "rulegenCycleKey", "rulegenVisitOpen", "__rgRec"]);
-/** The module context: m.v / m.box read the module's own nodes; m.fsm(id, key?) is the owner of a node's FSM (owner.evaluate(...inputs) computes its current state's constraints in order, owner.dispatch(event) takes a transition); m.owners(id) lists a node's owners; m.history() is the input given so far; m.memo(key, compute) caches a result; m.p is the shared p5 instance; m.store holds the instance's state. */
-const CONTEXT = new Set(["v", "box", "fsm", "owners", "history", "memo", "p", "store"]);
+/** The module context: m.v / m.box read the module's own nodes; m.fsm(id, key?) is the owner of a node's FSM (owner.evaluate(...inputs) computes its current state's constraints in order, owner.dispatch(event) takes a transition); m.owners(id) lists a node's owners; m.history() is the input given so far; m.memo(key, compute) caches a result; m.demo(id) is a value a temporary fork is given live (null until given); m.p is the shared p5 instance; m.store holds the instance's state. */
+const CONTEXT = new Set(["v", "box", "fsm", "owners", "history", "memo", "demo", "p", "store"]);
 /** The host owns the canvas and the loop. */
 const HOST_CALLS = new Set(["background", "clear", "createCanvas", "resizeCanvas", "noCanvas", "noLoop", "loop", "redraw", "frameRate", "pixelDensity", "remove"]);
 
@@ -129,7 +129,7 @@ export function connectScene(result: { title: string; explanation: string; code:
       if (!referenced) return;
       const member = parent;
       if (!member.isMemberExpression() || member.node.object !== self || member.node.computed || !t.isIdentifier(member.node.property) || !CONTEXT.has(member.node.property.name))
-        throw new Error("m can only be used as m.v / m.box / m.fsm / m.owners / m.history / m.memo / m.p / m.store.");
+        throw new Error("m can only be used as m.v / m.box / m.fsm / m.owners / m.history / m.memo / m.demo / m.p / m.store.");
       const field = (member.node.property as t.Identifier).name;
       if (field === "store") {
         const use = member.parentPath as NodePath;
@@ -142,6 +142,7 @@ export function connectScene(result: { title: string; explanation: string; code:
       const args = call.node.arguments;
       if (field === "history") { if (args.length) throw new Error("m.history() is called without arguments."); return; }
       if (field === "memo") { if (args.length !== 2) throw new Error("m.memo is called as m.memo(key, () => value)."); return; }
+      if (field === "demo") { if (args.length !== 1 || !/^[\w-]{1,40}$/.test(literal(args[0]) ?? "")) throw new Error('m.demo is called as m.demo("<value id>") with the id as a string literal.'); return; }
       if (field === "v") {
         const key = literal(args[0]);
         if (args.length !== 1) throw new Error('m.v is called as m.v("<node id>/<param id>").');

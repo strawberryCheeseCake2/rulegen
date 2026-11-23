@@ -495,6 +495,14 @@ function rulegenInstance(entry) {
       if (inst.constraintReads && Object.keys(inst.constraintReads).length < 24) inst.constraintReads[key] = value;
       return value;
     },
+    // demo(id): a value the host gives a temporary fork live (what a direct manipulation tool shows), null until given.
+    demo(id) {
+      const k = '~demo/' + id, value = rulegenParams[k];
+      if (inst.reads) inst.reads.add(k);
+      for (const deps of inst.memoStack) deps.set(k, value);
+      if (inst.constraintReads && Object.keys(inst.constraintReads).length < 24) inst.constraintReads['demo:' + id] = value === undefined ? null : value;
+      return value === undefined ? null : value;
+    },
     box(id) { const a = encodeURIComponent(node(id)); if (inst.reads) for (const f of ['@x', '@y', '@w', '@h', '@visible']) inst.reads.add(a + '/' + f); return { x: rulegenParams[a + '/@x'], y: rulegenParams[a + '/@y'], w: rulegenParams[a + '/@w'], h: rulegenParams[a + '/@h'], visible: rulegenParams[a + '/@visible'] !== false }; },
     // fsm(id, key): the owner of node id's FSM (key: one of the many items the node draws, each with its own state and
     // data; none: the node itself). owner.state, owner.data, owner.evaluate(...inputs), owner.dispatch(event), owner.remove().

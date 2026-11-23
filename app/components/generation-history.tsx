@@ -2,16 +2,18 @@ import { useEffect, useState } from "react";
 import { Icon } from "./icons";
 import { recoveredGenerationSchema, type RecoveredGeneration } from "../lib/generation-recovery";
 import { downloadFile } from "../lib/project";
+import { savedToolsSchema, type SavedTools } from "../lib/execution/manipulate";
 
 type Entry = { key: string; intent: string; model: string; startedAt: string; status: string; durationMs?: number };
-const labels: Record<string, string> = { extract: "Brush stamp extraction", transform: "Constraint regeneration", code: "Code", compose: "Sketch composition", "compose-prompt": "Compose prompt", "tag-revise": "Tag change", clarification: "Description draft", revision: "Change proposal", "state-machine": "Node states and transitions", "machine-refine": "State machine refinement", handles: "Direct manipulation handle" };
+const labels: Record<string, string> = { extract: "Brush stamp extraction", transform: "Constraint regeneration", code: "Code", compose: "Sketch composition", "compose-prompt": "Compose prompt", "tag-revise": "Tag change", clarification: "Description draft", revision: "Change proposal", "state-machine": "Node states and transitions", "machine-refine": "State machine refinement", handles: "Direct manipulation handle", "trace-clarify": "Direct manipulation tools", "trace-analyze": "Execution inspection", "trace-overlay": "Execution overlay", "trace-part": "Concern sandbox", "sketch-clarify": "Sketch clarification", "trace-generalize": "Rule from a demonstration" };
 async function getHistory(query = "", signal?: AbortSignal) {
   const response = await fetch(`/api/generations${query}`, { signal });
   const data = await response.json();
   if (!response.ok || data.error) throw new Error(data.error || "Couldn't load the AI logs.");
   return data;
 }
-export function GenerationHistory({ onClose, onRestore, disabled }: { onClose: () => void; onRestore: (data: RecoveredGeneration) => void; disabled: boolean }) {
+export function GenerationHistory({ onClose, onRestore, onReuseTools, disabled }: { onClose: () => void; onRestore: (data: RecoveredGeneration) => void;
+  /** Use direct manipulation tools made before again (on a new temporary fork of their frame), without AI. */ onReuseTools?: (tools: SavedTools) => void; disabled: boolean }) {
   const [entries, setEntries] = useState<Entry[]>([]), [cursor, setCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState<Entry | null>(null), [details, setDetails] = useState<unknown>(null);
   const [loading, setLoading] = useState(false), [error, setError] = useState("");
@@ -33,6 +35,12 @@ export function GenerationHistory({ onClose, onRestore, disabled }: { onClose: (
     catch (error) { setError(error instanceof Error ? error.message : "Couldn't restore."); }
     finally { setLoading(false); }
   }
+  async function reuse() {
+    if (!selected || !onReuseTools) return; setLoading(true); setError("");
+    try { onReuseTools(savedToolsSchema.parse(await getHistory(`?key=${encodeURIComponent(selected.key)}&tools=1`))); }
+    catch (error) { setError(error instanceof Error ? error.message : "Couldn't use these tools."); }
+    finally { setLoading(false); }
+  }
   async function more() {
     if (!cursor) return; setLoading(true); setError("");
     try { const data = await getHistory(`?cursor=${encodeURIComponent(cursor)}`); setEntries(current => [...current, ...data.entries]); setCursor(data.nextCursor); }
@@ -51,7 +59,9 @@ export function GenerationHistory({ onClose, onRestore, disabled }: { onClose: (
       {cursor && <button disabled={loading} onClick={() => { void more(); }}>Show older entries</button>}
     </div><div className="generation-history-details">
       {selected ? <><code>{selected.key}</code><textarea readOnly aria-label="AI generation log details" value={details ? JSON.stringify(details, null, 2) : "Loading logs…"} />
-        <button className="primary-button" disabled={disabled || loading || selected.status !== "success" || !details} onClick={() => { void restore(); }}>Restore this generation<Icon name="undo" size={15} /></button>
+        {selected.intent === "trace-clarify" && onReuseTools
+          ? <button className="primary-button" disabled={disabled || loading || selected.status !== "success" || !details} onClick={() => { void reuse(); }}>Use these tools again<Icon name="undo" size={15} /></button>
+          : <button className="primary-button" disabled={disabled || loading || selected.status !== "success" || !details} onClick={() => { void restore(); }}>Restore this generation<Icon name="undo" size={15} /></button>}
         <button className="copy-button" disabled={!details} onClick={() => downloadFile(`${selected.intent}-log.json`, JSON.stringify(details, null, 2), "application/json")}>Download result log<Icon name="download" size={14} /></button>
       </> : <p>Select an entry to see its result and errors. Completed generations are restored without calling the AI again.</p>}
     </div></div>

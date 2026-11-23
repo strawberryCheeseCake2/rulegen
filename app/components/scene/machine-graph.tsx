@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { MachineTarget } from "../../lib/schema";
 import type { NodeMachine } from "../../lib/scene/schema";
-import { curvePath, emptyLayoutOverride, machineLayout, STATE_HEIGHT, STATE_WIDTH, type GraphStroke, type LayoutOverride } from "../../lib/scene/machine-layout";
+import { curvePath, emptyLayoutOverride, lineY, machineLayout, STATE_HEIGHT, STATE_WIDTH, type GraphStroke, type LayoutOverride } from "../../lib/scene/machine-layout";
 
 type Point = { x: number; y: number };
 type Props = {
@@ -116,7 +116,8 @@ export function MachineGraph({ machine, selectedId, target, runtimeId, busy, lay
           <path d={path} className="transition-hit" data-transition-id={edge.id} />
           <g className={`transition-label ${moving?.kind === "label" && moving.id === edge.id ? "dragging" : ""}`} data-transition-id={edge.id} transform={`translate(${edge.labelPoint.x},${edge.labelPoint.y})`} role="button" tabIndex={0} aria-pressed={picked} aria-label={`Select transition ${edge.fullLabel}`}
             onKeyDown={e => { if ((e.key === "Enter" || e.key === " ") && !busy && !annotating) { e.preventDefault(); onTransition(edge.id); } }}>
-            <rect x={-edge.labelWidth / 2} y={-10} width={edge.labelWidth} height={20} rx={4} /><text textAnchor="middle" dominantBaseline="central">{edge.label}</text></g>
+            <rect x={-edge.labelWidth / 2} y={-edge.labelHeight / 2} width={edge.labelWidth} height={edge.labelHeight} rx={4} />
+            <text textAnchor="middle" dominantBaseline="central">{edge.lines.map((line, i) => <tspan key={i} x={0} y={lineY(edge, i)}>{line}</tspan>)}</text></g>
         </g>;
       })}</svg>
       {layout.states.map(state => <button key={state.id} data-state-id={state.id} className={`machine-state ${selectedId === state.id ? "selected-state" : ""} ${pickedState === state.id ? "attached-state" : ""} ${runtimeId === state.id ? "current-state" : ""} ${inspected?.state === state.id ? "inspected-state" : ""} ${inspected?.from === state.id && inspected.state !== state.id ? "inspected-from" : ""} ${inspected?.states.includes(state.id) ? "related-state" : ""} ${moving?.kind === "state" && moving.id === state.id ? "dragging" : ""}`} style={{ left: state.x, top: state.y }}

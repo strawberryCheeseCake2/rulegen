@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { addCycle, emptyTrace, nextIds, readCycle, type ExecTrace } from "../app/lib/execution/trace";
-import { compiles, paramValue, recordedAt, revisionRequest, settleClarify, summarize, type Clarify } from "../app/lib/execution/manipulate";
-import { hitStroke, newStroke, paintedMask, placedPoints, strokeFeatures, type ManipStroke } from "../app/lib/execution/strokes";
+import { MANIP_WORKER, savedToolsSchema, compiles, demoKey, liveConcern, liveRequest, liveTargets, paramValue, recordedAt, revisionRequest, settleClarify, summarize, type Clarify } from "../app/lib/execution/manipulate";
+import { hitStroke, newStroke, paintedMask, placedPoints, strokeFeatures, probedItems, strokeSpots, toggleProbe, underStrokes, type ManipStroke } from "../app/lib/execution/strokes";
 
 const square = (x: number, y: number, size: number, tool: "brush" | "pencil" = "pencil"): ManipStroke => ({
   ...newStroke("s", tool, { x, y }),
@@ -32,6 +32,8 @@ test("the brush's painted region becomes a mask of the canvas; strokes are hit n
   assert.equal(mask.length, 30); assert.equal(mask[0].length, 45);
   assert.deepEqual(mask[0].slice(0, 10), [1, 1, 1, 1, 1, 1, 1, 1, 1, 0]);
   assert.equal(mask.flat().reduce((a, b) => a + b, 0), 9, "only brush strokes paint");
+  const coats = paintedMask([paint, { ...paint, id: "q" }]);
+  assert.deepEqual([coats[0][0], coats[0][9]], [2, 0], "painted over again: two coats");
   assert.equal(hitStroke([paint], { x: 90, y: 20 }), "p");
   assert.equal(hitStroke([paint], { x: 90, y: 60 }), null);
 });
@@ -39,7 +41,7 @@ test("the brush's painted region becomes a mask of the canvas; strokes are hit n
 const sites = [{ site: "constraint:heart/size", variables: ["$value", "base"] }];
 const params = [{ key: "heart/scale", type: "number" }, { key: "heart/mode", type: "select", options: ["a", "b"] }];
 const target = (patch: Partial<Clarify["targets"][number]>): Clarify["targets"][number] =>
-  ({ id: "size", name: "Size", site: "constraint:heart/size", path: "@$value", param: "", meaning: "", measure: "return strokes.length ? strokes[0].box.w : null;", ...patch });
+  ({ id: "size", name: "Size", site: "constraint:heart/size", path: "@$value", param: "", meaning: "", measure: "return strokes.length ? strokes[0].box.w : null;", at: "", ...patch });
 const output = (patch: Partial<Clarify>): Clarify => ({ related: true, summary: "", needsCode: true, rules: [], ask: false, question: "", reason: "", tools: [{ kind: "brush", purpose: "Draw it" }], targets: [target({})], ...patch });
 const rule = (id: string, thumbnail: string, tools: Clarify["tools"] = [{ kind: "brush", purpose: "" }]) => ({ id, rule: id, logic: "", detail: "", tools, thumbnail });
 
@@ -105,4 +107,47 @@ test("recorded values come from the newest allowed cycle that has the site", () 
     targets: [{ ...target({}), before: "30 – 31 (2)", shown: "80" }] });
   assert.match(request, /Rule chosen for "How\?": 1\.5× \(s = 1\.5 \* s\)/);
   assert.match(request, /Size \(constraint:heart\/size @\$value\): 30 – 31 \(2\) → 80/);
+});
+
+test("on a live fork, targets the code computes are read with m.demo by an id the code can name; params stay params", () => {
+  const settled = settleClarify(output({ targets: [target({ id: "change prob." }), target({ id: "scale", param: "heart/scale" })] }), sites, params, true);
+  assert.deepEqual(settled.targets.map(item => item.id), ["change-prob-", "scale"], "ids become letters, digits, _ and -");
+  assert.deepEqual(liveTargets(settled).map(item => item.id), ["change-prob-"]);
+  assert.equal(demoKey("change-prob-"), "~demo/change-prob-");
+  const request = liveRequest({ concern: "colors change", summary: "where", choice: { question: "How?", rule: "By probability", logic: "p(change) = painted", detail: "", tools: ["brush"] }, tools: settled.tools, targets: settled.targets });
+  assert.match(request, /m\.demo\("change-prob-"\)/);
+  assert.match(request, /measured by: return strokes\.length/);
+  assert.match(request, /heart\/scale/);
+  assert.match(liveConcern("colors change", settled.targets), /Show ONLY the values the direct manipulation tools set[\s\S]*@\$demo\.change-prob-/);
+});
+
+test("what a stroke shows is read where it was drawn; inspection shows the items at the spots clicked", () => {
+  const paint = { ...newStroke("p", "brush", { x: 0, y: 0 }), points: [{ x: 100, y: 100 }, { x: 160, y: 100 }, { x: 220, y: 100 }] };
+  assert.deepEqual(strokeSpots([paint]).map(point => point.x), [100, 160, 220]);
+  assert.ok(underStrokes([paint], { x: 150, y: 120 }) && !underStrokes([paint], { x: 150, y: 160 }), "within half the brush width and a little");
+  const items = [{ x: 120, y: 105, id: "a" }, { x: 200, y: 95, id: "b" }, { x: 500, y: 400, id: "c" }];
+  assert.deepEqual(probedItems([{ x: 125, y: 110 }, { x: 490, y: 390 }, { x: 800, y: 50 }], items).map(item => item.id), ["a", "c"], "the item nearest each spot clicked, none far from all");
+  assert.deepEqual(probedItems([], items), [], "nothing clicked, nothing shown");
+  const spots = toggleProbe(toggleProbe([], { x: 10, y: 10 }), { x: 200, y: 10 });
+  assert.equal(spots.length, 2);
+  assert.deepEqual(toggleProbe(spots, { x: 14, y: 12 }), [{ x: 200, y: 10 }], "clicking near a spot removes it");
+  const settled = settleClarify(output({ targets: [target({ id: "grid", at: "return value.cells[Math.floor(y / 100)][Math.floor(x / 100)];" }), target({ id: "bad", at: "return (" })] }), sites, params, true);
+  assert.deepEqual(settled.targets.map(item => Boolean(item.at)), [true, false], "an at that does not parse is dropped (the whole value is shown)");
+});
+
+test("the sandbox workers compile (a broken worker would time out every request)", async () => {
+  const { OVERLAY_WORKER } = await import("../app/lib/execution/overlay");
+  for (const source of [MANIP_WORKER, OVERLAY_WORKER]) assert.doesNotThrow(() => new Function(source));
+  const replies: any[] = [], self: any = { postMessage: (reply: unknown) => replies.push(reply) };
+  new Function("self", "OffscreenCanvas", MANIP_WORKER)(self, undefined);
+  await self.onmessage({ data: { id: 1, kind: "measure", code: "return strokes.length;", input: { strokes: [1, 2] } } });
+  await self.onmessage({ data: { id: 2, kind: "at", code: "return value.grid[Math.floor(y / 100)][Math.floor(x / 100)];", input: { value: { grid: [[.1, .2], [.3, .4]] }, points: [[150, 50], [50, 150], [999, 999]] } } });
+  assert.deepEqual(replies, [{ id: 1, value: 2 }, { id: 2, values: [.2, .3, null] }]);
+});
+
+test("tools made before can be read back from AI history (the frame, the concern, the rule picked, the tools)", () => {
+  const clarify = settleClarify(output({}), sites, params, true);
+  const saved = savedToolsSchema.parse({ owner: "sketch-1", concern: "merge", choice: null, clarify });
+  assert.deepEqual([saved.owner, saved.marks, saved.clarify.tools.map(tool => tool.kind)], ["sketch-1", [], ["brush"]]);
+  assert.throws(() => savedToolsSchema.parse({ owner: "sketch-1", concern: "merge", choice: null, clarify: { ...clarify, tools: [{ kind: "eraser", purpose: "" }] } }));
 });

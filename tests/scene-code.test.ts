@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { run, sampleScene, sceneProgram } from "./fixtures/scene";
 import { connectScene } from "../app/server/scene-code.server";
 import { prepareCode } from "../app/server/code.server";
-import { readSceneValues, sceneStructureKey, syncScene } from "../app/lib/scene/machines";
+import { readSceneValues, sceneStructureKey, syncScene, withBlockParams } from "../app/lib/scene/machines";
 import { sceneLiveStatus } from "../app/lib/scene/live";
 import { moveNodes, updateNode } from "../app/lib/scene/graph";
 import * as ops from "../app/lib/scene/panel-ops";
@@ -286,4 +286,20 @@ test("a frame's cost does not grow with all the input: gestures have a stable id
   assert.ok(sketch.read("rulegenLive[0].memo.size") <= 4, "old values' entries are dropped");
   const long = run(assembleProgram(scene, [moduleSource("tree", `function (m) { return { draw() { m.memo("x".repeat(3000), () => 1); } }; }`)]));
   assert.throws(() => long.draw(), /m.memo key is too long/, "a key built from points is refused");
+});
+
+test("a temporary fork reads what the tools show live with m.demo: null until given, then a host value that redraws in place", () => {
+  const code = sceneProgram.replace('function computeSize() { return m.v("orb/radius") * 2; }',
+    'function computeSize() { const shown = m.demo("size"); return shown === null ? m.v("orb/radius") * 2 : shown.w; }');
+  const generated = connect(code), sketch = run(generated.code);
+  sketch.draw();
+  assert.equal(sketch.circles.at(-1)![2], 48, "nothing shown yet: as before");
+  const pushed = withBlockParams(generated.code, { "~demo/size": { w: 77 } })!;
+  assert.equal(sceneStructureKey(pushed), sceneStructureKey(generated.code), "a shown value is a host value: no reload");
+  sketch.read(`Object.assign(rulegenBase, ${JSON.stringify(readSceneValues(pushed)!.params)}); rulegenApply();`);
+  sketch.draw();
+  assert.equal(sketch.circles.at(-1)![2], 77, "the shown value is used at once");
+  const inside = (extra: string) => sceneProgram.replace("    mousePressed()", `    keyPressed() { ${extra} },\n    mousePressed()`);
+  assert.throws(() => connect(inside('const id = "size"; m.demo(id);')), /m\.demo is called as m\.demo\("<value id>"\)/);
+  assert.throws(() => connect(inside('m.demo("a b");')), /m\.demo is called/);
 });

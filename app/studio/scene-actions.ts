@@ -17,14 +17,26 @@ import { decomposeTargets, exampleLabel, exampleScene, minimalExampleInstruction
 import { findConstraint, setDragOff } from "../lib/scene/constraints";
 import { applyHandles, handleLeaves, handleSuggestionsSchema, handleConstraints, proxyGroups, setHandle, type HandleTarget } from "../lib/scene/handles";
 import { MAX_SKETCH_FRAMES, type FrameId } from "../lib/workspace";
+import { sandboxHandleInstruction, sandboxInstruction, sandboxSchema, sandboxTarget, type SandboxPart } from "../lib/execution/concern-sandbox";
+import { partNodes } from "../lib/scene/propagation";
 import type { StudioDeps } from "./deps";
+import { answeredStages, clarifiedText, MAX_CLARIFY_STAGES, settleSketchClarify, startingAnswers, aiSketchClarifySchema, type ClarifyAnswer, type ClarifyMode, type SketchClarifyState } from "../lib/sketch-clarify";
 
 export const tagRevisionLabel = "AI is changing the tag's constraint…";
+export const sketchClarifyLabel = "AI is checking what is still ambiguous in the sketch…";
 export const compositionPromptLabel = "AI is reading the sketch and pen meanings to write the Compose prompt…";
 
 /** How example frames wait when the server is busy with other AI requests (tests shorten it). */
 export const exampleRetry = { ms: 2500, attempts: 6 };
 const BUSY = /request is in progress/i;
+/** A request the server turned away for being busy goes again a little later (as an example frame's code does). */
+async function patient<T>(send: () => Promise<T>): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try { return await send(); }
+    catch (error) { if (attempt >= exampleRetry.attempts || !(error instanceof Error && BUSY.test(error.message))) throw error; }
+    await new Promise(resolve => setTimeout(resolve, exampleRetry.ms * attempt));
+  }
+}
 
 /** Local scene edits (no AI) for one sketch panel. */
 export function sceneEdits(deps: StudioDeps, owner: string) {
@@ -209,7 +221,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
    * collection; the node's constraints together; or the node with everything below it), linked back to this
    * frame; it is rendered afterwards. Throws when the example cannot be made; null when there is no room for another frame.
    */
-  function exampleFrame(target: ExampleTarget, quiet = false, from?: Scene) {
+  function exampleFrame(target: ExampleTarget, quiet = false, from?: Scene, title?: string) {
     // `from`: the scene the constraint is in (a part of a decomposed constraint is in this frame's scene only as the child's).
     const { nodeId, constraintId, scope } = target;
     const source = from ?? deps.panel(owner).scene, node = findNode(source, nodeId);
@@ -218,7 +230,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     const label = exampleLabel(node, scope, constraintId);
     // An ordinary new sketch frame. Its first code run gets the hint and its own (empty) sketch
     // instead of the original, so only this constraint shows; after that it is edited like any frame.
-    const id = derive(scene, scope === "node" ? `${label} · part` : `${node.name} · ${label} example`, deps.artwork(owner)?.revision ?? 0,
+    const id = derive(scene, title ?? (scope === "node" ? `${label} · part` : `${node.name} · ${label} example`), deps.artwork(owner)?.revision ?? 0,
       { sourceFrameId: null, exampleOf: scope === "constraint" ? { frameId: owner, nodeId, constraintId } : { frameId: owner, nodeId, constraintId: "", scope }, analysisRevision: -1, instruction: "", generationMode: "extract", composePrompt: "", selectedNodeIds: [nodeId] }, false, quiet);
     if (!id) return null;
     // Every example is also a sub brush in the tool group of the brush it came from, so it can be brushed and played with.
@@ -297,7 +309,42 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     await generateCode(false, `${base}\n${what} exactly, replacing the old behavior in the previous code (do not keep the old logic).`);
   }
 
-  return {
+  /** Begin clarifying the sketch before Extract / Compose: the first stage of questions. */
+  async function startClarify(mode: ClarifyMode) {
+    const open: SketchClarifyState = { mode, stages: [], reason: "" };
+    deps.updatePanel(owner, { sketchClarify: open, error: "" });
+    await askClarify(open);
+  }
+  /** One more stage: the AI asks what is still ambiguous given the answers so far, or finds it clear enough (then it runs). */
+  async function askClarify(open: SketchClarifyState, askAnyway = false) {
+    const document = deps.documentId(), out: { done?: string; again?: boolean } = {};
+    await deps.task(sketchClarifyLabel, async () => {
+      const number = deps.requestId(owner), panel = deps.panel(owner);
+      const context = await sketchContext(deps, owner);
+      const instruction = open.mode === "extract" ? panel.instruction : panel.composeWithText ? panel.composePrompt.trim() : "";
+      const result = settleSketchClarify(aiSketchClarifySchema.parse(await deps.request("sketch-clarify", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
+        instruction, composeTags: open.mode === "compose" ? panel.composeTags : [], sketchClarify: { mode: open.mode, askAnyway, stages: answeredStages(open.stages) } }, owner)), open.stages.length);
+      if (number !== deps.requestId(owner) || document !== deps.documentId() || deps.panel(owner).sketchClarify?.mode !== open.mode) return;
+      // At least one stage is asked: found clear from the start, it is asked once more for what is most uncertain.
+      if (result.done && !open.stages.length && !askAnyway) { out.again = true; return; }
+      // Still clear: the panel says why, and the user runs it.
+      if (result.done && !open.stages.length) { deps.updatePanel(owner, { sketchClarify: { ...open, clear: result.reason || "Nothing critical is ambiguous." } }); return; }
+      if (result.done) { out.done = result.reason; return; }
+      deps.updatePanel(owner, { sketchClarify: { ...open, clear: undefined, reason: result.reason, picture: context.image, strokes: context.compositionStrokes, stages: [...open.stages, { questions: result.questions, answers: startingAnswers(result.questions) }] } });
+    }, owner);
+    if (out.again) { await askClarify(open, true); return; }
+    if (out.done === undefined) return;
+    deps.toast(open.stages.length ? `Clear enough now${out.done ? `: ${out.done}` : ""}` : `Nothing critical is ambiguous${out.done ? `: ${out.done}` : ""}`);
+    await proceed(open);
+  }
+  /** Close the clarification and Extract / Compose with its answers. */
+  async function proceed(open: SketchClarifyState) {
+    deps.updatePanel(owner, { sketchClarify: null });
+    const text = clarifiedText(open.stages);
+    if (open.mode === "extract") await actions.extract(text); else await actions.compose(false, text);
+  }
+
+  const actions = {
     generateCode,
     draftComposePrompt,
     /** One constraint of a Compose tag changed by AI as the user asks (the card shows the result). */
@@ -311,17 +358,22 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         deps.toast(result.note || `Changed “${result.constraint.label}”.`);
       }, owner);
     },
-    /** Extract from this sketch into a NEW sketch frame beside it, then render that frame's result. */
-    async extract() {
+    /**
+     * Extract from this sketch into a NEW sketch frame beside it, then render that frame's result.
+     * `clarified`: what the user answered when asked first (unset: ask first when that is on).
+     */
+    async extract(clarified?: string) {
+      if (clarified === undefined && deps.clarifyFirst?.()) { await startClarify("extract"); return; }
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision, name = deps.artwork(owner)?.name || "Sketch";
+      const instruction = [deps.panel(owner).instruction, clarified].filter(Boolean).join("\n\n");
       const out: { frame?: string } = {};
       await deps.task("Extracting brush stamps and objects from the sketch…", async () => {
         const capture = await deps.capture(owner), context = compositionContext(deps.artwork(owner)!);
-        const scene = sceneSchema.parse(await deps.request("extract", { image: capture.image, recoveryRegion: capture.region, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: deps.panel(owner).instruction }, owner));
+        const scene = sceneSchema.parse(await deps.request("extract", { image: capture.image, recoveryRegion: capture.region, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: instruction.slice(0, 6000) }, owner));
         if (!fresh(document, revision)) throw new Error("The sketch changed during extraction. Please extract again.");
         const r = capture.region;
         const mapped = { ...scene, nodes: scene.nodes.map(node => ({ ...node, region: { x: r.x + node.region.x * r.w, y: r.y + node.region.y * r.h, w: Math.max(.01, node.region.w * r.w), h: Math.max(.01, node.region.h * r.h) } })) };
-        out.frame = derive(mapped, `${name} · extracted`, revision!, {}, true) || undefined;
+        out.frame = derive(mapped, `${name} · extracted`, revision!, clarified ? { instruction: instruction.slice(0, 2000) } : {}, true) || undefined;
         deps.toast(`Extracted ${scene.nodes.filter(node => node.kind === "collection").length} brush stamp(s) and ${scene.nodes.filter(node => node.kind === "object").length} object(s) into a new frame.`);
       }, owner);
       if (out.frame) await renderDerived(out.frame);
@@ -345,7 +397,7 @@ export function sceneAI(deps: StudioDeps, owner: string) {
      * backdrop by default — that has a param without one: one request per constraint, two at a time, each
      * put on the scene as it arrives; then each node's proxy frame opens. One that fails does not stop the others.
      */
-    async suggestAllHandles(nodeIds?: string[], redesign = false) {
+    async suggestAllHandles(nodeIds?: string[], redesign = false, options: { instruction?: string; width?: number } = {}) {
       const panel = deps.panel(owner), chosen = panel.scene.nodes.filter(node => nodeIds ? nodeIds.includes(node.id) : node.parentId || !isBackdrop(node));
       // Redesign: every constraint that has a handle now, made again (the AI sees each current widget); undo takes each back.
       const targets = chosen.flatMap(node => handleConstraints(node).filter(item => redesign ? item.params.some(param => param.handle)
@@ -367,12 +419,12 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         const image = (await deps.capture(owner, true)).image, queue = [...targets];
         // Cancelling the frame's work ends the task: what is still running is dropped.
         const live = () => Boolean(deps.panel(owner).loading);
-        await Promise.all(Array.from({ length: Math.min(2, queue.length) }, async () => {
+        await Promise.all(Array.from({ length: Math.min(options.width ?? 2, queue.length) }, async () => {
           for (let next = queue.shift(); next && live(); next = queue.shift()) {
             try {
-              const result = handleSuggestionsSchema.parse(await deps.request("handles", { scene: deps.panel(owner).scene, targetNodeId: next.nodeId, targetConstraintId: next.constraintId, targetParamId: "", instruction: "", image }, owner));
-              if (!live()) return;
               const target = next;
+              const result = handleSuggestionsSchema.parse(await patient(() => deps.request("handles", { scene: deps.panel(owner).scene, targetNodeId: target.nodeId, targetConstraintId: target.constraintId, targetParamId: "", instruction: options.instruction ?? "", image }, owner)));
+              if (!live()) return;
               deps.updatePanel(owner, current => findNode(current.scene, target.nodeId) ? ops.commitScene(current, applyHandles(current.scene, target.nodeId, result.handles)) : {});
               if (result.handles.length) nodes.add(next.nodeId);
               count += result.handles.length; skipped += result.skipped.length;
@@ -384,6 +436,36 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       if (nodes.size) openAll();
       if (count || failed.length) deps.toast([count ? `${redesign ? "Redesigned" : "Created"} ${count} direct manipulation handle(s) for ${targets.length - failed.length} constraint(s), each constraint in its own proxy frame, grouped by node.` : "",
         skipped ? `${skipped} left out due to code errors.` : "", failed.length ? `Could not make: ${failed.join(", ")}.` : ""].filter(Boolean).join(" "));
+    },
+    /**
+     * A mini sandbox for an inspection concern: AI finds the one part of the brush it is about (a node, its own
+     * constraints, one constraint, or one computation inside a constraint); that part alone becomes a part frame
+     * (as decompose makes, linked to this frame), and then gets direct manipulation handles for its params.
+     */
+    async concernSandbox(concern: string, image: string, marks: { x: number; y: number }[][] = []) {
+      const panel = deps.panel(owner), generated = panel.generated;
+      if (!generated) { deps.updatePanel(owner, { error: "Generate this frame's result first." }); return; }
+      const out: { part?: SandboxPart; scene?: Scene } = {};
+      await deps.task("AI is finding the part of the brush this is about, for a mini sandbox…", async () => {
+        const nodeIds = panel.scene.nodes.map(node => node.id).slice(0, 64);
+        out.part = sandboxSchema.parse(await patient(() => deps.request("trace-part", { scene: panel.scene, previous: liveSceneSource(generated, panel.scene), image,
+          trace: { concern, nodeIds, cycles: 0, sites: [], marks } }, owner)));
+        out.scene = panel.scene;
+      }, owner);
+      if (!out.part || !out.scene) return;
+      const target = sandboxTarget(out.scene, out.part);
+      let made: ReturnType<typeof exampleFrame>;
+      try { made = exampleFrame(target, true, target.from, `${findNode(target.from ?? out.scene, target.nodeId)?.name ?? "Part"} · sandbox`); }
+      catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "Could not make the sandbox." }); return; }
+      if (!made) return;
+      // What it is for stays with its code (every generation of it, also Update and fixes later on).
+      deps.updatePanel(made.id, { instruction: sandboxInstruction(concern), sandboxLogic: { ...out.part.logic, concern } });
+      deps.toast(`Made a mini sandbox frame of “${made.label}” beside this one: ${out.part.reason} Generating it, then its handles…`);
+      await renderExample(made.id);
+      const frame = deps.panel(made.id);
+      if (!deps.artwork(made.id) || !frame.generated || !frame.exampleOf) return;
+      // One handle request at a time: the inspection goes on beside it (the server takes two at once).
+      await sceneAI(deps, made.id).suggestAllHandles(partNodes(frame.scene, frame.exampleOf).map(node => node.id), false, { instruction: sandboxHandleInstruction(concern), width: 1 });
     },
     async minimalExample(nodeId: string, constraintId: string) {
       let made: ReturnType<typeof exampleFrame>;
@@ -478,13 +560,16 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       }, owner);
       if (request.code && done.changed) await rewriteCode([done.changed.label], done.changed.scene);
     },
-    async compose(repair = false) {
+    /** `clarified`: what the user answered when asked first (unset: ask first when that is on). */
+    async compose(repair = false, clarified?: string) {
       // Without the text prompt, Compose reads the tags on the sketch alone; with it, the tags go along.
       // The tags go as they are now, edited by hand or not and even when the sketch changed since: only a frame with
       // nothing to compose from yet is read first, and reading the sketch again is the user's Regenerate.
       const panel = deps.panel(owner), text = panel.composeWithText, prompt = text ? panel.composePrompt.trim() : "", tags = panel.composeTags;
       if (repair) { await generateCode(true, prompt); return; }
       if (text ? !prompt : !tags.length) { await draftComposePrompt(); return; }
+      if (clarified === undefined && deps.clarifyFirst?.()) { await startClarify("compose"); return; }
+      const instruction = [prompt, clarified].filter(Boolean).join("\n\n");
       const document = deps.documentId(), revision = deps.artwork(owner)?.revision;
       const out: { frame?: string } = {};
       await deps.task("Composing the pen marks and sketch into brush stamps…", async () => {
@@ -492,12 +577,40 @@ export function sceneAI(deps: StudioDeps, owner: string) {
         // Marks erased since the tags were made are no longer there to point at.
         const drawn = new Set(context.compositionStrokes.map(stroke => stroke.id));
         const composeTags = tags.map(tag => ({ ...tag, strokeIds: tag.strokeIds.filter(id => drawn.has(id)) }));
-        const scene = sceneSchema.parse(await deps.request("compose", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: prompt, composeTags }, owner));
+        const scene = sceneSchema.parse(await deps.request("compose", { image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes, instruction: instruction.slice(0, 6000), composeTags }, owner));
         const now = deps.panel(owner);
         if (!fresh(document, revision) || (text && prompt !== now.composePrompt.trim()) || (tags.length > 0 && tags !== now.composeTags)) throw new Error("The sketch, prompt or tags changed. Please Compose again.");
-        out.frame = derive(scene, `${context.artwork.name} · composed`, revision!, { generationMode: "compose", composePrompt: prompt, composeWithText: text }, true) || undefined;
+        out.frame = derive(scene, `${context.artwork.name} · composed`, revision!, { generationMode: "compose", composePrompt: instruction.slice(0, 2000), composeWithText: text }, true) || undefined;
       }, owner);
-      if (out.frame) await renderDerived(out.frame, prompt);
+      if (out.frame) await renderDerived(out.frame, instruction);
     },
+    /** Answer a question of the open clarification's current stage. */
+    answerClarify(questionId: string, answer: ClarifyAnswer) {
+      deps.updatePanel(owner, panel => {
+        const open = panel.sketchClarify, stage = open?.stages.at(-1);
+        if (!open || !stage) return {};
+        return { sketchClarify: { ...open, stages: [...open.stages.slice(0, -1), { ...stage, answers: { ...stage.answers, [questionId]: answer } }] } };
+      });
+    },
+    /** The next stage (after the last one: Extract / Compose with the answers). */
+    async continueClarify() {
+      const open = deps.panel(owner).sketchClarify;
+      if (!open) return;
+      if (open.stages.length >= MAX_CLARIFY_STAGES) { await actions.finishClarify(); return; }
+      await askClarify(open);
+    },
+    /** Stop asking: Extract / Compose with what was answered so far. */
+    async finishClarify() {
+      const open = deps.panel(owner).sketchClarify;
+      if (!open) return;
+      await proceed(open);
+    },
+    /** The AI found it clear, but the user wants to be asked: questions about what is most uncertain. */
+    async askAnyway() {
+      const open = deps.panel(owner).sketchClarify;
+      if (open) await askClarify({ ...open, clear: undefined }, true);
+    },
+    cancelClarify() { deps.updatePanel(owner, { sketchClarify: null }); },
   };
+  return actions;
 }

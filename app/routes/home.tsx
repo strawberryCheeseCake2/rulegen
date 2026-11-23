@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Route } from "./+types/home";
 import { Icon } from "../components/icons";
 import { SketchCanvas, type CanvasHandle } from "../components/sketch-canvas";
@@ -13,6 +13,9 @@ import { GenerationHistory } from "../components/generation-history";
 import { RawCodePanel } from "../components/raw-code-panel";
 import { SketchComposition } from "../components/sketch-composition";
 import { ComposeTags, type ExampleThumb } from "../components/compose-tags";
+import { ClarifyInsitu, SketchClarifyPanel } from "../components/sketch-clarify";
+import { useClarifyDrawings } from "../studio/use-clarify-drawings";
+import { drawingKey } from "../lib/sketch-clarify";
 import { addTag, canMoveTag, deleteTag, MAX_TAG_CONSTRAINTS, moveTag, moveConstraint, penExamples, placedPen, setTagKind, type ComposeTag, type ComposeTagPen, type TagConstraintAt } from "../lib/compose-tags";
 import { LayerPanel } from "../components/scene/layer-panel";
 import { SceneOverlay } from "../components/scene/scene-overlay";
@@ -50,8 +53,17 @@ import type { StudioDeps, PanelPatch } from "../studio/deps";
 import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
 import { copyConstraint, NODE_DRAG_TYPE, readNodeDrag, type ConstraintClip } from "../lib/scene/transfer";
 import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
-import { useExecution, type Analyzed } from "../studio/use-execution";
-import { useManipulation } from "../studio/use-manipulation";
+import { restorePoint, useExecution, type Analyzed } from "../studio/use-execution";
+import type { ExecStep } from "../lib/execution/trace";
+import { useManipulation, type ManipSaved, type ManipView } from "../studio/use-manipulation";
+import { useKeptTools } from "../studio/use-kept-tools";
+import { useGeneralize, type GeneralizeView } from "../studio/use-generalize";
+import { GeneralizePanel } from "../components/generalize-panel";
+import { ancestorsOf, changesOf, propagate, settle } from "../studio/propagate";
+import { PropagatePanel } from "../components/propagate-panel";
+import { SandboxLogicPanel } from "../components/sandbox-logic";
+import { keptValues } from "../lib/execution/kept-tools";
+import type { SavedTools } from "../lib/execution/manipulate";
 import { ManipLayer, ManipPanel } from "../components/execution-manip";
 import { ExecutionPanel } from "../components/execution-panel";
 import { ExecutionOverlay } from "../components/execution-overlay";
@@ -62,6 +74,8 @@ import { MARK_COLOR } from "../studio/use-execution";
 export function meta({}: Route.MetaArgs) { return [{ title: "GenTool — From a mark to a system" }, { name: "description", content: "Draw, extract collections and objects, and create p5.js systems with AI." }]; }
 const blank = (): Artwork => ({ strokes: [], photo: null, name: "Untitled exploration", revision: 0 });
 const storageKey = "rulegen.project.v1";
+/** The direct manipulation session on a temporary fork, kept across a reload (the fork frame is kept with the project). */
+const manipulationKey = "rulegen.manipulation.v1";
 const drawingViewport: Viewport = { zoom: 1, x: 0, y: 0 };
 
 /** The layers panel's width range when dragged (px). */
@@ -140,6 +154,20 @@ export default function Home() {
   const [exampleThumbs, setExampleThumbs] = useState<Record<string, string>>({});
   // The tag whose card is open in each frame, and the tag pointed at in the Compose panel's tag tree.
   const [openTags, setOpenTags] = useState<Record<string, string | null>>({}), [pointedTag, setPointedTag] = useState<{ frameId: string; id: string } | null>(null);
+  // The clarification's in-situ drawings of the active frame, and the choice option pointed at in its panel: that one is
+  // drawn over the frame (or else the option last picked that has a drawing).
+  const clarifyDrawings = useClarifyDrawings(panel.sketchClarify);
+  const [clarifyPoint, setClarifyPoint] = useState<{ questionId: string; optionId: string } | null>(null);
+  const clarifyShown = (() => {
+    const stage = panel.sketchClarify?.stages.at(-1);
+    if (!stage) return null;
+    const found = (questionId: string, optionId: string | undefined) => {
+      const option = stage.questions.find(item => item.id === questionId)?.options.find(item => item.id === optionId), drawing = clarifyDrawings[drawingKey(questionId, optionId ?? "")];
+      return option && drawing?.src ? { label: option.label, logic: option.logic, drawing } : null;
+    };
+    return (clarifyPoint && found(clarifyPoint.questionId, clarifyPoint.optionId))
+      ?? stage.questions.map(question => found(question.id, stage.answers[question.id]?.choice)).filter(Boolean).at(-1) ?? null;
+  })();
   // Constraints moved between a frame's tags (from the card or the tag tree): its tag cards start over, as what they keep goes by place.
   const [tagMoves, setTagMoves] = useState<Record<string, number>>({});
   // The constraint picked in Layers, shown in the inspector.
@@ -148,6 +176,10 @@ export default function Home() {
   const [constraintClip, setConstraintClip] = useState<ConstraintClip | null>(null);
   /** The Layers pick in this frame, while its layer is still the selected one. */
   const layerPick = (frameId: string) => layerConstraint?.frameId === frameId && panelsRef.current[frameId]?.selectedNodeIds[0] === layerConstraint.nodeId ? layerConstraint : null;
+  // Extract / Compose clarify the sketch with the user first (progressive questions in the right panel).
+  const [clarifyFirst, setClarifyFirstState] = useState(true);
+  useEffect(() => { try { setClarifyFirstState(localStorage.getItem("rulegen:clarify-first") !== "0"); } catch { /* storage unavailable */ } }, []);
+  const setClarifyFirst = (on: boolean) => { setClarifyFirstState(on); try { localStorage.setItem("rulegen:clarify-first", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   const setShowComposeTags = (on: boolean) => { setShowComposeTagsState(on); try { localStorage.setItem("rulegen:compose-tags", on ? "1" : "0"); } catch { /* storage unavailable */ } };
   const [penSettingsOpen, setPenSettingsOpen] = useState(false);
   // Right panel width chosen by dragging its edge (null = responsive default); remembered per browser.
@@ -276,10 +308,12 @@ export default function Home() {
       const id = createFrame(fromId, `${art.name || "Frame"} · temporary fork`, { strokes: art.strokes, photo: art.photo });
       if (!id) return null;
       // The same sketch, scene, result and input, as the saved project would hold them.
-      mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(savedSketchPanels({ [fromId]: panel })[fromId]), sourceFrameId: fromId } }));
+      // Not a part of the decomposition itself (its change goes to the original when kept, which asks then).
+      mutatePanels(current => ({ ...current, [id]: { ...createSketchPanel(savedSketchPanels({ [fromId]: panel })[fromId]), sourceFrameId: fromId, exampleOf: null, propagationBase: null } }));
       return id;
     },
     removeFrame: id => { if (artworkOf(id)) deleteFrame(id as FrameId); },
+    clarifyFirst: () => clarifyFirst,
     addBrushes: (frameId, scene) => {
       const made = brushesFor(scene, frameId, brushesRef.current, () => crypto.randomUUID());
       if (made.length) { setBrushes([...brushesRef.current, ...made]); setToast(`Added brushes to the toolbar: ${made.map(brush => brush.name).join(", ")}.`); }
@@ -296,6 +330,7 @@ export default function Home() {
       if (made) setBrushes([...brushesRef.current, made]);
       return made;
     },
+    brushesOf: frameId => brushesRef.current.filter(brush => brush.sourceFrameId === frameId),
     preview: owner => resultPreviews.current.get(owner),
     refreshBrushCode: (frameId, code) => {
       const scene = panelsRef.current[frameId]?.scene, modules = programModules(code);
@@ -321,8 +356,46 @@ export default function Home() {
   }, analyzed => manipulationStart.current?.(analyzed));
   // Direct manipulation in the Execution frame: tools made for the concern, what they show measured into its variables.
   const manipulation = useManipulation(deps, execution);
+  // Tools kept with frames (from kept forks): used on the frame itself, offered as sub tools of its brush.
+  const kept = useKeptTools(deps);
+  // What was shown with the tools made the brush's own rule (the rule it means picked from previews).
+  const generalize = useGeneralize(deps);
+  // A fork's question goes with the fork session.
+  useEffect(() => { const open = generalize.view; if (open?.kind === "fork" && manipulation.view?.fork !== open.from) generalize.close(); }, [manipulation.view?.fork, generalize.view?.from]);
+  const generalizePanel = (open: GeneralizeView) => <GeneralizePanel view={open} onChoose={id => { void generalize.choose(id); }} onRetry={generalize.retry} onClose={generalize.close} />;
+  /** Under a frame: what goes there, and the rule question of what was shown on it (if open). */
+  const withGeneralize = (id: string, below: React.ReactNode) => generalize.view?.from === id ? <>{below}{generalizePanel(generalize.view)}</> : below;
+  // A part frame of a decomposition is in step with the frames above once it has a result; what changes in it on its
+  // own after that (values, constraints, code, kept tools) is offered to pass up (below the frame).
+  useEffect(() => { for (const [id, panel] of Object.entries(panels)) if (panel.exampleOf && panel.generated && !panel.propagationBase && !panel.loading) settle(deps, id); }, [panels]);
+  const [propagating, setPropagating] = useState<string | null>(null);
+  const propagationPanel = (id: string) => {
+    const panel = panels[id], changes = changesOf(panel);
+    if (!panel || !changes || (panel.loading && propagating !== id)) return undefined;
+    const ancestors = ancestorsOf(deps, id).map(frame => ({ id: frame, name: artworkOf(frame)?.name || "Frame" }));
+    if (!ancestors.length) return undefined;
+    return <PropagatePanel key={`${id}-${JSON.stringify(panel.propagationBase).length}`} changes={changes} ancestors={ancestors} busy={propagating !== null}
+      tools={panel.keptTools.filter(set => changes.tools.includes(set.id)).map(set => set.concern)}
+      onKeep={() => settle(deps, id)} onShow={frame => setPendingFrameFocus(frame as FrameId)}
+      onPropagate={targets => { setPropagating(id); void propagate(deps, id, targets).finally(() => setPropagating(null)); }} />;
+  };
+  // Another tool taken (anything but select) puts a kept tool away.
+  useEffect(() => { if (tool !== "select") kept.stop(); }, [tool]);
   const manipulationStart = useRef<((analyzed: Analyzed) => void) | null>(null);
   manipulationStart.current = manipulation.start;
+  // Thumbnails of the inspected frame's recorded steps (in the Execution panel), drawn by its own code.
+  const inspected = execution.view ? panels[execution.view.frameId] : undefined, inspectedTrace = execution.view?.trace;
+  const inspectedExecutable = useMemo(() => inspected?.executable ? syncScene(inspected.executable, inspected.scene) : "", [inspected?.executable, inspected?.scene]);
+  const restoreStep = useCallback((step: ExecStep) => inspectedTrace ? restorePoint(inspectedTrace, step) : null, [inspectedTrace]);
+  const stepThumbnails = useMemo(() => inspectedExecutable ? { executable: inspectedExecutable, restoreOf: restoreStep } : undefined, [inspectedExecutable, restoreStep]);
+  /** Fork mode: the temporary fork the tools act on live (their strokes over it, the panel below it). */
+  const liveFork = manipulation.view?.mode === "fork" ? manipulation.view.fork : null;
+  const manipLayer = (manip: ManipView) => <ManipLayer strokes={manip.strokes} hidden={manip.marksHidden} tool={manip.tool} selected={manip.selected} onAdd={manipulation.add} onChange={manipulation.change} onSelect={manipulation.select} probes={manip.probes} onProbe={manipulation.probe} />;
+  const manipPanel = (manip: ManipView) => <ManipPanel view={manip} rows={manipulation.rows} onBegin={manipulation.begin} onChoose={id => { const rule = manip.asked?.rules.find(item => item.id === id); if (rule) manipulation.choose(rule); }}
+    onRechoose={manipulation.rechoose} onTool={manipulation.setTool} onClearProbes={manipulation.clearProbes} onRemove={manipulation.remove} onClear={manipulation.clear} onToggleMarks={manipulation.toggleMarks} onApply={() => { void manipulation.apply(); }} onTryFork={() => { void manipulation.tryOnFork(); }} onKeepFork={manipulation.keepFork} onDiscardFork={manipulation.discardFork}
+    onShowFork={() => { if (manip.fork) setPendingFrameFocus(manip.fork as FrameId); }} onShowOriginal={() => setPendingFrameFocus(manip.frameId as FrameId)} onRetry={manipulation.retry}
+    forkError={manip.mode === "fork" && manip.fork && manip.live === "ready" ? panels[manip.fork]?.runtimeError ?? "" : ""} onRegenerate={manipulation.regenerate}
+    onGeneralize={() => { const source = manipulation.generalizeSource(); if (source) generalize.start(source, manipulation.close); }} generalizing={Boolean(manip.fork && generalize.view?.from === manip.fork)} />;
   // An Execution frame is on the board only while its inspection has one.
   useEffect(() => {
     const keep = execution.view?.framed ? execFrameId(execution.view.frameId) : null;
@@ -332,6 +405,37 @@ export default function Home() {
   // The inspection annotation tool draws only on an inspected frame.
   useEffect(() => { if (!execution.view && tool === "inspect-mark") setTool("select"); }, [execution.view, tool]);
   const edits = sceneEdits(deps, activeSketch), ai = sceneAI(deps, activeSketch), revisions = revisionActions(deps, activeSketch);
+
+  // The tools on a temporary fork survive a reload: once the project is back, the session comes back with it (when its
+  // frames are still there); then it is saved as it changes.
+  const manipulationResumed = useRef(false);
+  useEffect(() => {
+    if (!restoreReady || manipulationResumed.current) return;
+    manipulationResumed.current = true;
+    let saved: ManipSaved | null = null;
+    try { const raw = localStorage.getItem(manipulationKey); saved = raw ? JSON.parse(raw) as ManipSaved : null; } catch { saved = null; }
+    if (!saved || typeof saved.frameId !== "string" || typeof saved.fork !== "string") return;
+    if (!artworkOf(saved.frameId) || !artworkOf(saved.fork) || !panelsRef.current[saved.frameId]?.generated) { try { localStorage.removeItem(manipulationKey); } catch { /* storage unavailable */ } return; }
+    manipulation.resume(saved);
+  }, [restoreReady]);
+  useEffect(() => {
+    if (!manipulationResumed.current) return;
+    const timer = setTimeout(() => {
+      try { const saved = manipulation.snapshot(); if (saved) localStorage.setItem(manipulationKey, JSON.stringify(saved)); else localStorage.removeItem(manipulationKey); }
+      catch { /* storage full or unavailable: the session is only lost on reload */ }
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [manipulation.view]);
+  /** Tools made before (from AI history) used again on a new temporary fork of their frame, without AI. */
+  async function reuseTools(tools: SavedTools) {
+    if (!artworkOf(tools.owner) || !panelsRef.current[tools.owner]?.generated) { setToast("The frame these tools were made for is not on the board (or has no result)."); return; }
+    setHistoryOpen(false);
+    execution.ensure(tools.owner, tools.concern);
+    let picture = "";
+    try { picture = (await captureFrame(tools.owner, true)).image; } catch { /* thumbnails go without the faded picture */ }
+    manipulation.start({ frameId: tools.owner, concern: tools.concern, picture, image: picture, marks: tools.marks, analysis: null, cycleIds: [] }, { clarify: tools.clarify, choice: tools.choice });
+    setPendingFrameFocus(tools.owner as FrameId);
+  }
 
   // ── Persistence and effects ────────────────────────────────────────────────
   useEffect(() => {
@@ -366,7 +470,7 @@ export default function Home() {
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(""), 6000); return () => clearTimeout(timer); }, [toast]);
   // Widget edits only patch the host block of the code draft.
   useEffect(() => { if (generated) patchActive(previous => { const codeDraft = syncScene(previous.codeDraft || "", previous.scene); return codeDraft === previous.codeDraft ? {} : { codeDraft, runtimeError: "" }; }); }, [scene, generated]);
-  useEffect(() => { inspector.current?.scrollTo({ top: 0 }); }, [node?.id, activeSketch]);
+  useEffect(() => { inspector.current?.scrollTo({ top: 0 }); }, [node?.id, activeSketch, panel.sketchClarify?.mode, panel.sketchClarify?.stages.length]);
   useEffect(() => { if (pendingFrameFocus) { workspaceCanvas.current?.focus(pendingFrameFocus); setPendingFrameFocus(null); } }, [pendingFrameFocus, sketchFrames, panels]);
 
   useEffect(() => {
@@ -813,8 +917,11 @@ export default function Home() {
       {...(interacting ? {} : layerDrop(id, id, target => target.querySelector(".p5-surface") || target))}>
       {/* One frame, three layers: generated result, sketch strokes + layer boxes, annotations. */}
       <FrameRender owner={id} panel={owner} interacting={interacting} live={placing === id} onEscape={() => { if (interacting) chooseTool("select"); }} documentRevision={activeDocument.current} onPatch={patch => updatePanel(id, patch)}
-        tracing={execution.view?.frameId === id || manipulation.view?.fork === id} onCycle={raw => { if (manipulation.view?.fork === id) manipulation.onForkCycle(raw); else execution.onCycle(id, raw); }} restore={execution.view?.frameId === id && !execution.view.framed ? execution.restore ?? undefined : undefined}
-        overlay={execution.view?.frameId === id && !execution.view.framed && execution.step ? <ExecutionOverlay steps={execution.steps.length ? execution.steps : []} step={execution.step} plan={execution.plan} shown={execution.shown} onStatus={execution.setOverlayStatus} /> : null}
+        tracing={execution.view?.frameId === id || manipulation.view?.fork === id || (kept.active?.frameId === id && kept.active.tool === "inspect")} onCycle={raw => { if (manipulation.view?.fork === id) manipulation.onForkCycle(raw); else { execution.onCycle(id, raw); kept.onCycle(id, raw); } }} restore={execution.view?.frameId === id && !execution.view.framed ? execution.restore ?? undefined : undefined}
+        hostValues={liveFork === id ? { ...keptValues(owner.keptTools), ...manipulation.view!.demo } : owner.keptTools.length ? keptValues(owner.keptTools) : undefined}
+        overlay={kept.active?.frameId === id && kept.overlays.length ? <>{kept.overlays.map(item => <ExecutionOverlay key={item.site} steps={item.steps} step={item.step} plan={item.plan} shown={kept.shown} probes={kept.probes} />)}</>
+          : liveFork === id ? <>{manipulation.forkOverlays.map(item => <ExecutionOverlay key={item.site} steps={item.steps} step={item.step} plan={item.plan} shown={manipulation.forkShown} probes={manipulation.view!.probes} onFail={message => manipulation.overlayFailed(item.site, message)} />)}</>
+          : execution.view?.frameId === id && !execution.view.framed && execution.step ? <ExecutionOverlay steps={execution.steps.length ? execution.steps : []} step={execution.step} plan={execution.plan} shown={execution.shown} onStatus={execution.setOverlayStatus} /> : null}
         onPreview={handle => { if (handle) resultPreviews.current.set(id, handle); else resultPreviews.current.delete(id); }} />
       <SketchCanvas ref={ref} artwork={frameArtwork} tool={tool} showGesture={name => parseBrushTool(name)?.kind !== "brush"}
         gestureTool={name => transformDrawing || parseBrushTool(name)?.kind === "brush"}
@@ -833,6 +940,9 @@ export default function Home() {
         onEnd={() => { const start = adjustStart.current; adjustStart.current = null; const now = panelsRef.current[id]?.scene; if (start?.frame === id && now && now !== start.scene) frameEdits.move(now, start.scene); }} />}
       <FrameAnnotations panel={owner} tool={tool} zoom={boardZoom} onPatch={patch => updatePanel(id, patch)} />
       {execution.view?.frameId === id && <ExecutionMarks marks={execution.view.marks} active={tool === "inspect-mark"} color={MARK_COLOR} onAdd={execution.addMark} />}
+      {id === activeSketch && clarifyShown && !owner.annotating && <ClarifyInsitu {...clarifyShown} />}
+      {liveFork === id && manipLayer(manipulation.view!)}
+      {kept.active?.frameId === id && kept.set && <ManipLayer strokes={kept.set.strokes} hidden={kept.hidden} tool={kept.active.tool} selected={kept.selected} onAdd={kept.add} onChange={kept.change} onSelect={kept.select} probes={kept.probes} onProbe={kept.probe} />}
       {showComposeTags && owner.composeTags.length > 0 && !interacting && !playingBrush && !transformDrawing && !owner.annotating
         && <ComposeTags key={tagMoves[id] ?? 0} tags={owner.composeTags} zoom={boardZoom} stale={frameArtwork.revision !== owner.composeTagsRevision} examples={pen => exampleThumbsFor(id, pen)}
           onCard={tag => { void captureExampleThumbs(tag.constraints.flatMap(item => penExamples(placedPen(item.pen, framePens(id)), panelsRef.current))); }} onExample={openExample} onEdit={composeTags => updatePanel(id, { composeTags })}
@@ -973,7 +1083,7 @@ export default function Home() {
         <button aria-label="Cancel this frame's AI work" title="Cancel" onClick={e => { e.stopPropagation(); cancel(id); }}><Icon name="close" size={11} /></button></span>}
       {frame.scene.nodes.length > 0 && <button aria-label={`Copy ${artworkOf(id)?.name || id} as JSON`} title="Copy this frame's state machines, params and code as one JSON" onClick={e => { e.stopPropagation(); setFrameJson(id); }}><Icon name="copy" size={13} />JSON</button>}
       {frame.generated && <button aria-label={frame.machinePlaying ? "Pause result" : "Run result"} title={frame.machinePlaying ? "Pause" : "Run"} disabled={!frame.executable} onClick={() => updatePanel(id, { machinePlaying: !frame.machinePlaying })}><Icon name={frame.machinePlaying ? "pause" : "play"} size={13} />{frame.machinePlaying ? "Pause" : "Run"}</button>}
-      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null })); }}><Icon name="undo" size={13} /></button>}
+      {frame.generated && <button aria-label="Re-render result" title="Re-render from the start" disabled={!frame.executable || frameBusy} onClick={() => { activateSketch(id); if (execution.view?.frameId === id) execution.clearTrace(); updatePanel(id, previous => ({ renderRevision: previous.renderRevision + 1, machinePlaying: true, seed: null })); }}><Icon name="undo" size={13} /></button>}
       {frame.scene.nodes.length > 0 && (!frame.generated || status !== "live" || frame.dirtyNodeIds.length > 0) && <button disabled={frameBusy} title="Generate this frame's p5.js result" onClick={() => { activateSketch(id); void sceneAI(deps, id).generateCode(); }}><Icon name="code" size={13} />{frame.generated ? "Update" : "Generate"}</button>}
       {frame.generated && <button disabled={!frame.executable} aria-pressed={execution.view?.frameId === id} title="Record this frame's execution (every variable at every step) and inspect it" onClick={e => { e.stopPropagation(); activateSketch(id); execution.open(id); }}><Icon name="inspect" size={13} />{execution.view?.frameId === id ? "Inspecting" : "Inspect"}</button>}
       {frame.generated && <button disabled={!frame.executable || frameBusy} aria-pressed={frame.annotating} onClick={() => beginAnnotations(id)}><Icon name="pen" size={13} />{frame.annotating ? "Done" : "Annotate"}</button>}
@@ -1019,9 +1129,11 @@ export default function Home() {
   });
   const frames = [
     { id: "source" as const, title: artwork.photo ? "Photo + sketch" : "Original sketch", subtitle: frameSubtitle("source", artwork, hasSelection),
+      below: withGeneralize("source", undefined),
       actions: <><button title="Load example sketch" aria-label="Load example sketch" disabled={busy} onClick={() => { activateSketch("source"); commit({ ...blank(), name: "Branch studies", strokes: exampleStrokes() }); updatePanel("source", createSketchPanel()); }}><Icon name="pen" size={13} /></button>{frameActions("source", hasSelection, Boolean(artwork.photo || artwork.strokes.length))}</>,
       content: sketchFrameContent("source", artwork, canvas, <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start with a mark.</strong><span>Draw here, drop a photo, or paste an image.</span><button onClick={() => upload.current?.click()}>Attach photo<Icon name="upload" size={14} /></button></div>) },
     ...sketchFrames.map(frame => ({ id: frame.id as FrameId, title: frame.artwork.name, subtitle: frameSubtitle(frame.id, frame.artwork, Boolean(sketchSelections[frame.id])),
+      below: withGeneralize(frame.id, liveFork === frame.id ? manipPanel(manipulation.view!) : propagationPanel(frame.id)),
       actions: frameActions(frame.id, Boolean(sketchSelections[frame.id]), Boolean(frame.artwork.photo || frame.artwork.strokes.length)),
       content: sketchFrameContent(frame.id, frame.artwork, handle => { if (handle) sketchCanvases.current.set(frame.id, handle); else sketchCanvases.current.delete(frame.id); }, <div className="frame-empty source-empty"><Icon name="pen" size={30} /><strong>Start a new sketch.</strong><span>Draw here, then extract its collections.</span></div>) })),
     ...proxyFrames.filter(proxy => !proxy.hidden).map(proxy => {
@@ -1048,6 +1160,8 @@ export default function Home() {
             onDesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId]); }}
             onRedesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId], true); }} />
 </>,
+        // A mini sandbox's proxy frame: how its program works with the values these handles change.
+        below: target?.sandboxLogic ? <SandboxLogicPanel logic={target.sandboxLogic} constraints={own ? [own] : constraints} /> : undefined,
         content: <ProxyFrame frameId={proxy.id} node={targetNode} constraints={constraints} targetName={targetName} busy={target?.loading || ""} onActivate={() => activateFrame(proxy.id)}
           bakedInput={bakesInput(module) ? { onUpdate: () => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).generateCode(false, `${target.generationMode === "compose" ? target.composePrompt : target.instruction}\n${ADJUST_IN_PLACE_INSTRUCTION}`); } } : undefined}
           onDesign={constraintId => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestHandles(proxy.nodeId, { constraintId }, ""); }}
@@ -1061,7 +1175,7 @@ export default function Home() {
     // The Execution frame of the inspected frame: its concern's steps, stepped through.
     ...(execution.view?.framed && panels[execution.view.frameId]?.generated ? (() => {
       const view = execution.view!, source = view.frameId, target = panels[source], name = artworkOf(source)?.name || "frame";
-      const manip = manipulation.view?.frameId === source ? manipulation.view : null;
+      const manip = manipulation.view?.frameId === source && manipulation.view.mode === "stepping" ? manipulation.view : null;
       return [{ id: execFrameId(source) as FrameId, title: `▶ Execution · ${name}`, subtitle: view.concern.slice(0, 120),
         actions: <>
           <button className="proxy-link-chip" aria-label={`Inspected frame: ${name}`} title={`The steps of ${name}'s recorded execution. Click to go there`}
@@ -1070,11 +1184,9 @@ export default function Home() {
         </>,
         content: <ExecutionFrame executable={target.executable ? syncScene(target.executable, target.scene) : ""} steps={execution.steps} step={execution.step} restore={execution.restore}
           analysis={view.analysis} plan={execution.plan} shown={execution.shown} marks={view.marks} markColor={MARK_COLOR} busy={view.busy} status={view.status} overlayStatus={view.overlayStatus}
-          layer={manip ? <ManipLayer strokes={manip.strokes} tool={manip.tool} selected={manip.selected} onAdd={manipulation.add} onChange={manipulation.change} onSelect={manipulation.select} /> : undefined}
+          layer={manip ? manipLayer(manip) : undefined}
           onSelect={execution.select} onOverlayStatus={execution.setOverlayStatus} onError={message => updatePanel(source, { runtimeError: message })} />,
-        below: manip ? <ManipPanel view={manip} rows={manipulation.rows} onBegin={manipulation.begin} onChoose={id => { const rule = manip.asked?.rules.find(item => item.id === id); if (rule) manipulation.choose(rule); }}
-          onRechoose={manipulation.rechoose} onTool={manipulation.setTool} onRemove={manipulation.remove} onClear={manipulation.clear} onApply={() => { void manipulation.apply(); }} onTryFork={() => { void manipulation.tryOnFork(); }} onKeepFork={manipulation.keepFork} onDiscardFork={manipulation.discardFork}
-          onShowFork={() => { if (manip.fork) setPendingFrameFocus(manip.fork as FrameId); }} onRetry={manipulation.retry} /> : undefined }];
+        below: manip ? manipPanel(manip) : undefined }];
     })() : []),
   ].filter(frame => (frame.id !== "source" || !workspace.hiddenFrames.includes("source")) && !hiddenExamples.has(frame.id));
   // Frame groups with the frames on the board; grouped frames hang off nothing (no lines to the frame they came from).
@@ -1130,6 +1242,8 @@ export default function Home() {
         {!scene.nodes.length && <div className="empty-features"><Icon name="layers" size={30} /><p>No brush stamps yet.</p><span>Sketch → Extract → Explore</span>
           {/* What to extract and how: sent with Extract, and kept as the direction of the extracted frame's code. */}
           <label className="refinement-input extract-direction"><span>EXTRACTION DIRECTION <small>optional</small></span><textarea aria-label="Extraction direction" placeholder="e.g. what to focus on or leave out, how the parts group, how it is made…" value={panel.instruction} maxLength={2000} onChange={e => patchActive({ instruction: e.target.value })} /></label>
+          <label className="composition-tags-toggle" title="Before extracting, the AI asks about what is still ambiguous in the sketch (only what would change the result)">
+            <input type="checkbox" checked={clarifyFirst} onChange={e => setClarifyFirst(e.currentTarget.checked)} />Clarify first</label>
           <button className="primary-button" disabled={!sourcePresent || busy} onClick={() => { void ai.extract(); }}>Extract {currentSelection ? "selection" : "sketch"}<Icon name="spark" size={17} /></button></div>}
         {scene.nodes.length > 0 && <button className="copy-button" disabled={busy || !sourcePresent} title="Extracts again with “Your direction” below" onClick={() => { void ai.extract(); }}>Re-extract {currentSelection ? "selection" : "sketch"}</button>}
       </>}
@@ -1150,7 +1264,12 @@ export default function Home() {
         onUndo={undo} onRedo={redo} onClear={clearCanvas} onZoom={amount => workspaceCanvas.current?.zoom(amount)} onFit={() => workspaceCanvas.current?.fit()}
         onHome={() => workspaceCanvas.current?.fit()} onAddSketch={addSketchFrame} onAttach={() => upload.current?.click()}
         brushes={brushes} groupTools={groupTools} openGroup={openGroup} onBrushPanel={toggleBrushPanel} onBrushGroup={clickBrushGroup} onBrushHover={setBrushHover} onBrushTool={chooseBrushTool} onBrushGroupClose={() => setOpenGroup(null)}
-        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }}
+        onBrushChange={brush => setBrushes(brushesRef.current.map(item => item.id === brush.id ? brush : item))} onBrushRemove={removeBrush} brushMaster={masterFrame}
+        keptTools={brush => { const frameId = brush.sourceFrameId, sets = panels[frameId]?.keptTools ?? []; return sets.length ? { frameId, sets: sets.map(set => ({ id: set.id, concern: set.concern, rule: set.rule, tools: set.tools, shown: set.strokes.length })) } : null; }}
+        keptActive={kept.active} keptHidden={kept.hidden} onKeptToggleMarks={kept.toggleMarks} keptSelected={Boolean(kept.selected)} keptStatus={kept.status}
+        onKeptTool={(frameId, setId, keptTool) => { activateSketch(frameId); setPenSettingsOpen(false); setPencilOpen(false); setTool("select"); kept.use(frameId, setId, keptTool); }}
+        onKeptGeneralize={(frameId, setId) => { const source = kept.generalizeSource(frameId, setId); if (source) { activateSketch(frameId); generalize.start(source); } }}
+        onKeptClear={kept.clear} onKeptRemove={kept.remove} onKeptRemoveSelected={kept.removeSelected} onBrushMaster={brush => { setOpenGroup(null); goToMaster(brush); }}
         onHelp={() => setToast("V Select/move · P Pencil · E Eraser · L Lasso · H Pan · ⌘/Ctrl+G Group · ⇧⌘G Ungroup · Delete Delete layer · Arrows Move · ⌘/Ctrl+Z Undo · ⌘/Ctrl+V Paste image · Esc Deselect")} />
       <aside ref={layerPanel} className={`layer-sidebar ${layerWidth ? "layer-sidebar-resized" : ""}`} style={layerWidth ? { "--layer-width": `${layerWidth}px` } as React.CSSProperties : undefined}>
         <PanelResizer edge="right" label="Resize layers panel" min={LAYER_MIN_WIDTH} max={LAYER_MAX_WIDTH}
@@ -1187,7 +1306,10 @@ export default function Home() {
           measure={() => inspectorPanel.current?.getBoundingClientRect().width || 354} onResize={setInspectorWidth} onReset={() => setInspectorWidth(null)} /><div className="inspector-title"><span aria-label="Inspector sketch" title={currentSketch.name}>{node ? `${currentSketch.name} / ${node.name}` : currentSketch.name}</span><Icon name="spark" size={17} /></div>
         {panel.loading && <div className="loading-banner" role="status"><span className="loading-spinner" /><span>{panel.loading}</span><button onClick={() => cancel()}>Cancel</button></div>}{panel.error && <div className="error-banner" role="alert"><span>{panel.error}</span><button aria-label="Dismiss error" onClick={() => patchActive({ error: "" })}><Icon name="close" size={14} /></button></div>}
         <div ref={inspector} className="inspector-content live-inspector-content">
-          {!annotating && <SketchComposition artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} tags={panel.composeTags.length} showTags={showComposeTags} onShowTags={setShowComposeTags}
+          {!annotating && panel.sketchClarify && <SketchClarifyPanel open={panel.sketchClarify} busy={busy} drawings={clarifyDrawings}
+            onPoint={(questionId, optionId) => setClarifyPoint(current => optionId ? { questionId, optionId } : current?.questionId === questionId ? null : current)} onAnswer={ai.answerClarify} onContinue={() => { void ai.continueClarify(); }}
+            onFinish={() => { void ai.finishClarify(); }} onAskAnyway={() => { void ai.askAnyway(); }} onCancel={ai.cancelClarify} />}
+          {!annotating && !panel.sketchClarify && <SketchComposition clarifyFirst={clarifyFirst} onClarifyFirst={setClarifyFirst} artwork={currentSketch} prompt={panel.composePrompt} onPrompt={value => patchActive({ composePrompt: value })} tags={panel.composeTags.length} showTags={showComposeTags} onShowTags={setShowComposeTags}
             withText={panel.composeWithText} onWithText={on => { patchActive({ composeWithText: on }); if (!on) setShowComposeTags(true); }} tagsStale={panel.composeTagsRevision !== currentSketch.revision}
             tagList={panel.composeTags} openTag={openTags[activeSketch] ?? null} onHoverTag={tagId => setPointedTag(tagId ? { frameId: activeSketch, id: tagId } : null)}
             canMoveTag={tagStructure(activeSketch).canMove} onMoveTag={tagStructure(activeSketch).onMove} onDeleteTag={tagStructure(activeSketch).onDelete} onAddTag={tagStructure(activeSketch).onAdd} onMoveConstraint={tagStructure(activeSketch).onMoveConstraint}
@@ -1216,9 +1338,9 @@ export default function Home() {
         onGenerate={() => { if (machineNode) guard(machineNode.id, "state machine", () => { void ai.generateMachine(machineNode.id); }); }} onPlay={playing => patchActive({ machinePlaying: playing })}
         onRestart={() => machineNode && restartMachine(machineNode.id)} onEvent={transitionId => machineNode && emitTransition(machineNode.id, transitionId)}
         inspected={execution.view?.frameId === activeSketch ? execution.machine(machineNode?.id ?? null) : null} />}
-      inspectionPanel={execution.view ? <ExecutionPanel brushName={artworkOf(execution.view.frameId)?.name || "Frame"} trace={execution.view.trace} recording={!execution.step}
+      inspectionPanel={execution.view ? <ExecutionPanel thumbnails={stepThumbnails} brushName={artworkOf(execution.view.frameId)?.name || "Frame"} trace={execution.view.trace} recording={!execution.step}
         steps={execution.steps} step={execution.step} analysis={execution.view.analysis} busy={execution.view.busy} status={[execution.view.status, execution.step ? execution.view.overlayStatus : ""].filter(Boolean).join(" ")}
-        skipped={execution.skipped} onSelect={execution.select} onInspect={concern => { void execution.inspect(concern); }} marks={execution.view.marks.length} onClearMarks={execution.clearMarks} onClearAnalysis={execution.clearAnalysis} onClearTrace={execution.clearTrace} onClose={execution.close} /> : undefined} />
+        skipped={execution.skipped} onSelect={execution.select} onInspect={(concern, stepping, tools, sandbox) => { void (stepping ? execution.inspect(concern) : execution.direct(concern, tools)); if (sandbox) void execution.sandbox(concern); }} marks={execution.view.marks.length} onClearMarks={execution.clearMarks} onClearAnalysis={execution.clearAnalysis} onClearTrace={execution.clearTrace} onClose={execution.close} /> : undefined} />
     {detachPrompt && (() => { const brush = brushes.find(item => item.id === detachPrompt.brushId); if (!brush) return null;
       const close = () => setDetachPrompt(null);
       return <DetachDialog prompt={detachPrompt} brushName={brush.name} masterFrame={masterFrame(brush)} onCancel={close}
@@ -1226,7 +1348,7 @@ export default function Home() {
         onMaster={() => { close(); goToMaster(brush); }}
         onAdopt={() => { close(); if (adoptMaster(detachPrompt.frameId, detachPrompt.rootId, brush.id)) detachPrompt.apply(); }} />; })()}
     {toast && <div className="toast" role="status"><Icon name="spark" size={17} /><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={15} /></button></div>}
-    {historyOpen && <GenerationHistory disabled={busy} onClose={() => setHistoryOpen(false)} onRestore={restoreAIHistory} />}
+    {historyOpen && <GenerationHistory disabled={busy} onClose={() => setHistoryOpen(false)} onRestore={restoreAIHistory} onReuseTools={tools => { void reuseTools(tools); }} />}
     {frameJson && panels[frameJson] && <FrameJsonDialog name={artworkOf(frameJson)?.name || frameJson} onClose={() => setFrameJson(null)} onCopied={setToast}
       data={frameExport({ id: frameJson, name: artworkOf(frameJson)?.name || frameJson, scene: panels[frameJson].scene, generated: panels[frameJson].generated,
         brushOf: nodeId => { const role = brushRole(panels[frameJson].scene, frameJson, nodeId, brushes); return role ? { name: role.brush.name, master: role.master } : null; },

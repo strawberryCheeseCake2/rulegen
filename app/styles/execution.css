@@ -9,6 +9,9 @@
 .exec-concern{display:flex;flex-direction:column;gap:6px}
 .exec-concern textarea{width:100%;resize:vertical;border:1px solid #dbe3d3;border-radius:6px;padding:8px;background:#fbfcf8;color:#3e4b38;font-size:11px;line-height:1.5}
 .exec-concern>div{display:flex;gap:6px;flex-wrap:wrap}
+.exec-stepping{display:flex;align-items:center;gap:4px;font-size:11px;color:#56644f;margin-right:auto;cursor:pointer}
+.exec-stepping input{margin:0}
+.exec-stepping:has(+ .exec-stepping){margin-right:10px}
 .exec-button{border:1px solid #d8e0cf;border-radius:5px;padding:6px 10px;font-size:10px;background:#fff;color:#4c6a52}
 .exec-button.primary{background:#3f7158;border-color:#3f7158;color:#fff}
 .exec-button.primary:hover{color:#fff;background:#315b46}
@@ -23,7 +26,7 @@
 .exec-nav button{border:1px solid #dfe5d6;border-radius:4px;min-width:28px;height:26px;padding:0 6px;background:#fff;color:#4f6a55}
 .exec-nav button.active{background:#e8f1e3;border-color:#b5cba4}
 .exec-nav output{flex:1;text-align:center;font-variant-numeric:tabular-nums;color:#6e7b66}
-.exec-timeline{list-style:none;margin:0;padding:0;max-height:220px;overflow:auto;border:1px solid #e6eadf;border-radius:6px}
+.exec-timeline{position:relative;flex-shrink:0;list-style:none;margin:0;padding:0;max-height:420px;overflow:auto;border:1px solid #e6eadf;border-radius:6px}
 .exec-timeline li.cycle-start{border-top:1px dashed #d3dbc8}
 .exec-timeline button{display:flex;gap:6px;width:100%;text-align:left;padding:4px 8px;font-size:10px;color:#56624f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .exec-timeline button span{color:#93a088;width:10px;flex-shrink:0}
@@ -72,6 +75,10 @@
 .manip-layer{position:absolute;inset:0;z-index:7;pointer-events:none}
 .manip-layer.tool-brush,.manip-layer.tool-pencil{pointer-events:auto;cursor:crosshair;touch-action:none}
 .manip-layer.tool-select{pointer-events:auto;cursor:default;touch-action:none}
+.manip-layer.tool-inspect{pointer-events:auto;cursor:help;touch-action:none}
+.manip-probe circle{fill:#ffffffaa;stroke:#c2410c;stroke-width:2}
+.manip-probe line{stroke:#c2410c;stroke-width:1.5}
+.manip-inspect{border-top:1px dashed #e6eadf;padding-top:8px}
 .manip-layer svg{width:100%;height:100%;display:block;overflow:visible}
 .manip-layer polyline{fill:none;stroke-linecap:round;stroke-linejoin:round}
 .manip-layer polyline.picked{filter:drop-shadow(0 0 3px #2b6cd4aa)}
@@ -119,7 +126,7 @@
 .manip-stroke-actions button:disabled{opacity:.45}
 .manip-targets{width:100%;border-collapse:collapse;font-size:13px}
 .manip-targets th{text-align:left;font-weight:500;color:#8b9684;font-size:11px;padding:4px 6px;border-bottom:1px solid #e6eadf}
-.manip-targets td{padding:6px;vertical-align:top;border-bottom:1px solid #f0f2ea;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.manip-targets td{padding:6px;vertical-align:top;border-bottom:1px solid #f0f2ea;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-all}
 .manip-targets td:first-child{font-family:inherit}
 .manip-targets td b{display:block;font-weight:600}
 .manip-targets small{display:block;font-size:11px;color:#97a08c;font-family:inherit}
@@ -130,3 +137,39 @@
 .manip-link{border:0;background:none;padding:0;color:#2f6b4f;text-decoration:underline;font-size:inherit;cursor:pointer}
 .manip-panel footer .exec-button{font-size:13px;padding:8px 14px}
 .manip-thumb-note{position:absolute;left:6px;right:6px;bottom:6px;padding:3px 6px;border-radius:4px;background:#fffffce6;color:#a4521c;font-size:11px;font-style:normal;line-height:1.35}
+.manip-problem{display:flex;align-items:flex-start;gap:10px;margin:8px 0;padding:8px 10px;border-radius:6px;background:#fdf3ec;color:#a4521c;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.manip-problem button{flex:none;margin-left:auto;border:1px solid #e3c3ad;border-radius:5px;padding:4px 10px;background:#fff;color:#a4521c;font-size:12px}
+.exec-slider{width:100%;margin:2px 0 6px;accent-color:#5b8a6b}
+.exec-timeline button{align-items:center}
+.exec-timeline button b{font-weight:400;overflow:hidden;text-overflow:ellipsis}
+.exec-thumb{width:108px;height:72px;flex-shrink:0;border:1px solid #e3e9dc;border-radius:3px;background:#fff;object-fit:cover;display:block}
+i.exec-thumb.pending{background:linear-gradient(90deg,#f3f6ef,#e7ede1,#f3f6ef);background-size:200% 100%;animation:exec-thumb-wait 1.2s linear infinite}
+i.exec-thumb.none{background:repeating-linear-gradient(45deg,#f6f8f3 0 4px,#eef2ea 4px 8px)}
+@keyframes exec-thumb-wait{to{background-position:-200% 0}}
+.exec-timeline li.current .exec-thumb{border-color:#8fb39b}
+.step-thumbnailer{position:fixed;left:0;top:0;width:120px;height:80px;opacity:0;pointer-events:none;overflow:hidden;z-index:-1}
+
+/* Under a changed part frame: pass the change up the decomposition, or keep it there. */
+.propagate-panel{display:flex;flex-direction:column;gap:8px;width:100%;padding:12px 14px;border:1px solid #d9e2d2;border-radius:10px;background:#fff;color:#3e4b38;font-size:12px;box-shadow:0 2px 8px #1d2b1a14}
+.propagate-panel header{display:flex;flex-direction:column;gap:2px}
+.propagate-panel header strong{font-size:13px}
+.propagate-changes{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.propagate-changes li{display:flex;justify-content:space-between;gap:10px;padding:3px 8px;border-radius:5px;background:#f4f7f1}
+.propagate-changes li span{color:#6e7b66;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.propagate-changes li b{font-weight:600;white-space:nowrap}
+.propagate-targets{display:flex;flex-wrap:wrap;gap:4px 12px}
+.propagate-targets label{display:flex;align-items:center;gap:4px;cursor:pointer}
+.propagate-targets label span{color:#93a088}
+.propagate-note{margin:0;font-size:11px;line-height:1.45;color:#6e7b66}
+.propagate-panel footer{display:flex;justify-content:flex-end;gap:6px}
+.sandbox-logic header strong{font-weight:500;line-height:1.5}
+.sandbox-logic-params{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.sandbox-logic-params li{display:grid;grid-template-columns:auto 1fr;column-gap:8px;row-gap:1px;padding:4px 8px;border-radius:5px;background:#f4f7f1}
+.sandbox-logic-params li b{font-weight:600}
+.sandbox-logic-params li em{font-style:normal;color:#2f7d62;justify-self:end;white-space:nowrap}
+.sandbox-logic-params li span{grid-column:1/-1;color:#6e7b66;line-height:1.45}
+/* Making what was shown the brush's own rule: the rules it could be, previewed (under the frame it was shown on). */
+.manip-panel+.generalize-panel{margin-top:10px}
+.generalize-panel{border-color:#c9d8ec}
+.generalize-panel .section-kicker{color:#2b6cd4}
+.manip-options small.generalize-from{font-size:11px;color:#2b5d9c}
