@@ -69,6 +69,24 @@ export type ClarifyRule = Clarify["rules"][number];
 /** The rule picked, sent back to get the tools for it. */
 export const choiceSchema = z.object({ question: z.string().max(300), rule: z.string().max(140), logic: z.string().max(160), detail: z.string().max(300), tools: z.array(z.enum(MANIP_TOOLS)).max(3) });
 export type Choice = z.infer<typeof choiceSchema>;
+/**
+ * What the user said about something made that did not fit, with text and marks drawn on the picture (canvas pixels):
+ * none of the rules offered ("options": they are listed again, different), or the tools made do not do what they want
+ * ("tools": alternatives are asked for, each a different correction).
+ */
+export const feedbackSchema = z.object({
+  kind: z.enum(["options", "tools"]),
+  text: z.string().max(1000),
+  marks: z.array(z.array(z.object({ x: z.number(), y: z.number() })).max(400)).max(24).default([]),
+  /** options: the rules offered that did not fit. */
+  rejected: z.array(z.object({ rule: z.string().max(140), logic: z.string().max(160), detail: z.string().max(300) })).max(MAX_OPTIONS * 3).default([]),
+  /** tools: the tools made, what each target was measured as and what the strokes shown with them measured to. */
+  made: z.object({ summary: z.string().max(600), rule: z.string().max(400), tools: z.array(toolSchema).max(3),
+    targets: z.array(z.object({ name: z.string().max(80), site: z.string().max(200), path: z.string().max(160), param: z.string().max(200), meaning: z.string().max(300), measure: z.string().max(6000), shown: z.string().max(600) })).max(MAX_TARGETS) }).nullable().default(null),
+});
+export type Feedback = z.infer<typeof feedbackSchema>;
+/** Whether feedback says something (text or a mark). */
+export const saysSomething = (feedback: Pick<Feedback, "text" | "marks">) => Boolean(feedback.text.trim() || feedback.marks.some(mark => mark.length >= 2));
 /** Direct manipulation tools made before (a trace-clarify generation in AI history), to use again without AI: the
  *  frame they were made for, the concern, the rule picked and the tools (or the rule question). */
 export const savedToolsSchema = z.object({ owner: z.string(), concern: z.string(), choice: choiceSchema.nullable(), marks: z.array(z.array(z.object({ x: z.number(), y: z.number() }))).default([]), clarify: clarifySchema });

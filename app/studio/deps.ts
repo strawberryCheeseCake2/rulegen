@@ -36,6 +36,8 @@ export type StudioDeps = {
   addSubBrush?: (owner: string, nodeId: string, frameId: string, scene: Scene, name: string) => Brush | null;
   /** The running result of a frame, if it is mounted. */
   preview: (owner: string) => CodePreviewHandle | undefined;
+  /** Ask the user to confirm a change (a dialog); resolves true when they accept, "alternative" for the prompt's alternative. Unset: the change is not made. */
+  confirm?: (prompt: ConfirmPrompt) => Promise<ConfirmAnswer>;
   /** Show (creating if needed) the proxy frame of node `nodeId` of frame `owner`. */
   openProxy?: (owner: string, nodeId: string) => void;
   /** A copy of a frame (its sketch, scene, result and input) placed beside it, as a temporary fork; its id. */
@@ -49,3 +51,8 @@ export type StudioDeps = {
   /** The brushes (tools) made from a frame. */
   brushesOf?: (frameId: string) => Brush[];
 };
+/** A question for the user before a change: what it is, the items it touches, and the two answers. */
+export type ConfirmPrompt = { kicker: string; title: string; body: string; items: { label: string; detail: string }[]; accept: string; decline: string;
+  /** A second way to go ahead (a button between accept and decline). */
+  alternative?: string };
+export type ConfirmAnswer = boolean | "alternative";

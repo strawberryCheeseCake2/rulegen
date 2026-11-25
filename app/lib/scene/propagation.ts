@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { descendantIds, findNode } from "./graph";
 import { programModules } from "./machines";
-import type { Constraint, Param, Scene, SceneNode } from "./schema";
+import { MAX_CONSTRAINTS, MAX_NODE_PARAMS, type Constraint, type Param, type Scene, type SceneNode } from "./schema";
 
 // Propagation in a decomposition: a part frame (a minimal example, exampleOf) that was changed on its own — its param
 // values, its constraints, or its code (an inspection fork kept, a regeneration…) — can pass the change up to the
@@ -95,6 +95,55 @@ export function mergePart(above: Scene, part: Scene, of: PartOf, base: Propagati
       return change && change.after.type === param.value.type ? { ...param, value: { ...param.value, value: change.after.value } as Param["value"] } : param;
     }) }));
     return constraints === node.constraints ? node : { ...node, constraints };
+  }) };
+}
+
+/**
+ * Value changes the frame above has no param for (a split's inner computation, whose values are written into the
+ * code above): only a code rewrite can carry them.
+ */
+export function unmatchedParams(above: Scene, changes: PartChanges): ParamChange[] {
+  return changes.params.filter(change => !findNode(above, change.nodeId)?.constraints.find(item => item.id === change.constraintId)?.params.some(param => param.id === change.paramId));
+}
+
+/** What of the part's structure the frame above lacks: per node, a constraint it does not have (whole), or params missing from one it has. */
+export type StructureGap = { nodeId: string; constraintId: string; property: string; whole: boolean; params: Param[] };
+/**
+ * The part's params the frame above has no param for (a mini sandbox of a computation inside a constraint, or a
+ * constraint the part added), as they would be added there. A param whose id the node above already uses elsewhere
+ * is left out (ids are unique in a node), and so is what would not fit in it.
+ */
+export function structureGaps(above: Scene, part: Scene, of: PartOf): StructureGap[] {
+  const gaps: StructureGap[] = [];
+  for (const now of partNodes(part, of)) {
+    const node = findNode(above, now.id);
+    if (!node) continue;
+    const used = new Set(node.constraints.flatMap(item => item.params.map(param => param.id)));
+    let constraints = node.constraints.length, params = used.size;
+    for (const constraint of now.constraints) {
+      const own = node.constraints.find(item => item.id === constraint.id);
+      const missing = constraint.params.filter(param => !own?.params.some(item => item.id === param.id) && !used.has(param.id))
+        .slice(0, Math.max(0, MAX_NODE_PARAMS - params));
+      if (!missing.length || (!own && constraints >= MAX_CONSTRAINTS)) continue;
+      if (!own) constraints++;
+      params += missing.length;
+      gaps.push({ nodeId: node.id, constraintId: constraint.id, property: constraint.property, whole: !own, params: missing });
+    }
+  }
+  return gaps;
+}
+/** The frame above with the part's structure taken in: the constraints it lacks added whole, the params it lacks added to the ones it has. */
+export function adoptStructure(above: Scene, part: Scene, gaps: StructureGap[]): Scene {
+  if (!gaps.length) return above;
+  return { ...above, nodes: above.nodes.map(node => {
+    const mine = gaps.filter(gap => gap.nodeId === node.id);
+    if (!mine.length) return node;
+    const from = findNode(part, node.id);
+    const added = mine.filter(gap => gap.whole).map(gap => from?.constraints.find(item => item.id === gap.constraintId)).filter((item): item is Constraint => Boolean(item))
+      .map(item => ({ ...structuredClone(item), params: mine.find(gap => gap.constraintId === item.id)!.params.map(param => structuredClone(param)) }));
+    const constraints = node.constraints.map(item => { const gap = mine.find(entry => !entry.whole && entry.constraintId === item.id);
+      return gap ? { ...item, params: [...item.params, ...gap.params.map(param => structuredClone(param))] } : item; });
+    return { ...node, constraints: [...constraints, ...added] };
   }) };
 }
 

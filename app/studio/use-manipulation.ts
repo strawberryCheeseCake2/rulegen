@@ -8,13 +8,14 @@ import * as ops from "../lib/scene/panel-ops";
 import { annotatedResultImage } from "../lib/result-revisions";
 import { addCycle, analysisSchema, emptyTrace, matchSteps, nextIds, readCycle, shownPaths, siteOf, variableCatalog, type Analysis, type ExecStep, type ExecTrace } from "../lib/execution/trace";
 import type { SitePlan } from "../lib/execution/overlay";
-import { asks, clarifySchema, demoKey, everyItem, liveConcern, liveRequest, liveTargets, MANIP_HOST, paramValue, pinsItem, recordedAt, revisionRequest, summarize, type Choice, type Clarify, type ClarifyRule, type ManipTool } from "../lib/execution/manipulate";
+import { asks, clarifySchema, demoKey, saysSomething, type Feedback, everyItem, liveConcern, liveRequest, liveTargets, MANIP_HOST, paramValue, pinsItem, recordedAt, revisionRequest, summarize, type Choice, type Clarify, type ClarifyRule, type ManipTool } from "../lib/execution/manipulate";
 import { CANVAS_H, CANVAS_W, paintedMask, placedPoints, strokeFeatures, strokeSpots, toggleProbe, type ManipStroke, type Point } from "../lib/execution/strokes";
 import { sandboxRunner } from "../lib/execution/sandbox";
 import { sceneEdits } from "./scene-actions";
 import { markBrushes } from "../lib/brushes";
 import { demoValues, MAX_KEPT_SETS, MAX_KEPT_STROKES, type KeptToolSet } from "../lib/execution/kept-tools";
 import { placeAnalysis } from "./use-execution";
+import { annotatedImage } from "./annotated-image";
 import type { GeneralizeStart } from "./use-generalize";
 
 // Direct manipulation in an Execution frame (see lib/execution/manipulate): once a concern is analyzed, the user can
@@ -30,7 +31,8 @@ import type { GeneralizeStart } from "./use-generalize";
 /** What the strokes show for a target: the value, and the parts of it at the spots drawn (when it varies over the picture). */
 export type Measured = { value?: unknown; at?: unknown[]; error?: string; applied?: boolean };
 export type ManipMode = "stepping" | "fork";
-export type LayerTool = ManipTool | "inspect";
+/** "mark": drawing marks that say what did not fit (with the feedback being written). */
+export type LayerTool = ManipTool | "inspect" | "mark";
 type Panel = ReturnType<StudioDeps["panel"]>;
 /** A picked rule's identity: the same rule picked again is the same key. */
 const ruleKey = (choice: Pick<Choice, "rule" | "logic">) => `${choice.rule}\n${choice.logic}`;
@@ -81,6 +83,11 @@ export type ManipView = {
   forkInspect: "" | "busy" | "done" | "failed";
   /** Fork mode: why an overlay on the fork could not be drawn, by site. */
   overlayErrors: Record<string, string>;
+  /** Feedback being written about the rules offered or the tools made (its text and marks, canvas pixels), if any. */
+  draft: { kind: Feedback["kind"]; text: string; marks: Point[][] } | null;
+  /** Feedback sent: the rules and tools are made from it (also for the rule picked next), with the picture it was marked on. */
+  feedback: Feedback | null;
+  feedbackImage: string;
   busy: boolean;
   status: string;
 };
@@ -133,8 +140,8 @@ export function useManipulation(deps: StudioDeps, execution: Execution) {
     patch(frameId, { busy: true, status: choice ? "Making the tools for the rule you picked…" : "Designing the tools to show what you mean…", clarify: null, choice, strokes: [], selected: null, measured: {}, tool: null });
     try {
       const nodeIds = panel.scene.nodes.map(node => node.id).slice(0, 64);
-      const result = clarifySchema.parse(await deps.request("trace-clarify", { scene: panel.scene, previous: liveSceneSource(panel.generated, panel.scene), image: current.image,
-        trace: { concern: current.concern, nodeIds, cycles: trace.cycles.length, sites: variableCatalog(trace).slice(-200), marks: current.marks, analysis: current.analysis, choice } }, frameId));
+      const result = clarifySchema.parse(await deps.request("trace-clarify", { scene: panel.scene, previous: liveSceneSource(panel.generated, panel.scene), image: current.feedbackImage || current.image,
+        trace: { concern: current.concern, nodeIds, cycles: trace.cycles.length, sites: variableCatalog(trace).slice(-200), marks: current.marks, analysis: current.analysis, choice, feedback: current.feedback } }, frameId));
       if (viewRef.current?.frameId !== frameId) return;
       if (asks(result)) {
         patch(frameId, { asked: result, busy: false, status: "" });
@@ -369,7 +376,7 @@ export function useManipulation(deps: StudioDeps, execution: Execution) {
     await goLive(frameId, saved.clarify);
   }
   const freshView = (info: ManipStart, mode: ManipMode): ManipView => ({ ...info, mode, asked: null, choice: null, clarify: null, thumbnails: {}, strokes: [], tool: null, selected: null, measured: {}, changedFrom: null, fork: null, forkTrace: emptyTrace(), forkChangedFrom: null,
-    demo: {}, live: "", forkAnalysis: null, forkPlans: {}, forkInspect: "", overlayErrors: {}, probes: [], busy: false, status: "" });
+    demo: {}, live: "", forkAnalysis: null, forkPlans: {}, forkInspect: "", overlayErrors: {}, probes: [], draft: null, feedback: null, feedbackImage: "", busy: false, status: "" });
   /** A fork of the inspected frame (sketch, scene, result and its input), placed beside it; made once. */
   async function makeFork() {
     const current = viewRef.current!;
@@ -491,6 +498,42 @@ export function useManipulation(deps: StudioDeps, execution: Execution) {
       if (deps.panel(fork).generated?.code !== saved.generated.code)
         deps.updatePanel(fork, latest => ({ ...ops.commitScene(latest, saved.scene), generated: saved.generated, codeDraft: saved.generated.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [], hovered: null }));
       patch(current.frameId, change => ({ live: "ready", forkChangedFrom: nextIds(change.forkTrace).cycle }));
+    },
+    /** Say what did not fit: none of the rules offered ("options"), or the tools made ("tools"); marks are drawn at once. */
+    openFeedback: (kind: Feedback["kind"]) => setView(current => current ? { ...current, draft: { kind, text: "", marks: [] }, tool: "mark", selected: null } : current),
+    draftText: (text: string) => setView(current => current?.draft ? { ...current, draft: { ...current.draft, text: text.slice(0, 1000) } } : current),
+    addMark: (points: Point[]) => setView(current => current?.draft && points.length >= 2 ? { ...current, draft: { ...current.draft, marks: [...current.draft.marks, points].slice(-24) } } : current),
+    clearMarks: () => setView(current => current?.draft ? { ...current, draft: { ...current.draft, marks: [] } } : current),
+    cancelFeedback: () => setView(current => current ? { ...current, draft: null, tool: current.tool === "mark" ? current.clarify?.tools.find(item => item.kind !== "select")?.kind ?? null : current.tool } : current),
+    /**
+     * Send the feedback: the rules are listed again, different from those offered ("options"), or alternative
+     * corrections of the tools are asked ("tools"); the picture goes with it, marked (what was shown in blue, the marks
+     * in coral). What comes back is made from it, as is the rule picked next.
+     */
+    async submitFeedback() {
+      const current = viewRef.current, draft = current?.draft;
+      if (!current || !draft || current.busy || !saysSomething(draft)) return;
+      const marks = draft.marks.filter(mark => mark.length >= 2).slice(-24).map(mark => mark.filter((_, i) => i % Math.max(1, Math.ceil(mark.length / 300)) === 0).slice(0, 400).map(point => ({ x: Math.round(point.x), y: Math.round(point.y) })));
+      const byId = new Map(rows.map(row => [row.id, row])), text = draft.text.trim();
+      const feedback: Feedback = draft.kind === "options"
+        ? { kind: "options", text, marks, made: null, rejected: [...(current.feedback?.kind === "options" ? current.feedback.rejected : []), ...(current.asked?.rules ?? []).map(rule => ({ rule: rule.rule, logic: rule.logic, detail: rule.detail }))].slice(-12) }
+        : { kind: "tools", text, marks, rejected: [], made: current.clarify ? { summary: current.clarify.summary, rule: current.choice ? `${current.choice.rule} (${current.choice.logic})` : "", tools: current.clarify.tools,
+          targets: current.clarify.targets.map(target => ({ name: target.name, site: target.site, path: target.path, param: target.param, meaning: target.meaning, measure: target.measure, shown: (byId.get(target.id)?.shown ?? "—").slice(0, 600) })) } : null };
+      patch(current.frameId, { busy: true, status: "Reading what you marked…" });
+      // The frame as it is drawn now (the fork, in fork mode), what was shown with the tools on it, and the marks.
+      let picture = current.image;
+      try { picture = (await deps.capture(current.mode === "fork" && current.fork ? current.fork : current.frameId, true)).image; } catch { /* the picture the concern was asked with */ }
+      const shown = draft.kind === "tools" ? current.strokes.map(placedPoints) : [];
+      const image = await annotatedImage(picture, [...shown, ...marks].map(mark => mark.map(point => ({ x: point.x / CANVAS_W, y: point.y / CANVAS_H }))), "#db624a",
+        [...shown.map(() => ({ color: "#2b6cd4", width: 10, opacity: .55 })), ...marks.map(() => ({ color: "#db624a", width: 4, opacity: 1 }))]);
+      const now = viewRef.current;
+      if (!now || now.frameId !== current.frameId) return;
+      // What was made for the rules before does not come back for a rule picked after the feedback.
+      made.current = {};
+      // The previews of the rules offered before go (new ones may reuse their ids).
+      const next: ManipView = { ...now, feedback, feedbackImage: image, draft: null, tool: null, selected: null, thumbnails: {}, busy: false, status: "" };
+      viewRef.current = next; setView(next);
+      await request(current.frameId, null);
     },
     /** Back to the rule question (the tools made for the rule picked are dropped). */
     rechoose: () => {

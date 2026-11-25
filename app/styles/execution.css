@@ -173,3 +173,26 @@ i.exec-thumb.none{background:repeating-linear-gradient(45deg,#f6f8f3 0 4px,#eef2
 .generalize-panel{border-color:#c9d8ec}
 .generalize-panel .section-kicker{color:#2b6cd4}
 .manip-options small.generalize-from{font-size:11px;color:#2b5d9c}
+/* Feedback on the rules offered or the tools made: text and coral marks on the picture, sent to make them again. */
+.manip-layer.tool-mark{cursor:crosshair}
+.manip-layer .manip-mark{fill:none;stroke-linecap:round;stroke-linejoin:round}
+.manip-feedback-ask{margin:2px 0 0}
+.manip-feedback-ask .manip-link{font-size:12px;color:#a4521c}
+.manip-feedback{display:flex;flex-direction:column;gap:6px;padding:10px;border:1px solid #f0c8b8;border-radius:10px;background:#fff8f4}
+.manip-feedback strong{font-size:13px;font-weight:600;color:#7a3a16}
+.manip-feedback small{font-size:12px;color:#8a6a58}
+.manip-feedback textarea{width:100%;box-sizing:border-box;resize:vertical;padding:6px 8px;border:1px solid #e6cfc2;border-radius:6px;font:inherit;font-size:13px;background:#fff}
+.manip-feedback .manip-stroke-actions{align-items:center}
+.manip-feedback-actions{margin-left:auto;display:flex;gap:6px}
+.manip-feedback-sent{color:#a4521c}
+.restructure{display:flex;flex-direction:column;gap:8px;border-top:1px solid #e3e9dc;padding-top:8px}
+.restructure header{display:flex;flex-direction:column;gap:2px}
+.restructure header strong{font-weight:500;line-height:1.5}
+.restructure-thumb{position:relative;display:block;width:100%;aspect-ratio:3/2;border-radius:6px;overflow:hidden;background:#f4f7f1;border:1px solid #e3e9dc}
+.restructure-thumb img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.restructure-thumb img.restructure-picture{opacity:.35}
+.restructure-caption{position:absolute;left:4px;top:4px;display:flex;flex-direction:column;gap:1px;max-width:60%;padding:3px 6px;border-radius:4px;background:#ffffffe6;font-size:11px;line-height:1.3}
+.restructure-caption code{font-size:10px;color:#2f7d62;white-space:normal;word-break:break-word}
+.restructure-thumb em{position:absolute;left:6px;bottom:4px;font-size:11px;color:#6e7b66}
+.restructure-params{font-size:11px!important;color:#2f7d62!important}
+.restructure-busy{display:flex;align-items:center;gap:6px}

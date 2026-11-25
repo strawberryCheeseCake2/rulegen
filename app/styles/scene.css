@@ -648,3 +648,7 @@ button.compose-tag-kind:hover { filter: brightness(.94); }
 .clarify-actions .alternative-button { margin: 0; }
 .clarify-clear { margin: 10px 0; padding: 8px 10px; border-radius: 5px; background: #eef5ea; border: 1px solid #d3e3cc; font-size: 10px; color: #3f7158; line-height: 1.6; }
 .clarify-clear p { margin: 3px 0 0; color: #5f7a62; }
+.confirm-items { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+.confirm-items li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid #d7e2d9; border-radius: 8px; font-size: 12px; }
+.confirm-items b { font-weight: 600; }
+.confirm-items span { color: #5d6d64; }

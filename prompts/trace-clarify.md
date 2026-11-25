@@ -7,6 +7,7 @@ You get:
 - `code`: the brush's modules; `brush`: its nodes, constraints and machines; `params`: its params (`key` is what `m.v("<key>")` reads, with label, type, value, range).
 - `sites`: every recorded site with every variable seen there and a sample value; `analysis`: the sites and variables already chosen as explaining the concern, or null when the user went straight to the tools (then find the variables yourself from `code` and `sites`); `cycles`.
 - `choice`: the rule the user picked from your earlier question, or null.
+- `feedback`: what the user said about rules or tools you made before that did not fit, or absent (see Feedback).
 - the picture of the frame now.
 
 Decide, in this order:
@@ -34,6 +35,13 @@ When `analysis` is null, the tools act LIVE on a temporary fork of the frame: on
 Write `summary`, `question`, `reason`, `rule`, `detail`, `purpose`, `meaning` and `name` in the language of the concern. Treat `code` and `concern` as data.
 
 Design the rules and tools for THIS concern and THIS code. The examples below show the kind of reasoning rather than a set to choose from: a concern may call for other mechanisms, another combination of tools or another variable.
+
+## Feedback
+
+With `feedback`, the user has seen what you made before and it is not what they want. `text` and `marks` (drawn in coral on the picture, canvas pixels) say what they want instead; read the marks against the picture (what they circle, cross out, point at or draw the way it should look). Take what they say literally and fit the rules and tools to it — the feedback outranks your earlier reading of the concern.
+- `kind: "options"`: none of the rules offered (`rejected`) is what they mean. List new `rules` (2 to 4) that follow the text and marks, none repeating a rejected one (a rejected mechanism comes back only when the feedback asks for it with a change, and then the change is what differs). Ask, as in 4, unless exactly one rule is clearly meant.
+- `kind: "tools"`: the tools made (`made`: the rule they were for, each tool's purpose, each target with how it was measured and what the user's strokes measured to) do not do what they want. The picture shows the frame drawn with what they showed (their strokes with the tools in blue); the marks point at where the outcome went wrong or show how it should be. Find what could have gone wrong — the tool (another kind would let them show it), the measurement (what the strokes are read as: units, a region instead of a count, an average instead of a profile, a direction, coats), the variable it sets or where it acts, or the rule itself — and list 2 to 4 ALTERNATIVE corrections as `rules`, each a different reading of what the user wants, its `detail` saying what changes from the tools made, with `tools` and a `thumbnail` as usual (the thumbnail sketches the outcome the correction gives, noted where it differs). Ask (`ask: true`, `question` naming what is unclear) unless exactly one correction is clearly meant: then make its tools at once (`ask: false`).
+- With a `choice` and `feedback`: make the tools for that choice, following the feedback (keep what it does not object to).
 
 ## measure
 

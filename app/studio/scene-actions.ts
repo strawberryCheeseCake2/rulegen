@@ -17,7 +17,8 @@ import { decomposeTargets, exampleLabel, exampleScene, minimalExampleInstruction
 import { findConstraint, setDragOff } from "../lib/scene/constraints";
 import { applyHandles, handleLeaves, handleSuggestionsSchema, handleConstraints, proxyGroups, setHandle, type HandleTarget } from "../lib/scene/handles";
 import { MAX_SKETCH_FRAMES, type FrameId } from "../lib/workspace";
-import { sandboxHandleInstruction, sandboxInstruction, sandboxSchema, sandboxTarget, type SandboxPart } from "../lib/execution/concern-sandbox";
+import { sandboxExampleInstruction, sandboxHandleInstruction, sandboxInstruction, sandboxesSchema, sandboxTarget, type SandboxPart } from "../lib/execution/concern-sandbox";
+import { applyRestructure, restructureSchema, restructureTarget } from "../lib/execution/sandbox-restructure";
 import { partNodes } from "../lib/scene/propagation";
 import type { StudioDeps } from "./deps";
 import { answeredStages, clarifiedText, MAX_CLARIFY_STAGES, settleSketchClarify, startingAnswers, aiSketchClarifySchema, type ClarifyAnswer, type ClarifyMode, type SketchClarifyState } from "../lib/sketch-clarify";
@@ -176,11 +177,14 @@ export function sceneAI(deps: StudioDeps, owner: string) {
       const context = await sketchContext(deps, panel.sourceFrameId && deps.artwork(panel.sourceFrameId) ? panel.sourceFrameId : owner);
       // A minimal example frame keeps its hint for every generation (also Update and fixes later on).
       const of = panel.exampleOf, example = of && findNode(panel.scene, of.nodeId);
-      const hint = !example ? "" : of!.scope ? nodeExampleInstruction(example, of!.scope) : minimalExampleInstruction(example, of!.constraintId);
+      // A mini sandbox shows its part inside the rest of the original brush (coded from it the first time).
+      const original = panel.sandboxLogic && of ? deps.panel(of.frameId) : null, sandboxed = Boolean(original?.generated && example && !of!.scope);
+      const hint = !example ? "" : sandboxed ? sandboxExampleInstruction(original!.scene, panel.scene, of!.nodeId, of!.constraintId)
+        : of!.scope ? nodeExampleInstruction(example, of!.scope) : minimalExampleInstruction(example, of!.constraintId);
       const base = [hint, instructionOverride ?? (panel.generationMode === "compose" ? panel.composePrompt : panel.instruction)].filter(Boolean).join("\n");
       const scene = ownCodeIds(panel.scene);
       const result = generatedSchema.parse(await deps.request("code", { scene, image: context.image, compositionPens: context.compositionPens, compositionStrokes: context.compositionStrokes,
-        previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : "", instruction: (repair ? `${base}\nFix this runtime error: ${panel.runtimeError}` : base).slice(0, 6000) }, owner));
+        previous: panel.generated ? liveSceneSource(panel.generated, panel.scene) : sandboxed ? liveSceneSource(original!.generated!, original!.scene) : "", instruction: (repair ? `${base}\nFix this runtime error: ${panel.runtimeError}` : base).slice(0, 6000) }, owner));
       if (document !== deps.documentId() || snapshot !== JSON.stringify(deps.panel(owner).scene)) throw new Error("The brush stamp or param structure changed during generation. Please generate again.");
       deps.updatePanel(owner, { scene, generated: result, codeDraft: result.code, executable: "", preparedCode: "", runtimeError: "", runtimeStates: {}, dirtyNodeIds: [] });
       // Brushes made from this frame keep a copy of their module for when the frame is gone.
@@ -445,27 +449,69 @@ export function sceneAI(deps: StudioDeps, owner: string) {
     async concernSandbox(concern: string, image: string, marks: { x: number; y: number }[][] = []) {
       const panel = deps.panel(owner), generated = panel.generated;
       if (!generated) { deps.updatePanel(owner, { error: "Generate this frame's result first." }); return; }
-      const out: { part?: SandboxPart; scene?: Scene } = {};
-      await deps.task("AI is finding the part of the brush this is about, for a mini sandbox…", async () => {
+      const out: { parts?: SandboxPart[]; scene?: Scene } = {};
+      await deps.task("AI is finding the parts of the brush this is about, for mini sandboxes…", async () => {
         const nodeIds = panel.scene.nodes.map(node => node.id).slice(0, 64);
-        out.part = sandboxSchema.parse(await patient(() => deps.request("trace-part", { scene: panel.scene, previous: liveSceneSource(generated, panel.scene), image,
-          trace: { concern, nodeIds, cycles: 0, sites: [], marks } }, owner)));
+        out.parts = sandboxesSchema.parse(await patient(() => deps.request("trace-part", { scene: panel.scene, previous: liveSceneSource(generated, panel.scene), image,
+          trace: { concern, nodeIds, cycles: 0, sites: [], marks } }, owner))).parts;
         out.scene = panel.scene;
       }, owner);
-      if (!out.part || !out.scene) return;
-      const target = sandboxTarget(out.scene, out.part);
-      let made: ReturnType<typeof exampleFrame>;
-      try { made = exampleFrame(target, true, target.from, `${findNode(target.from ?? out.scene, target.nodeId)?.name ?? "Part"} · sandbox`); }
-      catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "Could not make the sandbox." }); return; }
-      if (!made) return;
-      // What it is for stays with its code (every generation of it, also Update and fixes later on).
-      deps.updatePanel(made.id, { instruction: sandboxInstruction(concern), sandboxLogic: { ...out.part.logic, concern } });
-      deps.toast(`Made a mini sandbox frame of “${made.label}” beside this one: ${out.part.reason} Generating it, then its handles…`);
-      await renderExample(made.id);
-      const frame = deps.panel(made.id);
-      if (!deps.artwork(made.id) || !frame.generated || !frame.exampleOf) return;
-      // One handle request at a time: the inspection goes on beside it (the server takes two at once).
-      await sceneAI(deps, made.id).suggestAllHandles(partNodes(frame.scene, frame.exampleOf).map(node => node.id), false, { instruction: sandboxHandleInstruction(concern), width: 1 });
+      if (!out.parts?.length || !out.scene) return;
+      // Every part's frame first (beside this one), then each one's code and handles in turn.
+      const made: { id: string; label: string }[] = [];
+      for (const part of out.parts) {
+        const target = sandboxTarget(out.scene, part);
+        let frame: ReturnType<typeof exampleFrame>;
+        try { frame = exampleFrame(target, true, target.from, `${findNode(target.from ?? out.scene, target.nodeId)?.name ?? "Part"} · sandbox`); }
+        catch (error) { deps.updatePanel(owner, { error: error instanceof Error ? error.message : "Could not make the sandbox." }); continue; }
+        if (!frame) continue;
+        // What it is for stays with its code (every generation of it, also Update and fixes later on).
+        deps.updatePanel(frame.id, { instruction: sandboxInstruction(concern), sandboxLogic: { ...part.logic, concern } });
+        made.push(frame);
+      }
+      if (!made.length) return;
+      deps.toast(made.length === 1 ? `Made a mini sandbox frame of “${made[0].label}” beside this one: ${out.parts[0].reason} Generating it, then its handles…`
+        : `Made ${made.length} mini sandbox frames beside this one (${made.map(item => `“${item.label}”`).join(", ")}): ${out.parts.map(part => part.reason).join(" ")} Generating each, then its handles…`);
+      for (const { id } of made) {
+        await renderExample(id);
+        const frame = deps.panel(id);
+        if (!deps.artwork(id) || !frame.generated || !frame.exampleOf) continue;
+        // One handle request at a time: the inspection goes on beside it (the server takes two at once).
+        await sceneAI(deps, id).suggestAllHandles(partNodes(frame.scene, frame.exampleOf).map(node => node.id), false, { instruction: sandboxHandleInstruction(concern), width: 1 });
+      }
+    },
+    /**
+     * A mini sandbox's structural options: AI offers 2–4 ways to change how its part computes (when its params alone
+     * may not give what its concern asks), each with a preview; the user picks one (pickRestructure).
+     */
+    async suggestRestructure() {
+      const panel = deps.panel(owner), part = restructureTarget(panel.scene, panel.exampleOf), concern = panel.sandboxLogic?.concern;
+      if (!part || !concern || !panel.generated) { deps.updatePanel(owner, { error: "Structural options are for a mini sandbox of one constraint with a result." }); return; }
+      deps.updatePanel(owner, { restructure: { busy: "AI is looking for structural changes…", question: "", options: [], picture: "" }, error: "" });
+      try {
+        const picture = (await deps.capture(owner, true)).image;
+        const out = restructureSchema.parse(await patient(() => deps.request("sandbox-restructure", { scene: panel.scene, targetNodeId: part.node.id, targetConstraintId: part.constraint.id,
+          previous: liveSceneSource(panel.generated!, panel.scene), image: picture, instruction: concern }, owner)));
+        deps.updatePanel(owner, { restructure: { busy: "", ...out, picture } });
+      } catch (error) {
+        deps.updatePanel(owner, { restructure: null, error: error instanceof Error ? error.message : "Could not get structural options." });
+      }
+    },
+    /** The picked structural option: it replaces the part's constraint, the code follows it, and its handles are made again. */
+    async pickRestructure(optionId: string) {
+      const panel = deps.panel(owner), option = panel.restructure?.options.find(item => item.id === optionId), part = restructureTarget(panel.scene, panel.exampleOf);
+      if (!option || !part) return;
+      const scene = applyRestructure(panel.scene, part.node.id, option);
+      // How it works follows the change: the new rule, and what each param does in it (a new one: its description).
+      const logic = panel.sandboxLogic && { ...panel.sandboxLogic, summary: `${option.change} (${option.logic})`.slice(0, 600),
+        params: option.constraint.params.map(param => ({ id: param.id, how: (panel.sandboxLogic!.params.find(item => item.id === param.id)?.how ?? param.description).slice(0, 300) })) };
+      deps.updatePanel(owner, current => ({ ...ops.commitScene(current, scene, [part.node.id]), restructure: null, sandboxLogic: logic ?? current.sandboxLogic }));
+      await rewriteCode([`${part.constraint.property} (${option.label}: ${option.change})`], deps.panel(owner).scene);
+      if (!deps.artwork(owner) || !deps.panel(owner).generated) return;
+      const concern = panel.sandboxLogic?.concern ?? "";
+      // The rule changed, so the part's widgets are made again (only its constraint: the one its proxy frame shows).
+      await sceneAI(deps, owner).suggestHandles(part.node.id, { constraintId: part.constraint.id }, sandboxHandleInstruction(concern));
+      deps.toast(`Applied “${option.label}” to the sandbox. To pass it up to the brush, use Propagate under the sandbox (it asks before AI rewrites the brush).`);
     },
     async minimalExample(nodeId: string, constraintId: string) {
       let made: ReturnType<typeof exampleFrame>;

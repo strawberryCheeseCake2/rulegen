@@ -49,7 +49,8 @@ import { DragAdjustLayer } from "../components/scene/drag-adjust";
 import { makeConstraintPen } from "../lib/scene/pens";
 import { markLogged, reportError } from "../lib/error-report";
 import { sceneChanges } from "../lib/scene/revisions";
-import type { StudioDeps, PanelPatch } from "../studio/deps";
+import type { StudioDeps, PanelPatch, ConfirmPrompt, ConfirmAnswer } from "../studio/deps";
+import { ConfirmDialog } from "../components/confirm-dialog";
 import { compositionPromptLabel, dropNode, sceneAI, sceneEdits } from "../studio/scene-actions";
 import { copyConstraint, NODE_DRAG_TYPE, readNodeDrag, type ConstraintClip } from "../lib/scene/transfer";
 import { clarificationLabel, revisionActions, revisionSnapshot } from "../studio/revision-actions";
@@ -62,6 +63,7 @@ import { GeneralizePanel } from "../components/generalize-panel";
 import { ancestorsOf, changesOf, propagate, settle } from "../studio/propagate";
 import { PropagatePanel } from "../components/propagate-panel";
 import { SandboxLogicPanel } from "../components/sandbox-logic";
+import { restructureTarget } from "../lib/execution/sandbox-restructure";
 import { keptValues } from "../lib/execution/kept-tools";
 import type { SavedTools } from "../lib/execution/manipulate";
 import { ManipLayer, ManipPanel } from "../components/execution-manip";
@@ -141,6 +143,8 @@ export default function Home() {
   const [handleErrors, setHandleErrors] = useState<Record<string, { code: string; message: string }>>({});
   // An edit an instance could not take, waiting for detach / the master.
   const [detachPrompt, setDetachPrompt] = useState<DetachPrompt | null>(null);
+  // A change the studio asks about first (e.g. adding sliders for hard-coded values), and how to answer it.
+  const [confirmAsk, setConfirmAsk] = useState<{ prompt: ConfirmPrompt; answer: (answer: ConfirmAnswer) => void } | null>(null);
   const [color, setColor] = useState("#75664e"), [width, setWidth] = useState(3), [opacity, setOpacity] = useState(80);
   const [workspace, setWorkspace] = useState<WorkspaceLayout>(() => workspaceSchema.parse({}));
   const workspaceCanvas = useRef<WorkspaceHandle>(null);
@@ -320,6 +324,7 @@ export default function Home() {
       return made;
     },
     openProxy: (owner, nodeId) => openProxy(owner, nodeId),
+    confirm: prompt => new Promise<ConfirmAnswer>(resolve => setConfirmAsk(current => { current?.answer(false); return { prompt, answer: resolve }; })),
     addSubBrush: (owner, nodeId, frameId, scene, name) => {
       const ownerScene = panelsRef.current[owner]?.scene;
       // Inside the tool group of the brush the node comes from (its group, if that brush is a sub brush itself).
@@ -390,11 +395,12 @@ export default function Home() {
   const stepThumbnails = useMemo(() => inspectedExecutable ? { executable: inspectedExecutable, restoreOf: restoreStep } : undefined, [inspectedExecutable, restoreStep]);
   /** Fork mode: the temporary fork the tools act on live (their strokes over it, the panel below it). */
   const liveFork = manipulation.view?.mode === "fork" ? manipulation.view.fork : null;
-  const manipLayer = (manip: ManipView) => <ManipLayer strokes={manip.strokes} hidden={manip.marksHidden} tool={manip.tool} selected={manip.selected} onAdd={manipulation.add} onChange={manipulation.change} onSelect={manipulation.select} probes={manip.probes} onProbe={manipulation.probe} />;
+  const manipLayer = (manip: ManipView) => <ManipLayer strokes={manip.strokes} hidden={manip.marksHidden} tool={manip.tool} selected={manip.selected} onAdd={manipulation.add} onChange={manipulation.change} onSelect={manipulation.select} probes={manip.probes} onProbe={manipulation.probe}  marks={manip.draft?.marks} onMark={manipulation.addMark} />;
   const manipPanel = (manip: ManipView) => <ManipPanel view={manip} rows={manipulation.rows} onBegin={manipulation.begin} onChoose={id => { const rule = manip.asked?.rules.find(item => item.id === id); if (rule) manipulation.choose(rule); }}
     onRechoose={manipulation.rechoose} onTool={manipulation.setTool} onClearProbes={manipulation.clearProbes} onRemove={manipulation.remove} onClear={manipulation.clear} onToggleMarks={manipulation.toggleMarks} onApply={() => { void manipulation.apply(); }} onTryFork={() => { void manipulation.tryOnFork(); }} onKeepFork={manipulation.keepFork} onDiscardFork={manipulation.discardFork}
     onShowFork={() => { if (manip.fork) setPendingFrameFocus(manip.fork as FrameId); }} onShowOriginal={() => setPendingFrameFocus(manip.frameId as FrameId)} onRetry={manipulation.retry}
     forkError={manip.mode === "fork" && manip.fork && manip.live === "ready" ? panels[manip.fork]?.runtimeError ?? "" : ""} onRegenerate={manipulation.regenerate}
+    feedback={{ open: manipulation.openFeedback, text: manipulation.draftText, clearMarks: manipulation.clearMarks, submit: () => { void manipulation.submitFeedback(); }, cancel: manipulation.cancelFeedback }}
     onGeneralize={() => { const source = manipulation.generalizeSource(); if (source) generalize.start(source, manipulation.close); }} generalizing={Boolean(manip.fork && generalize.view?.from === manip.fork)} />;
   // An Execution frame is on the board only while its inspection has one.
   useEffect(() => {
@@ -1161,7 +1167,11 @@ export default function Home() {
             onRedesignAll={() => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestAllHandles([proxy.nodeId], true); }} />
 </>,
         // A mini sandbox's proxy frame: how its program works with the values these handles change.
-        below: target?.sandboxLogic ? <SandboxLogicPanel logic={target.sandboxLogic} constraints={own ? [own] : constraints} /> : undefined,
+        below: target?.sandboxLogic ? <SandboxLogicPanel logic={target.sandboxLogic} constraints={own ? [own] : constraints}
+          restructure={restructureTarget(target.scene, target.exampleOf) ? { state: target.restructure, busy: Boolean(target.loading) || Boolean(target.restructure?.busy),
+            onSuggest: () => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestRestructure(); },
+            onPick: optionId => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).pickRestructure(optionId); },
+            onClose: () => updatePanel(proxy.targetFrameId, { restructure: null }) } : undefined} /> : undefined,
         content: <ProxyFrame frameId={proxy.id} node={targetNode} constraints={constraints} targetName={targetName} busy={target?.loading || ""} onActivate={() => activateFrame(proxy.id)}
           bakedInput={bakesInput(module) ? { onUpdate: () => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).generateCode(false, `${target.generationMode === "compose" ? target.composePrompt : target.instruction}\n${ADJUST_IN_PLACE_INSTRUCTION}`); } } : undefined}
           onDesign={constraintId => { activateFrame(proxy.id); void sceneAI(deps, proxy.targetFrameId).suggestHandles(proxy.nodeId, { constraintId }, ""); }}
@@ -1340,13 +1350,14 @@ export default function Home() {
         inspected={execution.view?.frameId === activeSketch ? execution.machine(machineNode?.id ?? null) : null} />}
       inspectionPanel={execution.view ? <ExecutionPanel thumbnails={stepThumbnails} brushName={artworkOf(execution.view.frameId)?.name || "Frame"} trace={execution.view.trace} recording={!execution.step}
         steps={execution.steps} step={execution.step} analysis={execution.view.analysis} busy={execution.view.busy} status={[execution.view.status, execution.step ? execution.view.overlayStatus : ""].filter(Boolean).join(" ")}
-        skipped={execution.skipped} onSelect={execution.select} onInspect={(concern, stepping, tools, sandbox) => { void (stepping ? execution.inspect(concern) : execution.direct(concern, tools)); if (sandbox) void execution.sandbox(concern); }} marks={execution.view.marks.length} onClearMarks={execution.clearMarks} onClearAnalysis={execution.clearAnalysis} onClearTrace={execution.clearTrace} onClose={execution.close} /> : undefined} />
+        skipped={execution.skipped} onSelect={execution.select} onInspect={(concern, plan) => { if (plan.stepping) void execution.inspect(concern); else if (plan.fork) void execution.direct(concern, plan.fork === "tools"); if (plan.sandbox) void execution.sandbox(concern); }} marks={execution.view.marks.length} onClearMarks={execution.clearMarks} onClearAnalysis={execution.clearAnalysis} onClearTrace={execution.clearTrace} onClose={execution.close} /> : undefined} />
     {detachPrompt && (() => { const brush = brushes.find(item => item.id === detachPrompt.brushId); if (!brush) return null;
       const close = () => setDetachPrompt(null);
       return <DetachDialog prompt={detachPrompt} brushName={brush.name} masterFrame={masterFrame(brush)} onCancel={close}
         onDetach={() => { close(); if (detachInstance(detachPrompt.frameId, detachPrompt.rootId, brush.id)) detachPrompt.apply(); }}
         onMaster={() => { close(); goToMaster(brush); }}
         onAdopt={() => { close(); if (adoptMaster(detachPrompt.frameId, detachPrompt.rootId, brush.id)) detachPrompt.apply(); }} />; })()}
+    {confirmAsk && <ConfirmDialog prompt={confirmAsk.prompt} onAnswer={answer => { setConfirmAsk(null); confirmAsk.answer(answer); }} />}
     {toast && <div className="toast" role="status"><Icon name="spark" size={17} /><span>{toast}</span><button aria-label="Dismiss notification" onClick={() => setToast("")}><Icon name="close" size={15} /></button></div>}
     {historyOpen && <GenerationHistory disabled={busy} onClose={() => setHistoryOpen(false)} onRestore={restoreAIHistory} onReuseTools={tools => { void reuseTools(tools); }} />}
     {frameJson && panels[frameJson] && <FrameJsonDialog name={artworkOf(frameJson)?.name || frameJson} onClose={() => setFrameJson(null)} onCopied={setToast}

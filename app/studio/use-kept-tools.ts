@@ -16,7 +16,7 @@ import { CANVAS_H, CANVAS_W, paintedMask, strokeFeatures, toggleProbe, type Mani
 // values its code reads (m.demo) or its params, and the frame redraws at once; the inspect tool shows those values on
 // its picture (the fork's placement of them, or placed again for the frame when there is none).
 
-export type KeptActive = { frameId: string; setId: string; tool: LayerTool };
+export type KeptActive = { frameId: string; setId: string; tool: Exclude<LayerTool, "mark"> };
 
 export function useKeptTools(deps: StudioDeps) {
   const [active, setActive] = useState<KeptActive | null>(null);
@@ -120,7 +120,7 @@ export function useKeptTools(deps: StudioDeps) {
     active, set, selected, probes, overlays, shown, status, onCycle, hidden,
     toggleMarks: () => { setHidden(value => !value); setSelected(null); },
     /** Use a kept tool on its frame (the same again: stop). */
-    use(frameId: string, setId: string, tool: LayerTool) {
+    use(frameId: string, setId: string, tool: KeptActive["tool"]) {
       setSelected(null); setStatus("");
       setActive(current => current && current.frameId === frameId && current.setId === setId && current.tool === tool ? null : { frameId, setId, tool });
       if (tool !== "inspect") setProbes([]);

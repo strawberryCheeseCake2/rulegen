@@ -23,9 +23,10 @@ export type ExecutionPanelProps = {
   onSelect: (stepId: number | null) => void;
   /**
    * stepping: step through the concern's recorded steps in an Execution frame; else a temporary fork is made with tools for it.
-   * sandbox: also a mini sandbox of the part of the brush the concern is about, with handles for its params.
+   * sandbox: a mini sandbox of the part of the brush the concern is about, with handles for its params.
+   * Each choice makes only what it names: a fork is made for tools, or (nothing else chosen) changed to meet the concern.
    */
-  onInspect: (concern: string, stepping: boolean, tools: boolean, sandbox: boolean) => void;
+  onInspect: (concern: string, plan: InspectPlan) => void;
   onClearAnalysis: () => void;
   /** Inspection annotation marks drawn on the picture (sent with the concern). */
   marks: number;
@@ -50,6 +51,16 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }) {
 
 const KIND_MARK = { state: "◆", constraint: "▸", transition: "→" } as const;
 const noRestore = () => null;
+
+
+/** What submitting the concern makes: each checked choice its own thing, nothing more. */
+export type InspectPlan = { stepping: boolean; fork: "tools" | "change" | null; sandbox: boolean };
+export function inspectPlan(stepping: boolean, tools: boolean, sandbox: boolean): InspectPlan {
+  // A fork only for its tools, or when nothing else is asked for (then it is changed to meet the concern).
+  return { stepping, fork: stepping ? null : tools ? "tools" : sandbox ? null : "change", sandbox };
+}
+const submitLabel = (plan: InspectPlan) => [plan.stepping ? "Inspect" : plan.fork === "tools" ? "Make tools" : plan.fork === "change" ? "Change on a fork" : "", plan.sandbox ? "sandbox" : ""]
+  .filter(Boolean).join(" + ").replace(/^sandbox$/, "Make sandbox");
 
 export function ExecutionPanel(props: ExecutionPanelProps) {
   const { trace, steps, step, analysis } = props;
@@ -102,16 +113,16 @@ export function ExecutionPanel(props: ExecutionPanelProps) {
       <span className={`exec-recording ${props.recording ? "on" : ""}`} title={props.recording ? "Recording: a cycle is kept whenever what the frame is drawn from changes" : "Not recording"}>{props.recording ? "● REC" : "○"} {cycleCount} cycles · {stepCount} steps</span>
       <button type="button" className="exec-close" onClick={props.onClose} aria-label="Close">×</button>
     </header>
-    <form className="exec-concern" onSubmit={event => { event.preventDefault(); if (concern.trim()) props.onInspect(concern.trim(), stepping, tools, sandbox); }}>
+    <form className="exec-concern" onSubmit={event => { event.preventDefault(); if (concern.trim()) props.onInspect(concern.trim(), inspectPlan(stepping, tools, sandbox)); }}>
       <textarea value={concern} onChange={event => setConcern(event.target.value)} placeholder="What do you want to understand? e.g. why do the stamps get smaller at the end?" rows={2} />
       <div>
         <label className="exec-stepping" title={stepping ? "Choose the steps and variables that explain it and step through them in an Execution frame" : "Make a temporary fork of this frame with tools for the concern: what you show with them changes the fork at once, and only the values they set are shown on it"}>
           <input type="checkbox" checked={stepping} onChange={event => setStepping(event.target.checked)} />Execution stepping</label>
-        {!stepping && <label className="exec-stepping" title={tools ? "Make direct manipulation tools for the concern on the fork: what you show with them changes it" : "No tools: the fork is changed to meet the concern at once"}>
+        {!stepping && <label className="exec-stepping" title={tools ? "Make direct manipulation tools for the concern on a temporary fork: what you show with them changes it" : sandbox ? "No tools: only the mini sandbox is made (no fork)" : "No tools: a temporary fork is changed to meet the concern at once"}>
           <input type="checkbox" checked={tools} onChange={event => setTools(event.target.checked)} />Make tools</label>}
-        <label className="exec-stepping" title="Also take the part of the brush this is about out on its own (as Decompose would, only that part) into a frame of its own, with direct manipulation handles for its params">
-          <input type="checkbox" checked={sandbox} onChange={event => setSandbox(event.target.checked)} />Mini sandbox &amp; handles</label>
-        <button type="submit" className="exec-button primary" disabled={props.busy || !concern.trim() || !stepCount}>{props.busy ? "Inspecting…" : stepping ? "Inspect" : tools ? "Make tools" : "Change on a fork"}</button>
+        <label className="exec-stepping" title="Take the part of the brush this is about out on its own (as Decompose would, only that part) into a frame of its own, with direct manipulation handles for its params. Checking it turns Make tools off, so only the sandbox and its proxy frames are made (check Make tools again for a fork with tools as well)">
+          <input type="checkbox" checked={sandbox} onChange={event => { setSandbox(event.target.checked); if (event.target.checked) setTools(false); }} />Mini sandbox &amp; handles</label>
+        <button type="submit" className="exec-button primary" disabled={props.busy || !concern.trim() || !stepCount}>{props.busy ? "Inspecting…" : submitLabel(inspectPlan(stepping, tools, sandbox))}</button>
         {analysis && <button type="button" className="exec-button" onClick={props.onClearAnalysis}>All steps</button>}
         <button type="button" className="exec-button" onClick={props.onClearTrace} disabled={!stepCount}>Clear record</button>
       </div>

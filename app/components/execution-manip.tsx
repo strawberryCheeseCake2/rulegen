@@ -1,22 +1,23 @@
 import { useRef, useState } from "react";
 import { bounds, extend, hitStroke, newStroke, pivot, placedPoints, type ManipStroke, type Point } from "../lib/execution/strokes";
-import { asks, type ManipTool } from "../lib/execution/manipulate";
+import { asks, saysSomething, type ManipTool } from "../lib/execution/manipulate";
 import type { LayerTool, ManipView, TargetRow } from "../studio/use-manipulation";
 
 // Direct manipulation on the Execution frame: the strokes the user shows a concern with (on the picture), and below
 // the frame the rule question, the tools, and the execution variables the strokes set (recorded → shown → after).
 
-const COLOR = "#2b6cd4";
+const COLOR = "#2b6cd4", MARK = "#db624a";
 const TOOL_LABEL: Record<ManipTool, string> = { brush: "Brush", pencil: "Pencil", select: "Select · scale · rotate" };
 
 type Drag = { kind: "draw"; stroke: ManipStroke } | { kind: "move" | "scale" | "rotate"; start: ManipStroke; from: Point; center: Point };
 
 /** The strokes over the picture; drawn, selected, moved, scaled and rotated with the tool chosen. */
-export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect, probes = [], onProbe, hidden = false }: {
+export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect, probes = [], onProbe, hidden = false, marks = [], onMark }: {
   strokes: ManipStroke[]; tool: LayerTool | null; selected: string | null;
   onAdd: (stroke: ManipStroke) => void; onChange: (stroke: ManipStroke) => void; onSelect: (id: string | null) => void;
   /** Spots clicked with the inspect tool (shown as crosshairs). */ probes?: Point[]; onProbe?: (at: Point) => void;
   /** The brush / pencil marks are hidden (what they show still applies); one being drawn shows while it is drawn. */ hidden?: boolean;
+  /** Marks saying what did not fit (feedback being written; coral), drawn with the "mark" tool. */ marks?: Point[][]; onMark?: (points: Point[]) => void;
 }) {
   const layer = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -24,8 +25,10 @@ export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect,
     const box = layer.current!.getBoundingClientRect();
     return { x: (event.clientX - box.left) / box.width * 900, y: (event.clientY - box.top) / box.height * 600 };
   };
-  if (!tool && !strokes.length && !probes.length) return null;
-  const shown = [...(hidden ? [] : strokes), ...(drag?.kind === "draw" ? [drag.stroke] : [])];
+  if (!tool && !strokes.length && !probes.length && !marks.length) return null;
+  const marking = tool === "mark";
+  const shown = [...(hidden ? [] : strokes), ...(drag?.kind === "draw" && !marking ? [drag.stroke] : [])];
+  const drawnMarks = [...marks, ...(drag?.kind === "draw" && marking ? [placedPoints(drag.stroke)] : [])];
   const picked = tool === "select" && !hidden ? strokes.find(stroke => stroke.id === selected) : undefined;
   const box = picked ? bounds(placedPoints(picked)) : null;
   const centerOf = (stroke: ManipStroke) => { const c = pivot(stroke); return { x: c.x + stroke.dx, y: c.y + stroke.dy }; };
@@ -35,7 +38,7 @@ export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect,
     event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId);
     const p = at(event), handle = (event.target as Element).getAttribute("data-handle");
     if (tool === "inspect") { onProbe?.(p); return; }
-    if (tool !== "select") { setDrag({ kind: "draw", stroke: newStroke(`m${Date.now().toString(36)}`, tool, p) }); return; }
+    if (tool !== "select") { setDrag({ kind: "draw", stroke: newStroke(`m${Date.now().toString(36)}`, tool === "mark" ? "pencil" : tool, p) }); return; }
     if (picked && (handle === "scale" || handle === "rotate")) { setDrag({ kind: handle, start: picked, from: p, center: centerOf(picked) }); return; }
     const hit = hitStroke(strokes, p), stroke = strokes.find(item => item.id === hit);
     onSelect(hit);
@@ -56,13 +59,14 @@ export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect,
   const up = (event: React.PointerEvent) => {
     if (!drag) return;
     event.stopPropagation();
-    if (drag.kind === "draw" && drag.stroke.points.length > 1) onAdd(drag.stroke);
+    if (drag.kind === "draw" && drag.stroke.points.length > 1) { if (marking) onMark?.(placedPoints(drag.stroke)); else onAdd(drag.stroke); }
     setDrag(null);
   };
   return <div ref={layer} className={`manip-layer ${tool ? `tool-${tool}` : ""}`} aria-label="Direct manipulation" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={() => setDrag(null)}>
     <svg viewBox="0 0 900 600" preserveAspectRatio="none">
       {shown.map(stroke => <polyline key={stroke.id} points={placedPoints(stroke).map(p => `${p.x},${p.y}`).join(" ")} stroke={COLOR}
         strokeWidth={stroke.width * stroke.scale} strokeOpacity={stroke.tool === "brush" ? .45 : .95} className={stroke.id === selected && tool === "select" ? "picked" : ""} />)}
+      {drawnMarks.map((mark, i) => <polyline key={`mark-${i}`} className="manip-mark" points={mark.map(p => `${p.x},${p.y}`).join(" ")} stroke={MARK} strokeWidth={4} strokeOpacity={.95} />)}
       {probes.map((p, i) => <g key={`probe-${i}`} className="manip-probe"><circle cx={p.x} cy={p.y} r={9} /><line x1={p.x - 14} y1={p.y} x2={p.x + 14} y2={p.y} /><line x1={p.x} y1={p.y - 14} x2={p.x} y2={p.y + 14} /></g>)}
       {box && <g className="manip-selection">
         <rect x={box.x - 6} y={box.y - 6} width={box.w + 12} height={box.h + 12} />
@@ -75,7 +79,7 @@ export function ManipLayer({ strokes, tool, selected, onAdd, onChange, onSelect,
 }
 
 /** Below the Execution frame: the rule question, the tools, and what the strokes set. */
-export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, onClearProbes, onRemove, onClear, onToggleMarks, onApply, onRetry, onTryFork, onKeepFork, onDiscardFork, onShowFork, onShowOriginal, forkError = "", onRegenerate, onGeneralize, generalizing = false }: {
+export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, onClearProbes, onRemove, onClear, onToggleMarks, onApply, onRetry, onTryFork, onKeepFork, onDiscardFork, onShowFork, onShowOriginal, forkError = "", onRegenerate, onGeneralize, generalizing = false, feedback }: {
   view: ManipView; rows: TargetRow[];
   onBegin: () => void; onChoose: (ruleId: string) => void; onRechoose: () => void; onTool: (tool: LayerTool) => void; onClearProbes?: () => void;
   onRemove: () => void; onClear: () => void; onToggleMarks?: () => void; onApply: () => void; onRetry: () => void;
@@ -84,6 +88,8 @@ export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, 
   onRegenerate?: (what: "rules" | "tools" | "live" | "overlay", failed?: string) => void;
   /** Fork mode: make what was shown the original brush's own rule (the rules it could be are asked first). */ onGeneralize?: () => void;
   /** Its rules are being asked or shown (below this panel). */ generalizing?: boolean;
+  /** Saying what did not fit (none of the rules, or the tools made), with text and marks on the picture; sent, it is made again. */
+  feedback?: { open: (kind: "options" | "tools") => void; text: (text: string) => void; clearMarks: () => void; submit: () => void; cancel: () => void };
 }) {
   const forkMode = view.mode === "fork";
   // What failed and can be made again, each with its own button.
@@ -125,8 +131,12 @@ export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, 
         <small>{rule.detail}</small>
         <span className="manip-rule-tools">{rule.tools.map(tool => <i key={tool.kind}>{TOOL_LABEL[tool.kind]}</i>)}</span>
       </button>)}</div>
+      {feedback && !view.draft && <p className="manip-feedback-ask"><button type="button" className="manip-link" disabled={view.busy} onClick={() => feedback.open("options")}
+        title="Say with text and marks on the picture what you mean instead; the options are made again">None of these — describe another…</button></p>}
     </section>}
     {view.choice && <p className="manip-choice">Rule: <b>{view.choice.rule}</b> <code>{view.choice.logic}</code>{view.asked && <button type="button" disabled={view.busy} onClick={onRechoose}>Pick another</button>}</p>}
+    {view.draft && feedback && <FeedbackComposer view={view} draft={view.draft} actions={feedback} marking={view.tool === "mark"} onMarking={() => onTool("mark")} />}
+    {view.feedback && !view.draft && <p className="manip-note manip-feedback-sent">{view.feedback.kind === "options" ? "Options made again" : "Alternatives to the tools"} from what you said{view.feedback.text ? <>: “{view.feedback.text}”</> : ""}{view.feedback.marks.length ? ` (${view.feedback.marks.length} mark${view.feedback.marks.length > 1 ? "s" : ""})` : ""}.</p>}
     {clarify && <section className="manip-tools">
       {clarify.tools.map(tool => <button type="button" key={tool.kind} aria-pressed={view.tool === tool.kind} onClick={() => onTool(tool.kind)}>
         <b>{TOOL_LABEL[tool.kind]}</b><small>{tool.purpose}</small></button>)}
@@ -137,6 +147,8 @@ export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, 
           title="Hide or show the brush / pencil marks on the picture (what they show still applies)">{view.marksHidden ? "Show marks" : "Hide marks"}</button>}
       </div>
     </section>}
+    {clarify && feedback && !view.draft && <p className="manip-feedback-ask"><button type="button" className="manip-link" disabled={view.busy} onClick={() => feedback.open("tools")}
+      title="Mark on the picture what the tools got wrong and say what you wanted; AI finds alternative tools to pick from">The tools don't do what I want…</button></p>}
     {clarify && forkMode && <section className="manip-tools manip-inspect">
       <button type="button" aria-pressed={view.tool === "inspect"} onClick={() => onTool("inspect")}>
         <b>Inspect</b><small>Click spots on the fork to see their execution values (click a spot again to remove it).</small></button>
@@ -180,4 +192,23 @@ export function ManipPanel({ view, rows, onBegin, onChoose, onRechoose, onTool, 
       </>}
     </footer>}
   </div>;
+}
+
+/** Feedback being written: text and marks on the picture saying what did not fit; sent, the options (or the tools' alternatives) are made again. */
+function FeedbackComposer({ view, draft, actions, marking, onMarking }: { view: ManipView; draft: NonNullable<ManipView["draft"]>; actions: NonNullable<Parameters<typeof ManipPanel>[0]["feedback"]>; marking: boolean; onMarking: () => void }) {
+  const options = draft.kind === "options";
+  return <section className="manip-feedback">
+    <strong>{options ? "None of these fits: what do you mean?" : "What should the tools do instead?"}</strong>
+    <small>{options ? "Describe the rule you have in mind, and draw on the picture how it should look." : "Mark on the picture where it went wrong or how it should be, and say what you wanted. AI finds alternatives to pick from."}</small>
+    <textarea value={draft.text} maxLength={1000} rows={2} autoFocus placeholder={options ? "e.g. keep one color along each branch, change it only at forks" : "e.g. painting more should make the change stronger, not wider"}
+      onChange={event => actions.text(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); actions.submit(); } }} />
+    <div className="manip-stroke-actions">
+      <button type="button" aria-pressed={marking} onClick={onMarking} title="Draw marks on the picture (coral)">Mark on the picture</button>
+      <button type="button" disabled={!draft.marks.length} onClick={actions.clearMarks}>Clear marks{draft.marks.length ? ` (${draft.marks.length})` : ""}</button>
+      <span className="manip-feedback-actions">
+        <button type="button" disabled={view.busy} onClick={actions.cancel}>Cancel</button>
+        <button type="button" className="exec-button primary" disabled={view.busy || !saysSomething(draft)} onClick={actions.submit}>{options ? "Make other options" : "Find alternatives"}</button>
+      </span>
+    </div>
+  </section>;
 }

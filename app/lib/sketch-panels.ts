@@ -8,6 +8,7 @@ import { refreshProgram } from "./scene/machines";
 import { liveSceneSource } from "./scene/live";
 import type { SceneProposal } from "./scene/revisions";
 import type { SketchClarifyState } from "./sketch-clarify";
+import type { RestructureOption } from "./execution/sandbox-restructure";
 import { keptToolSetSchema, MAX_KEPT_SETS } from "./execution/kept-tools";
 import { propagationBaseSchema } from "./scene/propagation";
 import { sandboxLogicSchema } from "./execution/concern-sandbox";
@@ -72,7 +73,10 @@ export type SketchPanel = SavedSketchPanel & {
   seed: { id: string; runtime: unknown } | null;
   /** The open clarification before Extract / Compose (its stages, questions and answers). */
   sketchClarify: SketchClarifyState | null;
+  /** A mini sandbox's structural options (asked for when its params alone may not do): the question, the options, the picture they are previewed over. */
+  restructure: SandboxRestructure | null;
 };
+export type SandboxRestructure = { busy: string; question: string; options: RestructureOption[]; picture: string };
 export type MachineDraft = { nodeId: string; open: boolean; instruction: string; annotating: boolean; strokes: { x: number; y: number }[][] };
 /** What a regeneration targets: a param, a constraint, or (neither) a new stacked constraint. */
 export type TransformTarget = { constraintId?: string; paramId?: string };
@@ -89,7 +93,7 @@ export function createSketchPanel(saved?: Partial<SavedSketchPanel> | z.input<ty
     annotating: false, annotationImage: "", annotationSource: "", annotationRenderRevision: 0, annotationHistory: emptyAnnotationHistory(),
     clarifying: false, clarificationContext: null, revisionInstruction: "", revisionProposal: null, sceneHistory: [], sceneFuture: [],
     loading: "", error: "",
-    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), transformDraft: null, seed: null, sketchClarify: null };
+    runtimeStates: {}, stateJump: null, pendingResult: false, machineTarget: null, machineDraft: emptyMachineDraft(), transformDraft: null, seed: null, sketchClarify: null, restructure: null };
 }
 export function updateSketchPanel<K extends keyof SketchPanel>(panels: Record<string, SketchPanel>, id: string, key: K, value: SketchPanel[K] | ((previous: SketchPanel[K]) => SketchPanel[K])) {
   const panel = panels[id] || createSketchPanel();

@@ -2,50 +2,37 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "reason": {
-      "type": "string",
-      "maxLength": 400
-    },
-    "nodeId": {
-      "type": "string",
-      "maxLength": 80
-    },
-    "scope": {
-      "type": "string",
-      "enum": [
-        "node",
-        "constraints",
-        "constraint",
-        "computation"
-      ]
-    },
-    "constraintId": {
-      "type": "string",
-      "maxLength": 80
-    },
-    "computation": {
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            },
-            "property": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 80
-            },
-            "description": {
-              "type": "string",
-              "maxLength": 1000
-            },
-            "params": {
-              "maxItems": 8,
-              "type": "array",
-              "items": {
+    "parts": {
+      "minItems": 1,
+      "maxItems": 3,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 400
+          },
+          "nodeId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "node",
+              "constraints",
+              "constraint",
+              "computation"
+            ]
+          },
+          "constraintId": {
+            "type": "string",
+            "maxLength": 80
+          },
+          "computation": {
+            "anyOf": [
+              {
                 "type": "object",
                 "properties": {
                   "id": {
@@ -53,278 +40,305 @@
                     "minLength": 1,
                     "maxLength": 80
                   },
-                  "label": {
+                  "property": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 80
                   },
-                  "effect": {
-                    "type": "string",
-                    "enum": [
-                      "spatial",
-                      "stylistic",
-                      "temporal"
-                    ]
-                  },
                   "description": {
                     "type": "string",
-                    "maxLength": 600
+                    "maxLength": 1000
                   },
-                  "value": {
-                    "anyOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "const": "number"
-                          },
-                          "value": {
-                            "type": "number"
-                          },
-                          "min": {
-                            "type": "number"
-                          },
-                          "max": {
-                            "type": "number"
-                          },
-                          "step": {
-                            "type": "number",
-                            "minimum": 1e-8
-                          },
-                          "unit": {
-                            "type": "string",
-                            "maxLength": 20
-                          }
+                  "params": {
+                    "maxItems": 8,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
                         },
-                        "required": [
-                          "type",
-                          "value",
-                          "min",
-                          "max",
-                          "step",
-                          "unit"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "const": "color"
-                          },
-                          "value": {
-                            "type": "string",
-                            "pattern": "^#[0-9a-fA-F]{6}$"
-                          }
+                        "label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 80
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "const": "select"
-                          },
-                          "value": {
-                            "type": "string",
-                            "maxLength": 80
-                          },
-                          "options": {
-                            "minItems": 2,
-                            "maxItems": 8,
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1,
-                              "maxLength": 80
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "spatial",
+                            "stylistic",
+                            "temporal"
+                          ]
+                        },
+                        "description": {
+                          "type": "string",
+                          "maxLength": 600
+                        },
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "number"
+                                },
+                                "value": {
+                                  "type": "number"
+                                },
+                                "min": {
+                                  "type": "number"
+                                },
+                                "max": {
+                                  "type": "number"
+                                },
+                                "step": {
+                                  "type": "number",
+                                  "minimum": 1e-8
+                                },
+                                "unit": {
+                                  "type": "string",
+                                  "maxLength": 20
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value",
+                                "min",
+                                "max",
+                                "step",
+                                "unit"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "color"
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "pattern": "^#[0-9a-fA-F]{6}$"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "select"
+                                },
+                                "value": {
+                                  "type": "string",
+                                  "maxLength": 80
+                                },
+                                "options": {
+                                  "minItems": 2,
+                                  "maxItems": 8,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 80
+                                  }
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value",
+                                "options"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "const": "toggle"
+                                },
+                                "value": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "value"
+                              ],
+                              "additionalProperties": false
                             }
-                          }
-                        },
-                        "required": [
-                          "type",
-                          "value",
-                          "options"
-                        ],
-                        "additionalProperties": false
+                          ]
+                        }
                       },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "type": {
-                            "type": "string",
-                            "const": "toggle"
-                          },
-                          "value": {
-                            "type": "boolean"
-                          }
+                      "required": [
+                        "id",
+                        "label",
+                        "effect",
+                        "description",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "inputs": {
+                    "maxItems": 6,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "x",
+                            "y",
+                            "dx",
+                            "dy",
+                            "speed",
+                            "direction",
+                            "distance",
+                            "duration",
+                            "pressed"
+                          ]
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
-                        "additionalProperties": false
-                      }
-                    ]
+                        "paramId": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "how": {
+                          "type": "string",
+                          "maxLength": 160
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "paramId",
+                        "how"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "drags": {
+                    "maxItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "paramId": {
+                          "type": "string",
+                          "maxLength": 80
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "x",
+                            "y",
+                            "speed"
+                          ]
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "direct",
+                            "ratio",
+                            "range"
+                          ]
+                        },
+                        "invert": {
+                          "type": "boolean"
+                        },
+                        "how": {
+                          "type": "string",
+                          "maxLength": 160
+                        }
+                      },
+                      "required": [
+                        "paramId",
+                        "source",
+                        "mode",
+                        "invert",
+                        "how"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
                   "id",
-                  "label",
-                  "effect",
+                  "property",
                   "description",
-                  "value"
+                  "params",
+                  "inputs",
+                  "drags"
                 ],
                 "additionalProperties": false
+              },
+              {
+                "type": "null"
               }
-            },
-            "inputs": {
-              "maxItems": 6,
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "source": {
-                    "type": "string",
-                    "enum": [
-                      "x",
-                      "y",
-                      "dx",
-                      "dy",
-                      "speed",
-                      "direction",
-                      "distance",
-                      "duration",
-                      "pressed"
-                    ]
-                  },
-                  "paramId": {
-                    "type": "string",
-                    "maxLength": 80
-                  },
-                  "how": {
-                    "type": "string",
-                    "maxLength": 160
-                  }
-                },
-                "required": [
-                  "source",
-                  "paramId",
-                  "how"
-                ],
-                "additionalProperties": false
-              }
-            },
-            "drags": {
-              "maxItems": 2,
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "paramId": {
-                    "type": "string",
-                    "maxLength": 80
-                  },
-                  "source": {
-                    "type": "string",
-                    "enum": [
-                      "x",
-                      "y",
-                      "speed"
-                    ]
-                  },
-                  "mode": {
-                    "type": "string",
-                    "enum": [
-                      "direct",
-                      "ratio",
-                      "range"
-                    ]
-                  },
-                  "invert": {
-                    "type": "boolean"
-                  },
-                  "how": {
-                    "type": "string",
-                    "maxLength": 160
-                  }
-                },
-                "required": [
-                  "paramId",
-                  "source",
-                  "mode",
-                  "invert",
-                  "how"
-                ],
-                "additionalProperties": false
-              }
-            }
+            ]
           },
-          "required": [
-            "id",
-            "property",
-            "description",
-            "params",
-            "inputs",
-            "drags"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "logic": {
-      "type": "object",
-      "properties": {
-        "summary": {
-          "type": "string",
-          "maxLength": 600
-        },
-        "params": {
-          "maxItems": 16,
-          "type": "array",
-          "items": {
+          "logic": {
             "type": "object",
             "properties": {
-              "id": {
+              "summary": {
                 "type": "string",
-                "maxLength": 80
+                "maxLength": 600
               },
-              "how": {
-                "type": "string",
-                "maxLength": 300
+              "params": {
+                "maxItems": 16,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "maxLength": 80
+                    },
+                    "how": {
+                      "type": "string",
+                      "maxLength": 300
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "how"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
-              "id",
-              "how"
+              "summary",
+              "params"
             ],
             "additionalProperties": false
           }
-        }
-      },
-      "required": [
-        "summary",
-        "params"
-      ],
-      "additionalProperties": false
+        },
+        "required": [
+          "reason",
+          "nodeId",
+          "scope",
+          "constraintId",
+          "computation",
+          "logic"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
-    "reason",
-    "nodeId",
-    "scope",
-    "constraintId",
-    "computation",
-    "logic"
+    "parts"
   ],
   "additionalProperties": false
 }

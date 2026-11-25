@@ -2,7 +2,7 @@ import { z } from "zod";
 import { idSchema, paramSchema, sceneBindingSchema, constraintSchema } from "./scene/schema";
 import { sceneSchema } from "./scene/validate";
 import { composeTagSchema, MAX_COMPOSE_TAGS, tagTargetSchema } from "./compose-tags";
-import { choiceSchema } from "./execution/manipulate";
+import { choiceSchema, feedbackSchema } from "./execution/manipulate";
 import { clarifyRequestSchema } from "./sketch-clarify";
 export const pointSchema = z.object({ x: z.number(), y: z.number() });
 export type Point = z.infer<typeof pointSchema>;
@@ -33,7 +33,7 @@ export const machineRefineResultSchema = z.object({ scene: sceneSchema, composeP
 /** split, as the app takes it: the parts of a constraint, each a constraint of its own. */
 export const splitResultSchema = z.object({ divisible: z.boolean(), reason: z.string().max(400), parts: z.array(constraintSchema).max(5) });
 export type ResultAnnotation = z.infer<typeof annotationSchema>;
-export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "handles", "split", "tag-revise", "trace-analyze", "trace-overlay", "trace-clarify", "trace-part", "sketch-clarify", "trace-generalize"] as const;
+export const AI_INTENTS = ["extract", "transform", "state-machine", "machine-refine", "code", "compose", "compose-prompt", "clarification", "revision", "handles", "split", "tag-revise", "trace-analyze", "trace-overlay", "trace-clarify", "trace-part", "sandbox-restructure", "sketch-clarify", "trace-generalize"] as const;
 /** The state or transition a machine refinement is focused on (none = the whole machine). */
 export const machineTargetSchema = z.object({ kind: z.enum(["state", "transition"]), id: idSchema });
 export type MachineTarget = z.infer<typeof machineTargetSchema>;
@@ -52,7 +52,9 @@ export const requestSchema = z.object({ intent: z.enum(AI_INTENTS), scene: scene
     /** Marks the user drew on the picture with the inspection annotation tool (canvas pixels), pointing at what the concern is about. */
     marks: z.array(z.array(z.object({ x: z.number(), y: z.number() })).max(400)).max(24).default([]), analysis: z.record(z.string(), z.unknown()).nullable().default(null),
     /** trace-clarify: the rule the user picked from its question (the tools are then made for it). */
-    choice: choiceSchema.nullable().default(null) }).nullable().default(null),
+    choice: choiceSchema.nullable().default(null),
+    /** trace-clarify: what the user said about rules or tools made before that did not fit (they are made again from it). */
+    feedback: feedbackSchema.nullable().default(null) }).nullable().default(null),
   /** sketch-clarify: what Extract / Compose will do, and the stages asked and answered so far. */
   sketchClarify: clarifyRequestSchema.nullable().default(null),
   /** tag-revise: the tag and which of its constraints to change. */
